@@ -222,7 +222,7 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
 
   if (loading && logs.length === 0) {
     return (
-      <div>
+      <div className="dash-page">
         <div className="page-header">
           <div>
             <div className="skeleton" style={{ width: 160, height: 28, marginBottom: 8 }} />
@@ -242,7 +242,7 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
   }
 
   return (
-    <div aria-busy={loading}>
+    <div className="dash-page" aria-busy={loading}>
       <ImageModal imagePath={selectedImage} onClose={() => setSelectedImage(null)} />
 
       {loadError && (
@@ -314,7 +314,7 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
       </div>
 
       {/* Metric Cards Grid */}
-      <div className="stats-grid" style={{ marginBottom: 16 }}>
+      <div className="stats-grid dash-stats" style={{ marginBottom: 16 }}>
         <StatCard
           label="AI Focus Rating"
           value={analyzedLogs.length === 0 ? '—' : `${avgProductivityScore}%`}
@@ -344,7 +344,7 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
       </div>
 
       {/* Hourly Trend & App Breakdown Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16, marginBottom: 16 }}>
+      <div className="dash-charts" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16, marginBottom: 16 }}>
 
         {/* Hourly Focus Score Chart */}
         <div className="card">
@@ -402,7 +402,7 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
         </div>
 
         {/* Top App Usage Share */}
-        <div className="card">
+        <div className="card dash-topapps">
           <div className="card-header">
             <span className="card-title">🏆 Top Apps</span>
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Share of captures</span>
@@ -410,9 +410,11 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
           <div className="card-body">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {topApps.length === 0 ? (
-                <div style={{ fontSize: 13, color: 'var(--text-muted)', textAlign: 'center', padding: '30px 0' }}>
-                  No active application data logged yet
-                </div>
+                <EmptyState
+                  icon={<Icon name="globe" size={24} />}
+                  title="No App Data Yet"
+                  description="Application usage appears here once the tracker records captures."
+                />
               ) : (
                 topApps.map((app) => (
                   <div key={app.appName} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -507,12 +509,27 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
       )}
 
       {/* Activity Stream Feed */}
-      <div className="card">
+      <div className="card dash-activity">
         <div className="card-header">
           <span className="card-title">📸 Activity Stream</span>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
-            Latest {recent.length} captures
-          </span>
+          <div className="dash-feed-meta">
+            <span style={{ fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+              Latest {recent.length} captures
+            </span>
+            {pendingCount > 0 && (
+              <span
+                className={`badge badge-pending dash-pending-pill${processingPending ? ' is-processing' : ''}`}
+                title={
+                  processingPending
+                    ? 'AI analysis is running on pending captures'
+                    : `${pendingCount} capture${pendingCount === 1 ? '' : 's'} awaiting AI analysis`
+                }
+              >
+                {processingPending && <span className="dash-mini-spinner" aria-hidden="true" />}
+                {processingPending ? 'Analyzing…' : `${pendingCount} pending AI review`}
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="card-body" style={{ padding: '12px 14px' }}>
@@ -521,13 +538,24 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
               icon={<Icon name="inbox" size={32} />}
               title="No Activity Captured Yet"
               description="The tracking daemon will automatically log desktop screenshots and keystroke activity."
+              action={
+                onRefresh ? (
+                  <button type="button" className="btn btn-secondary" onClick={onRefresh}>
+                    Refresh now
+                  </button>
+                ) : undefined
+              }
             />
           ) : (
             <div className="timeline-list">
               {recent.map((log) => {
                 const scoreVal = Math.round(captureScore(log));
+                const isPending = isPendingLog(log);
                 return (
-                  <div key={`${log.id}-${log.timestamp}-${log.image_path}`} className="timeline-item">
+                  <div
+                    key={`${log.id}-${log.timestamp}-${log.image_path}`}
+                    className="timeline-item dash-log-row"
+                  >
                     <span className="timeline-time">
                       {format(new Date(log.timestamp), 'HH:mm')}
                     </span>
@@ -538,93 +566,98 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
                     />
 
                     <div className="timeline-info">
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <div className="dash-chip-row">
                         <CategoryBadge category={log.ai_category} />
                         {canonicalAppName(log.app_name) && (
                           <span
                             title={canonicalAppName(log.app_name)}
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 5,
-                              fontSize: 11,
-                              fontWeight: 600,
-                              padding: '2px 8px',
-                              borderRadius: 4,
-                              background: 'var(--bg-elevated)',
-                              color: 'var(--text-secondary)',
-                              border: '1px solid var(--border-subtle)',
-                              maxWidth: 180,
-                              overflow: 'hidden',
-                              whiteSpace: 'nowrap',
-                            }}
+                            className="dash-app-chip"
                           >
                             <AppIcon name={canonicalAppName(log.app_name)} size={14} />
-                            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            <span className="dash-app-chip-label">
                               {canonicalAppName(log.app_name)}
                             </span>
                           </span>
                         )}
                         {log.app_category && (
-                          <span
-                            title={log.app_category}
-                            style={{
-                              fontSize: 11,
-                              color: 'var(--text-muted)',
-                              fontStyle: 'italic',
-                              maxWidth: 160,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
+                          <span title={log.app_category} className="dash-app-category">
                             ({log.app_category})
                           </span>
                         )}
                       </div>
 
                       {log.window_title && (
-                        <div
-                          title={log.window_title}
-                          style={{
-                            fontSize: 12,
-                            fontWeight: 600,
-                            color: 'var(--text-primary)',
-                            marginTop: 4,
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                          }}
-                        >
+                        <div title={log.window_title} className="dash-window-title">
                           🪟 {log.window_title}
                         </div>
                       )}
 
-                      <div className="timeline-reason" style={{ marginTop: 2 }} title={log.ai_reason || undefined}>
-                        {log.ai_reason || '—'}
-                      </div>
+                      {isPending ? (
+                        // Pending capture: soft shimmer placeholders instead of a
+                        // dead "—" placeholder; a neutral pulse (never error-red)
+                        // signals that analysis is queued or running.
+                        <div
+                          className="dash-reason-skeleton"
+                          title="AI analysis is queued or running for this capture"
+                        >
+                          <div className="skeleton dash-shimmer-line" style={{ width: '58%' }} />
+                          <div className="skeleton dash-shimmer-line" style={{ width: '34%' }} />
+                        </div>
+                      ) : (
+                        <div
+                          className="dash-reason"
+                          title={log.ai_reason || 'No AI summary was generated for this capture'}
+                        >
+                          {log.ai_reason || 'No AI summary for this capture'}
+                        </div>
+                      )}
                     </div>
 
-                    <div>
-                      {isPendingLog(log) ? (
-                        <span className="badge badge-pending">
-                          Pending AI
+                    <div className={isPending ? 'dash-score-col is-pending' : 'dash-score-col'}>
+                      {isPending ? (
+                        <span className="badge badge-pending dash-pending-chip" title="Pending AI review — add a Gemini API key in Settings to score captures">
+                          <span className="dash-mini-spinner" aria-hidden="true" />
+                          Pending AI review
                         </span>
                       ) : (
-                        <span
-                          className={`badge ${
-                            scoreVal >= 50
-                              ? 'badge-productive'
-                              : 'badge-unproductive'
-                          }`}
-                          style={{ fontVariantNumeric: 'tabular-nums' }}
-                        >
-                          <Icon
-                            name={scoreVal >= 50 ? 'check' : 'x'}
-                            size={13}
-                          />
-                          {scoreVal}% Focus
-                        </span>
+                        <>
+                          <span
+                            title={`AI focus rating: ${scoreVal}%`}
+                            className={`badge ${
+                              scoreVal >= FOCUS_GOOD
+                                ? 'badge-productive'
+                                : scoreVal >= FOCUS_OK
+                                ? 'badge-amber'
+                                : 'badge-unproductive'
+                            }`}
+                            style={{ fontVariantNumeric: 'tabular-nums' }}
+                          >
+                            <Icon
+                              name={
+                                scoreVal >= FOCUS_GOOD
+                                  ? 'check'
+                                  : scoreVal >= FOCUS_OK
+                                  ? 'activity'
+                                  : 'x'
+                              }
+                              size={13}
+                            />
+                            {scoreVal}% Focus
+                          </span>
+                          <div
+                            className="dash-score-bar"
+                            role="meter"
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={scoreVal}
+                            aria-label="AI focus rating"
+                          >
+                            <div
+                              className="dash-score-bar-fill"
+                              style={{ width: `${scoreVal}%`, background: focusBarColor(scoreVal) }}
+                            />
+                          </div>
+                        </>
                       )}
                     </div>
                   </div>

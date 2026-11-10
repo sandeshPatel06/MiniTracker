@@ -64,9 +64,9 @@ func GetActiveWindowInfo() (*ActiveWindowResult, error) {
 		return nil, fmt.Errorf("could not get active window")
 	}
 
-	activeWinID := xproto.Window(xgb.Get32(activeWinReply.Value))
-	if activeWinID == 0 {
-		return nil, ErrNoActiveWindow
+	activeWinID, err := windowIDFromProperty(activeWinReply.Value)
+	if err != nil {
+		return nil, err
 	}
 
 	res := &ActiveWindowResult{}
@@ -103,4 +103,20 @@ func GetActiveWindowInfo() (*ActiveWindowResult, error) {
 	}
 
 	return res, nil
+}
+
+// windowIDFromProperty parses a WINDOW property value defensively. Property
+// values of _NET_ACTIVE_WINDOW must be a 4-byte window id, but a misbehaving
+// client can stuff shorter data there; xgb.Get32 unconditionally reads 4 bytes
+// and would panic on anything shorter. A parsed id of 0 means "no window
+// focused" (lock screen / desktop shell) and maps to ErrNoActiveWindow.
+func windowIDFromProperty(value []byte) (xproto.Window, error) {
+	if len(value) < 4 {
+		return 0, fmt.Errorf("malformed active window property (%d bytes)", len(value))
+	}
+	id := xproto.Window(xgb.Get32(value[:4]))
+	if id == 0 {
+		return 0, ErrNoActiveWindow
+	}
+	return id, nil
 }

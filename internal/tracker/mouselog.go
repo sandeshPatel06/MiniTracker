@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -14,16 +15,18 @@ type MouseStats struct {
 type MouseTracker struct {
 	mu       sync.Mutex
 	stopOnce sync.Once
+	started  bool
 	clicks   int
 	stopCh   chan struct{}
 	interval time.Duration
 }
 
 // NewMouseTracker creates a new MouseTracker with the given flush interval.
+// Intervals <= 0 default to 30s; sub-second intervals are raised to 1s.
 func NewMouseTracker(interval time.Duration) *MouseTracker {
 	return &MouseTracker{
 		stopCh:   make(chan struct{}),
-		interval: interval,
+		interval: clampInterval(interval),
 	}
 }
 
@@ -33,7 +36,17 @@ type mouseEvent struct {
 }
 
 // Start launches native mouse capture (where supported) and a flush ticker.
+// A second Start on the same tracker is rejected; after Stop the tracker's
+// goroutines are gone for good and must never be restarted.
 func (m *MouseTracker) Start() (<-chan MouseStats, error) {
+	m.mu.Lock()
+	if m.started {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("mouse tracker already started")
+	}
+	m.started = true
+	m.mu.Unlock()
+
 	// Buffered: drops events when aggregator is busy — never blocks the reader goroutine.
 	eventCh := make(chan mouseEvent, 256)
 	startNativeMouseCapture(eventCh, m.stopCh)
@@ -75,7 +88,11 @@ func (m *MouseTracker) Start() (<-chan MouseStats, error) {
 }
 
 // RecordMouseActivity records mouse clicks submitted via the frontend (zero-sudo mode).
+// Negative payloads are ignored so counters can never go backwards.
 func (m *MouseTracker) RecordMouseActivity(clicks int) {
+	if clicks <= 0 {
+		return
+	}
 	m.mu.Lock()
 	m.clicks += clicks
 	m.mu.Unlock()

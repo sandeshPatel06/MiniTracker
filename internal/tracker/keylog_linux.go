@@ -83,6 +83,10 @@ func startNativeKeyCapture(eventCh chan<- int, stopCh <-chan struct{}) {
 
 // discoverKeyboards returns all /dev/input/event* keyboard device paths.
 // Scans only /dev/input directly and resolves symlinks to avoid duplicate opens.
+// A device only counts as a keyboard when it can emit real letter/space keys:
+// bare EV_KEY devices like touchpads, mice and power buttons keep their button
+// codes (BTN_* ≥ 272) out of the keystroke entropy stream, which would else
+// inflate the unique-key count with codes keyboards never produce.
 func discoverKeyboards() ([]string, error) {
 	entries, err := os.ReadDir("/dev/input")
 	if err != nil {
@@ -111,15 +115,30 @@ func discoverKeyboards() ([]string, error) {
 		if err != nil {
 			continue
 		}
-		caps := dev.CapableTypes()
-		for _, t := range caps {
-			if t == evdev.EV_KEY {
-				keyboards = append(keyboards, path)
-				seen[real] = true
-				break
-			}
+		if isTypingKeyboard(dev.CapableEvents(evdev.EV_KEY)) {
+			keyboards = append(keyboards, path)
+			seen[real] = true
 		}
 		dev.Close()
 	}
 	return keyboards, nil
+}
+
+// isTypingKeyboard reports whether an EV_KEY capability set includes a real
+// typing key (a letter, space or enter). Pure button devices (mouse/touchpad
+// BTN_* codes, power/sleep keys) never carry these.
+func isTypingKeyboard(keyCodes []evdev.EvCode) bool {
+	typingKeys := map[evdev.EvCode]bool{
+		evdev.KEY_A:     true,
+		evdev.KEY_Q:     true,
+		evdev.KEY_Z:     true,
+		evdev.KEY_SPACE: true,
+		evdev.KEY_ENTER: true,
+	}
+	for _, code := range keyCodes {
+		if typingKeys[code] {
+			return true
+		}
+	}
+	return false
 }

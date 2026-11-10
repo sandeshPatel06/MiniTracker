@@ -14,9 +14,9 @@ import (
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
-	"github.com/reak/get-hike/internal/appname"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/reak/get-hike/internal/appname"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -401,6 +401,7 @@ func (db *DB) migrate() error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_api_usage_org ON api_usage_logs(org_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_api_usage_user ON api_usage_logs(user_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_api_usage_created ON api_usage_logs(created_at);`,
 		`CREATE TABLE IF NOT EXISTS app_events (
 			id           SERIAL PRIMARY KEY,
 			timestamp    TIMESTAMPTZ NOT NULL,
@@ -502,6 +503,7 @@ func (db *DB) migrate() error {
 			);`,
 			`CREATE INDEX IF NOT EXISTS idx_api_usage_org ON api_usage_logs(org_id);`,
 			`CREATE INDEX IF NOT EXISTS idx_api_usage_user ON api_usage_logs(user_id);`,
+			`CREATE INDEX IF NOT EXISTS idx_api_usage_created ON api_usage_logs(created_at);`,
 			`CREATE TABLE IF NOT EXISTS app_events (
 				id           INTEGER PRIMARY KEY AUTOINCREMENT,
 				timestamp    DATETIME NOT NULL,
@@ -519,10 +521,37 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Align the PostgreSQL app_events constraint with the SQLite variant so
+	// both dialects reject lifecycle kinds outside ('open', 'close', 'focus').
+	if db.dialect == dialect.Postgres {
+		if _, err := db.rawDB.Exec(`DO $$ BEGIN
+			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'app_events_kind_check') THEN
+				ALTER TABLE app_events ADD CONSTRAINT app_events_kind_check CHECK (kind IN ('open', 'close', 'focus'));
+			END IF;
+		END $$;`); err != nil {
+			log.Printf("[db] postgres app_events constraint note: %v", err)
+		}
+	}
+
 	if db.dialect == dialect.SQLite {
 		safeAddColumn("logs", "total_clicks", "INTEGER DEFAULT 0")
 		safeAddColumn("logs", "mouse_distance", "REAL DEFAULT 0")
 		safeAddColumn("logs", "ai_retry_count", "INTEGER DEFAULT 0")
+
+		// One-time normalization (schema version 1): rewrite every timestamp
+		// column stored by go-sqlite3's time.Time binding (legacy
+		// "2006-01-02 15:04:05.999999999-07:00" strings) or CURRENT_TIMESTAMP
+		// defaults into the canonical UTC RFC3339 format used by InsertLog.
+		// Needed so lexical range predicates on those columns stay exact.
+		var schemaVersion int
+		_ = db.rawDB.QueryRow("PRAGMA user_version").Scan(&schemaVersion)
+		if schemaVersion < 1 {
+			if err := db.normalizeLegacyTimestampColumns(); err != nil {
+				log.Printf("[db] legacy timestamp normalization note: %v", err)
+			} else if _, err := db.rawDB.Exec("PRAGMA user_version = 1"); err != nil {
+				log.Printf("[db] schema version bump note: %v", err)
+			}
+		}
 	}
 
 	// Seed default org
@@ -855,7 +884,7 @@ func (db *DB) GetRecentAppEvents(since time.Time, limit int) ([]AppEvent, error)
 	builder := entsql.Dialect(db.dialect).Select("id", "timestamp", "kind", "app_name", "window_title").
 		From(entsql.Table("app_events")).
 		Where(entsql.GTE("timestamp", since.UTC().Format(time.RFC3339))).
-		OrderBy(entsql.Desc("timestamp")).Limit(limit)
+		OrderBy(entsql.Desc("timestamp"), entsql.Desc("id")).Limit(limit)
 
 	query, args := builder.Query()
 	rows, err := db.rawDB.Query(query, args...)
@@ -893,7 +922,7 @@ func (db *DB) GetAppEventsBetween(start, end time.Time, limit int) ([]AppEvent, 
 		From(entsql.Table("app_events")).
 		Where(entsql.GTE("timestamp", start.UTC().Format(time.RFC3339))).
 		Where(entsql.LT("timestamp", end.UTC().Format(time.RFC3339))).
-		OrderBy(entsql.Asc("timestamp")).Limit(limit)
+		OrderBy(entsql.Asc("timestamp"), entsql.Asc("id")).Limit(limit)
 
 	query, args := builder.Query()
 	rows, err := db.rawDB.Query(query, args...)
@@ -977,6 +1006,16 @@ func (db *DB) UpdateAIResultByRemoteID(remoteID int64, category string, producti
 }
 
 // UpdateLogAnalysis patches AI fields using Ent SQL Builder.
+//
+// The AI-facing fields (ai_category, is_productive, productive_score,
+// ai_confidence, ai_reason) are always written. The enrichment fields are
+// conditional partial updates: empty appCategory/windowTitle or a zero
+// sessionID/empty sessionTitle are treated as "not provided" and preserve the
+// row's stored value instead of clobbering it. Several callers (retry-cap
+// marking, re-analysis of an old entry, server-side pipelines) pass 0/"" for
+// session fields and "" for capture fields they don't know about; an
+// unconditional write used to erase previously stored session bindings,
+// window titles and app categories.
 func (db *DB) UpdateLogAnalysis(id int64, category, appName, appCategory, windowTitle string, sessionID int64, sessionTitle string, productive bool, productiveScore float64, confidence float64, reason string) error {
 	productiveInt := 0
 	if productive || productiveScore >= 50 {
@@ -990,10 +1029,6 @@ func (db *DB) UpdateLogAnalysis(id int64, category, appName, appCategory, window
 
 	builder := entsql.Dialect(db.dialect).Update("logs").
 		Set("ai_category", category).
-		Set("app_category", appCategory).
-		Set("window_title", windowTitle).
-		Set("session_id", sessionID).
-		Set("session_title", sessionTitle).
 		Set("is_productive", productiveInt).
 		Set("productive_score", productiveScore).
 		Set("ai_confidence", confidence).
@@ -1001,6 +1036,18 @@ func (db *DB) UpdateLogAnalysis(id int64, category, appName, appCategory, window
 		Where(entsql.EQ("id", id))
 	if canonicalApp != "" {
 		builder.Set("app_name", canonicalApp)
+	}
+	if appCategory != "" {
+		builder.Set("app_category", appCategory)
+	}
+	if windowTitle != "" {
+		builder.Set("window_title", windowTitle)
+	}
+	if sessionID != 0 {
+		builder.Set("session_id", sessionID)
+	}
+	if sessionTitle != "" {
+		builder.Set("session_title", sessionTitle)
 	}
 
 	query, args := builder.Query()
@@ -1024,43 +1071,14 @@ func (db *DB) GetLogsFiltered(userID, orgID int64, startDate, endDate string) ([
 	if orgID > 0 {
 		predicates = append(predicates, entsql.EQ("org_id", orgID))
 	}
-
-	if startDate != "" && endDate != "" {
-		if db.dialect == dialect.Postgres {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("timestamp::date BETWEEN ").Arg(startDate).WriteString("::date AND ").Arg(endDate).WriteString("::date")
-			}))
-		} else {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("substr(timestamp, 1, 10) BETWEEN ").Arg(startDate).WriteString(" AND ").Arg(endDate)
-			}))
-		}
-	} else if startDate != "" {
-		if db.dialect == dialect.Postgres {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("timestamp::date >= ").Arg(startDate).WriteString("::date")
-			}))
-		} else {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("substr(timestamp, 1, 10) >= ").Arg(startDate)
-			}))
-		}
-	} else if endDate != "" {
-		if db.dialect == dialect.Postgres {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("timestamp::date <= ").Arg(endDate).WriteString("::date")
-			}))
-		} else {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("substr(timestamp, 1, 10) <= ").Arg(endDate)
-			}))
-		}
-	}
+	predicates = append(predicates, dateWindowPredicates("timestamp", startDate, endDate, time.Local)...)
 
 	if len(predicates) > 0 {
 		builder.Where(entsql.And(predicates...))
 	}
-	builder.OrderBy(entsql.Asc("timestamp"))
+	// Ties on timestamp (captures can share a second) need a deterministic
+	// secondary key so pagination cannot drop or duplicate rows.
+	builder.OrderBy(entsql.Asc("timestamp"), entsql.Asc("id"))
 
 	query, args := builder.Query()
 	rows, err := db.rawDB.Query(query, args...)
@@ -1119,37 +1137,7 @@ func (db *DB) GetLogsFilteredPaginated(userID, orgID int64, startDate, endDate s
 	if orgID > 0 {
 		predicates = append(predicates, entsql.EQ("org_id", orgID))
 	}
-	if startDate != "" && endDate != "" {
-		if db.dialect == dialect.Postgres {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("timestamp::date BETWEEN ").Arg(startDate).WriteString("::date AND ").Arg(endDate).WriteString("::date")
-			}))
-		} else {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("substr(timestamp, 1, 10) BETWEEN ").Arg(startDate).WriteString(" AND ").Arg(endDate)
-			}))
-		}
-	} else if startDate != "" {
-		if db.dialect == dialect.Postgres {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("timestamp::date >= ").Arg(startDate).WriteString("::date")
-			}))
-		} else {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("substr(timestamp, 1, 10) >= ").Arg(startDate)
-			}))
-		}
-	} else if endDate != "" {
-		if db.dialect == dialect.Postgres {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("timestamp::date <= ").Arg(endDate).WriteString("::date")
-			}))
-		} else {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("substr(timestamp, 1, 10) <= ").Arg(endDate)
-			}))
-		}
-	}
+	predicates = append(predicates, dateWindowPredicates("timestamp", startDate, endDate, time.Local)...)
 
 	countBuilder := entsql.Dialect(db.dialect).Select(entsql.Count("*")).From(entsql.Table("logs"))
 	if len(predicates) > 0 {
@@ -1172,7 +1160,7 @@ func (db *DB) GetLogsFilteredPaginated(userID, orgID int64, startDate, endDate s
 	if len(predicates) > 0 {
 		builder.Where(entsql.And(predicates...))
 	}
-	builder.OrderBy(entsql.Asc("timestamp")).Offset(offset).Limit(limit)
+	builder.OrderBy(entsql.Asc("timestamp"), entsql.Asc("id")).Offset(offset).Limit(limit)
 
 	query, args := builder.Query()
 	rows, err := db.rawDB.Query(query, args...)
@@ -1248,19 +1236,38 @@ func (db *DB) GetLogByID(id int64) (*LogEntry, error) {
 	}
 	e.Timestamp = parseFlexibleTime(ts)
 	e.IsProductive = productive == 1 || e.ProductiveScore >= 50
+	// Same derivation as GetLogsFiltered so single-log and list views agree.
+	if e.ProductiveScore == 0 && e.IsProductive {
+		e.ProductiveScore = 100
+	}
 	return &e, nil
 }
 
 // SaveWorkSessions batch inserts work session summaries using Ent SQL Builder.
+// Rows are written in one transaction so a failure never leaves a partial
+// batch behind, and timestamps are normalized to UTC RFC3339 (passing
+// time.Time would make go-sqlite3 store local-offset strings that break
+// lexical range filters).
 func (db *DB) SaveWorkSessions(sessions []WorkSession) error {
+	if len(sessions) == 0 {
+		return nil
+	}
+	tx, err := db.rawDB.Begin()
+	if err != nil {
+		return fmt.Errorf("save work sessions: %w", err)
+	}
+	defer tx.Rollback()
+
 	for _, s := range sessions {
 		builder := entsql.Dialect(db.dialect).Insert("work_sessions").
 			Columns("org_id", "user_id", "title", "summary", "start_time", "end_time", "log_count", "productive_pct", "top_app_name", "top_category").
-			Values(s.OrgID, s.UserID, s.Title, s.Summary, s.StartTime, s.EndTime, s.LogCount, s.ProductivePct, s.TopAppName, s.TopCategory)
+			Values(s.OrgID, s.UserID, s.Title, s.Summary, s.StartTime.UTC().Format(time.RFC3339), s.EndTime.UTC().Format(time.RFC3339), s.LogCount, s.ProductivePct, s.TopAppName, s.TopCategory)
 		query, args := builder.Query()
-		_, _ = db.rawDB.Exec(query, args...)
+		if _, err := tx.Exec(query, args...); err != nil {
+			return fmt.Errorf("save work session %q: %w", s.Title, err)
+		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // GetWorkSessionsFiltered returns work sessions using Ent SQL Builder.
@@ -1276,32 +1283,14 @@ func (db *DB) GetWorkSessionsFiltered(userID, orgID int64, startDate, endDate st
 	if orgID > 0 {
 		predicates = append(predicates, entsql.EQ("org_id", orgID))
 	}
-	if startDate != "" && endDate != "" {
-		if db.dialect == dialect.Postgres {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("start_time::date BETWEEN ").Arg(startDate).WriteString("::date AND ").Arg(endDate).WriteString("::date")
-			}))
-		} else {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("date(start_time) BETWEEN ").Arg(startDate).WriteString(" AND ").Arg(endDate)
-			}))
-		}
-	} else if startDate != "" {
-		if db.dialect == dialect.Postgres {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("start_time::date >= ").Arg(startDate).WriteString("::date")
-			}))
-		} else {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("date(start_time) >= ").Arg(startDate)
-			}))
-		}
-	}
+	// endDate-only ranges were silently ignored before; dateWindowPredicates
+	// makes start/end and start+end combinations behave like the logs queries.
+	predicates = append(predicates, dateWindowPredicates("start_time", startDate, endDate, time.Local)...)
 
 	if len(predicates) > 0 {
 		builder.Where(entsql.And(predicates...))
 	}
-	builder.OrderBy(entsql.Desc("start_time"))
+	builder.OrderBy(entsql.Desc("start_time"), entsql.Desc("id"))
 
 	query, args := builder.Query()
 	rows, err := db.rawDB.Query(query, args...)
@@ -1450,37 +1439,7 @@ func (db *DB) GetProductivityStatsFiltered(userID, orgID int64, startDate, endDa
 	if orgID > 0 {
 		predicates = append(predicates, entsql.EQ("org_id", orgID))
 	}
-	if startDate != "" && endDate != "" {
-		if db.dialect == dialect.Postgres {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("timestamp::date BETWEEN ").Arg(startDate).WriteString("::date AND ").Arg(endDate).WriteString("::date")
-			}))
-		} else {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("substr(timestamp, 1, 10) BETWEEN ").Arg(startDate).WriteString(" AND ").Arg(endDate)
-			}))
-		}
-	} else if startDate != "" {
-		if db.dialect == dialect.Postgres {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("timestamp::date >= ").Arg(startDate).WriteString("::date")
-			}))
-		} else {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("substr(timestamp, 1, 10) >= ").Arg(startDate)
-			}))
-		}
-	} else if endDate != "" {
-		if db.dialect == dialect.Postgres {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("timestamp::date <= ").Arg(endDate).WriteString("::date")
-			}))
-		} else {
-			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
-				b.WriteString("substr(timestamp, 1, 10) <= ").Arg(endDate)
-			}))
-		}
-	}
+	predicates = append(predicates, dateWindowPredicates("timestamp", startDate, endDate, time.Local)...)
 
 	builder := entsql.Dialect(db.dialect).Select(
 		"COUNT(*)",
@@ -1524,27 +1483,23 @@ func (db *DB) GetProductivityStats(date string) (*ProductivityStats, error) {
 }
 
 // GetTodayTrackedSeconds returns the total accumulated tracked seconds for today based on database logs.
+// The "today" range is the local calendar day converted to exact UTC instants,
+// matching how InsertLog normalizes timestamps (the old substr/::date
+// predicates bucketed by a different calendar than the UI's).
 func (db *DB) GetTodayTrackedSeconds(intervalSec int64) int64 {
 	if intervalSec <= 0 {
 		intervalSec = 30
 	}
-	todayStr := time.Now().Format("2006-01-02")
+	start, end := localDayRange(time.Now())
+	builder := entsql.Dialect(db.dialect).Select(entsql.Count("*")).From(entsql.Table("logs")).
+		Where(entsql.And(
+			entsql.GTE("timestamp", start.Format(time.RFC3339)),
+			entsql.LT("timestamp", end.Format(time.RFC3339)),
+		))
+	query, args := builder.Query()
+
 	var count int64
-	var query string
-	if db.dialect == dialect.Postgres {
-		query = "SELECT COUNT(*) FROM logs WHERE timestamp::date = CURRENT_DATE"
-	} else {
-		query = "SELECT COUNT(*) FROM logs WHERE substr(timestamp, 1, 10) = ?"
-	}
-
-	var row *sql.Row
-	if db.dialect == dialect.Postgres {
-		row = db.rawDB.QueryRow(query)
-	} else {
-		row = db.rawDB.QueryRow(query, todayStr)
-	}
-
-	if err := row.Scan(&count); err != nil {
+	if err := db.rawDB.QueryRow(query, args...).Scan(&count); err != nil {
 		return 0
 	}
 	return count * intervalSec
@@ -1566,7 +1521,7 @@ func (db *DB) GetUnanalyzedLogs() ([]LogEntry, error) {
 			),
 			entsql.LT("ai_retry_count", 10),
 		),
-	).OrderBy(entsql.Asc("timestamp"))
+	).OrderBy(entsql.Asc("timestamp"), entsql.Asc("id"))
 
 	query, args := builder.Query()
 	rows, err := db.rawDB.Query(query, args...)
@@ -1614,26 +1569,179 @@ func (db *DB) CountUnanalyzedLogs() (int, error) {
 }
 
 // IncrementAIRetryCount increments the AI retry counter for a log entry.
-// If retry count reaches 10, marks the log entry as Failed so it won't be retried indefinitely.
+// If retry count is already at the cap, marks the log entry as Failed so it
+// won't be retried indefinitely. The increment is a single guarded UPDATE so
+// concurrent analyzers can never double-count or race past the cap.
 func (db *DB) IncrementAIRetryCount(id int64) error {
-	var currentRetries int
-	row := db.rawDB.QueryRow("SELECT COALESCE(ai_retry_count, 0) FROM logs WHERE id = $1", id)
+	placeholder := "$1"
 	if db.dialect == dialect.SQLite {
-		row = db.rawDB.QueryRow("SELECT COALESCE(ai_retry_count, 0) FROM logs WHERE id = ?", id)
+		placeholder = "?"
 	}
-	_ = row.Scan(&currentRetries)
-
-	newRetries := currentRetries + 1
-	if newRetries >= 10 {
+	query := fmt.Sprintf(`UPDATE logs SET ai_retry_count = COALESCE(ai_retry_count, 0) + 1
+		WHERE id = %s AND COALESCE(ai_retry_count, 0) < 9`, placeholder)
+	res, err := db.rawDB.Exec(query, id)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
 		return db.UpdateLogAnalysis(id, "Failed", "", "", "", 0, "", false, 0, 0.0, "AI Analysis Failed (Max 10 retries exceeded)")
 	}
+	return nil
+}
 
-	query := "UPDATE logs SET ai_retry_count = COALESCE(ai_retry_count, 0) + 1 WHERE id = $1"
-	if db.dialect == dialect.SQLite {
-		query = "UPDATE logs SET ai_retry_count = COALESCE(ai_retry_count, 0) + 1 WHERE id = ?"
+// legacyTimestampLayouts are the timestamp spellings go-sqlite3 and SQLite
+// defaults (CURRENT_TIMESTAMP) historically stored: time.Time bindings land as
+// "2006-01-02 15:04:05.999999999-07:00" and CURRENT_TIMESTAMP as a naive
+// "YYYY-MM-DD HH:MM:SS" UTC string, deviating from the canonical RFC3339 UTC
+// format written by InsertLog/InsertAppEvent.
+var legacyTimestampLayouts = []string{
+	"2006-01-02 15:04:05.999999999-07:00",
+	"2006-01-02 15:04:05.999999999-0700",
+	"2006-01-02 15:04:05.999999999-07",
+	"2006-01-02 15:04:05.999999999",
+	"2006-01-02 15:04:05-07:00",
+	"2006-01-02 15:04:05-0700",
+	"2006-01-02 15:04:05-07",
+	"2006-01-02 15:04:05",
+}
+
+// parseLegacyTimestamp parses a legacy SQLite timestamp string; zoneless
+// strings are interpreted as UTC (SQLite CURRENT_TIMESTAMP semantics).
+func parseLegacyTimestamp(v string) (time.Time, bool) {
+	for _, layout := range legacyTimestampLayouts {
+		if t, err := time.Parse(layout, v); err == nil {
+			return t, true
+		}
 	}
-	_, err := db.rawDB.Exec(query, id)
-	return err
+	return time.Time{}, false
+}
+
+// normalizeLegacyTimestampColumns rewrites every legacy-format timestamp into
+// the canonical UTC RFC3339 string so lexical range comparisons match
+// instants. Idempotent: already-normalized rows are skipped.
+func (db *DB) normalizeLegacyTimestampColumns() error {
+	type columnSpec struct{ table, column string }
+	specs := []columnSpec{
+		{"logs", "timestamp"},
+		{"logs", "synced_at"},
+		{"work_sessions", "start_time"},
+		{"work_sessions", "end_time"},
+		{"work_sessions", "created_at"},
+		{"api_usage_logs", "created_at"},
+	}
+
+	const (
+		setPlaceholder = "?"
+		idPlaceholder  = "?"
+	)
+	for _, spec := range specs {
+		probe := "SELECT id, COALESCE(" + spec.column + ", '') FROM " + spec.table +
+			" WHERE substr(" + spec.column + ", 11, 1) = ' '"
+		rows, err := db.rawDB.Query(probe)
+		if err != nil {
+			return fmt.Errorf("legacy timestamps %s.%s: %w", spec.table, spec.column, err)
+		}
+		type fix struct {
+			id int64
+			ts string
+		}
+		var fixes []fix
+		for rows.Next() {
+			var id int64
+			var raw string
+			if err := rows.Scan(&id, &raw); err != nil {
+				rows.Close()
+				return err
+			}
+			parsed, ok := parseLegacyTimestamp(raw)
+			if !ok {
+				continue
+			}
+			if rewritten := parsed.UTC().Format(time.RFC3339); rewritten != raw {
+				fixes = append(fixes, fix{id: id, ts: rewritten})
+			}
+		}
+		rowsErr := rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if rowsErr != nil {
+			return rowsErr
+		}
+		for _, f := range fixes {
+			update := "UPDATE " + spec.table + " SET " + spec.column + " = " + setPlaceholder + " WHERE id = " + idPlaceholder
+			if _, err := db.rawDB.Exec(update, f.ts, f.id); err != nil {
+				return fmt.Errorf("normalize %s.%s #%d: %w", spec.table, spec.column, f.id, err)
+			}
+		}
+	}
+	return nil
+}
+
+// dateWindow is the half-open UTC instant range [start, end) covering one or
+// more inclusive local calendar days. A nil side is unbounded.
+type dateWindow struct {
+	start *time.Time
+	end   *time.Time
+}
+
+// parseDateWindow converts "YYYY-MM-DD" strings — interpreted as LOCAL
+// calendar days in the given location — into exact UTC instants. When both
+// bounds are given the window covers every local moment of the inclusive
+// [startDate, endDate] day span. Unparseable (non-empty) strings leave their
+// side unbounded; ok is false only when neither string contributes a bound.
+//
+// Background: the writer normalizes every timestamp to UTC (RFC3339, see
+// InsertLog), while UI/server date inputs are local calendar days. Comparing
+// those local day strings against substr(timestamp, 1, 10) (SQLite: the UTC
+// calendar day) or timestamp::date (Postgres: the session-timezone day)
+// bucketed rows by a different calendar than the user's; exact UTC instant
+// ranges are dialect-agnostic and correct in both.
+func parseDateWindow(startDate, endDate string, loc *time.Location) (dateWindow, bool) {
+	var w dateWindow
+	ok := false
+	if startDate != "" {
+		if d, err := time.ParseInLocation("2006-01-02", startDate, loc); err == nil {
+			start := d.UTC()
+			w.start = &start
+			ok = true
+		}
+	}
+	if endDate != "" {
+		if d, err := time.ParseInLocation("2006-01-02", endDate, loc); err == nil {
+			end := d.Add(24 * time.Hour).UTC()
+			w.end = &end
+			ok = true
+		}
+	}
+	return w, ok
+}
+
+// dateWindowPredicates turns a parsed window into column range predicates.
+func dateWindowPredicates(col, startDate, endDate string, loc *time.Location) []*entsql.Predicate {
+	w, ok := parseDateWindow(startDate, endDate, loc)
+	if !ok {
+		return nil
+	}
+	var predicates []*entsql.Predicate
+	if w.start != nil {
+		predicates = append(predicates, entsql.GTE(col, w.start.Format(time.RFC3339)))
+	}
+	if w.end != nil {
+		predicates = append(predicates, entsql.LT(col, w.end.Format(time.RFC3339)))
+	}
+	return predicates
+}
+
+// localDayRange returns the half-open UTC bounds of the local calendar day
+// containing t.
+func localDayRange(t time.Time) (start, end time.Time) {
+	day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	return day.UTC(), day.Add(24 * time.Hour).UTC()
 }
 
 func parseFlexibleTime(v interface{}) time.Time {
@@ -1651,10 +1759,7 @@ func parseFlexibleTime(v interface{}) time.Time {
 		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
 			return t
 		}
-		if t, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
-			return t
-		}
-		if t, err := time.Parse("2006-01-02 15:04:05-07", s); err == nil {
+		if t, ok := parseLegacyTimestamp(s); ok {
 			return t
 		}
 		if t, err := time.Parse("2006-01-02T15:04:05Z07:00", s); err == nil {
@@ -1681,7 +1786,7 @@ func (db *DB) GetPendingUploadLogs(limit int) ([]LogEntry, error) {
 			entsql.EQ("sync_status", "pending_upload"),
 			entsql.EQ("sync_status", ""),
 		),
-	).OrderBy(entsql.Asc("timestamp")).Limit(limit)
+	).OrderBy(entsql.Asc("timestamp"), entsql.Asc("id")).Limit(limit)
 
 	query, args := builder.Query()
 	rows, err := db.rawDB.Query(query, args...)
@@ -1710,12 +1815,21 @@ func (db *DB) GetPendingUploadLogs(limit int) ([]LogEntry, error) {
 	return entries, rows.Err()
 }
 
-// MarkLogsSynced marks local log entries as synced with remote IDs.
+// MarkLogsSynced marks local log entries as synced with remote IDs. It runs in
+// one transaction and no longer swallows errors: a per-row autocommit used to
+// leave the batch in a mixed state (some rows re-marked pending_upload on
+// failure, causing later duplicate uploads).
 func (db *DB) MarkLogsSynced(localIDs []int64, remoteIDs []int64) error {
 	if len(localIDs) == 0 {
 		return nil
 	}
-	now := time.Now()
+	now := time.Now().UTC().Format(time.RFC3339)
+	tx, err := db.rawDB.Begin()
+	if err != nil {
+		return fmt.Errorf("mark logs synced: %w", err)
+	}
+	defer tx.Rollback()
+
 	for i, localID := range localIDs {
 		var remoteID int64
 		if i < len(remoteIDs) {
@@ -1727,9 +1841,11 @@ func (db *DB) MarkLogsSynced(localIDs []int64, remoteIDs []int64) error {
 			Set("synced_at", now).
 			Where(entsql.EQ("id", localID))
 		query, args := builder.Query()
-		_, _ = db.rawDB.Exec(query, args...)
+		if _, err := tx.Exec(query, args...); err != nil {
+			return fmt.Errorf("mark log #%d synced: %w", localID, err)
+		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // SetOrgGeminiConfig updates the Gemini API key and model for an organization.
@@ -1810,8 +1926,8 @@ func (db *DB) RecordAPIUsage(orgID, userID int64, keySource string, promptTokens
 	}
 
 	builder := entsql.Dialect(db.dialect).Insert("api_usage_logs").
-		Columns("org_id", "user_id", "key_source", "prompt_tokens", "candidate_tokens", "total_tokens", "model_name").
-		Values(orgID, userID, keySource, promptTokens, candidateTokens, totalTokens, modelName)
+		Columns("org_id", "user_id", "key_source", "prompt_tokens", "candidate_tokens", "total_tokens", "model_name", "created_at").
+		Values(orgID, userID, keySource, promptTokens, candidateTokens, totalTokens, modelName, time.Now().UTC().Format(time.RFC3339))
 
 	query, args := builder.Query()
 	_, err := db.rawDB.Exec(query, args...)
@@ -1905,10 +2021,14 @@ func (db *DB) GetUserUsageSummary(userID int64) (*APIUsageSummary, error) {
 		ByKeySource: make(map[string]int64),
 	}
 
+	placeholder := "$1"
+	if db.dialect == dialect.SQLite {
+		placeholder = "?"
+	}
 	query := `
 			SELECT key_source, COUNT(*), COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(candidate_tokens), 0), COALESCE(SUM(total_tokens), 0)
 			FROM api_usage_logs
-			WHERE user_id = $1
+			WHERE user_id = ` + placeholder + `
 			GROUP BY key_source
 		`
 	args := []interface{}{userID}
@@ -1940,19 +2060,19 @@ func (db *DB) GetUserUsageSummary(userID int64) (*APIUsageSummary, error) {
 func (db *DB) GetTodayUsageSummary() (*APIUsageSummary, error) {
 	summary := &APIUsageSummary{ByKeySource: make(map[string]int64)}
 
-	query := `SELECT key_source, COUNT(*), COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(candidate_tokens), 0), COALESCE(SUM(total_tokens), 0)
-		FROM api_usage_logs
-		WHERE substr(created_at, 1, 10) = ?
-		GROUP BY key_source`
-	args := []interface{}{time.Now().Format("2006-01-02")}
-	if db.dialect == dialect.Postgres {
-		query = `SELECT key_source, COUNT(*), COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(candidate_tokens), 0), COALESCE(SUM(total_tokens), 0)
-			FROM api_usage_logs
-			WHERE created_at::date = CURRENT_DATE
-			GROUP BY key_source`
-		args = nil
-	}
+	// Local calendar day converted to exact UTC instants; RecordAPIUsage
+	// stores created_at in UTC RFC3339 so comparisons are exact.
+	start, end := localDayRange(time.Now())
+	builder := entsql.Dialect(db.dialect).Select(
+		"key_source", "COUNT(*)", "COALESCE(SUM(prompt_tokens), 0)",
+		"COALESCE(SUM(candidate_tokens), 0)", "COALESCE(SUM(total_tokens), 0)",
+	).From(entsql.Table("api_usage_logs")).
+		Where(entsql.And(
+			entsql.GTE("created_at", start.Format(time.RFC3339)),
+			entsql.LT("created_at", end.Format(time.RFC3339)),
+		)).GroupBy("key_source")
 
+	query, args := builder.Query()
 	rows, err := db.rawDB.Query(query, args...)
 	if err != nil {
 		return summary, nil

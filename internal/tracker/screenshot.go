@@ -42,6 +42,10 @@ func CaptureScreenshot(dataDir string) (*ScreenshotResult, error) {
 	captureMu.Lock()
 	defer captureMu.Unlock()
 
+	// Capture the moment first so the on-disk name reflects when the frame was
+	// grabbed, not when encoding/writing finished (encode can take ~100ms+).
+	now := time.Now()
+
 	n := screenshot.NumActiveDisplays()
 	if n == 0 {
 		return nil, fmt.Errorf("no active displays detected")
@@ -77,16 +81,21 @@ func CaptureScreenshot(dataDir string) (*ScreenshotResult, error) {
 	webpData := buf.Bytes()
 
 	// Determine save path: dataDir/images/YYYY-MM-DD/HH-MM-SS.mmm.webp.
-	// Millisecond precision plus an existence-checked suffix keeps concurrent
-	// captures (scheduled tick vs manual collect vs daemon) from overwriting
-	// each other's files at the same path.
-	now := time.Now()
+	// The path is reserved with O_CREATE|O_EXCL so captures are unique and
+	// mutually exclusive across PROCESSES too (GUI app vs background daemon vs
+	// standalone server all capture into the same dataDir; the in-process
+	// captureMu cannot serialize those).
 	dateDir := filepath.Join(dataDir, "images", now.Format("2006-01-02"))
 	if err := os.MkdirAll(dateDir, 0755); err != nil {
 		return nil, fmt.Errorf("create image dir: %w", err)
 	}
-	filePath := uniqueScreenshotPath(dateDir, now)
+	filePath, err := reserveScreenshotPath(dateDir, now)
+	if err != nil {
+		return nil, fmt.Errorf("reserve screenshot file: %w", err)
+	}
 
+	// Write into the exclusively created file: truncation is a no-op because we
+	// just created it empty and nobody else could have claimed the name.
 	if err := os.WriteFile(filePath, webpData, 0644); err != nil {
 		// Best-effort cleanup of a partially written file so a failed write
 		// never leaves a corrupt image on disk.
@@ -104,17 +113,31 @@ func CaptureScreenshot(dataDir string) (*ScreenshotResult, error) {
 	}, nil
 }
 
-// uniqueScreenshotPath returns a not-yet-taken .webp path under dateDir for the
-// given timestamp: HH-MM-SS.mmm.webp, with a -N suffix added on collision so
-// rapid or concurrent captures never overwrite one another on disk.
-func uniqueScreenshotPath(dateDir string, now time.Time) string {
+// reserveScreenshotPath atomically claims an unused .webp path under dateDir
+// for the given timestamp (HH-MM-SS.mmm.webp, with a -N suffix on collision).
+// The claim is an O_CREATE|O_EXCL create, so two processes RACING on the same
+// timestamp can never both win: the kernel rejects the second create exactly
+// once, and the caller falls through to the next suffix. This replaces the
+// old inspect-then-create flow, which raced across processes (daemon + GUI
+// both saw "not exists" and overwrote each other's captures) and could loop
+// forever on persistent Stat errors.
+func reserveScreenshotPath(dateDir string, now time.Time) (string, error) {
 	base := now.Format("15-04-05.000")
-	filePath := filepath.Join(dateDir, base+".webp")
-	for i := 1; ; i++ {
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			return filePath
+	for i := 0; ; i++ {
+		name := base + ".webp"
+		if i > 0 {
+			name = fmt.Sprintf("%s-%d.webp", base, i)
 		}
-		filePath = filepath.Join(dateDir, fmt.Sprintf("%s-%d.webp", base, i))
+		filePath := filepath.Join(dateDir, name)
+		f, err := os.OpenFile(filePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+		switch {
+		case err == nil:
+			return filePath, f.Close()
+		case os.IsExist(err):
+			continue // suffix race lost — try the next one
+		default:
+			return "", err // permission/broken-path: fail fast, never spin
+		}
 	}
 }
 
@@ -183,6 +206,14 @@ func resizeImage(src image.Image, maxW, maxH int) image.Image {
 
 	newW := int(float64(srcW) * scale)
 	newH := int(float64(srcH) * scale)
+	// Extreme aspect ratios can round a dimension to 0, which would produce a
+	// zero-size WebP. Never allocate below 1px.
+	if newW < 1 {
+		newW = 1
+	}
+	if newH < 1 {
+		newH = 1
+	}
 
 	dst := image.NewRGBA(image.Rect(0, 0, newW, newH))
 	draw.BiLinear.Scale(dst, dst.Bounds(), src, srcBounds, draw.Over, nil)

@@ -176,9 +176,19 @@ func emitEvent(out chan<- TrackerEvent, ev TrackerEvent) {
 }
 
 // fetchProperty is a tiny helper for root property reads.
-func fetchProperty(X *xgb.Conn, window xproto.Window, atom xproto.Atom) (xproto.GetPropertyReply, error) {
+// xgb's GetPropertyCookie.Reply() returns a nil reply on X errors / EOF, so the
+// reply must never be dereferenced before the error is checked — the previous
+// `return *reply, err` panicked the appwatcher the moment the display session
+// rotated or a property read failed.
+func fetchProperty(X *xgb.Conn, window xproto.Window, atom xproto.Atom) (*xproto.GetPropertyReply, error) {
 	reply, err := xproto.GetProperty(X, false, window, atom, xproto.GetPropertyTypeAny, 0, (1<<32)-1).Reply()
-	return *reply, err
+	if err != nil {
+		return nil, err
+	}
+	if reply == nil {
+		return nil, fmt.Errorf("property read returned no reply")
+	}
+	return reply, nil
 }
 
 // loadClientSet returns the current managed window id set.

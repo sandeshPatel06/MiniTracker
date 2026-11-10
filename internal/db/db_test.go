@@ -329,3 +329,498 @@ func TestGetAppEventsBetween(t *testing.T) {
 		t.Fatalf("unexpected order: %s, %s", got[0].AppName, got[1].AppName)
 	}
 }
+
+// TestUpdateLogAnalysisPreservesUnsetFields locks the partial-update contract:
+// empty appCategory/windowTitle and zero sessionID/empty sessionTitle must not
+// clobber previously stored values (server pipelines and retry paths pass
+// 0/""), while provided enrichment fields still overwrite.
+func TestUpdateLogAnalysisPreservesUnsetFields(t *testing.T) {
+	database, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, err := database.InsertLog(&LogEntry{
+		Timestamp:    time.Now().UTC(),
+		ImagePath:    "/tmp/shot.png",
+		TotalKeys:    10,
+		UniqueKeys:   5,
+		EntropyScore: 30,
+		AppName:      "Code Editor",
+		WindowTitle:  "main.go - preview",
+	})
+	if err != nil {
+		t.Fatalf("InsertLog: %v", err)
+	}
+
+	full := func(category, appCategory, windowTitle string, sessionID int64, sessionTitle string, score float64) error {
+		return database.UpdateLogAnalysis(id, category, "", appCategory, windowTitle, sessionID, sessionTitle, score >= 50, score, 0.9, "reason")
+	}
+	if err := full("Coding", "Development", "main.go | editor", 7, "Morning Work", 80); err != nil {
+		t.Fatalf("full analysis update: %v", err)
+	}
+
+	partial := func(category string, score float64) error {
+		return database.UpdateLogAnalysis(id, category, "", "", "", 0, "", false, score, 0.5, "re-analysis")
+	}
+	if err := partial("Browsing", 20); err != nil {
+		t.Fatalf("partial analysis update: %v", err)
+	}
+
+	logs, err := database.GetLogsFiltered(0, 0, "", "")
+	if err != nil {
+		t.Fatalf("GetLogsFiltered: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("got %d logs, want 1", len(logs))
+	}
+	e := logs[0]
+	if e.AICategory != "Browsing" || e.ProductiveScore != 20 {
+		t.Errorf("AI fields not updated: category=%q score=%v", e.AICategory, e.ProductiveScore)
+	}
+	if e.SessionID != 7 || e.SessionTitle != "Morning Work" {
+		t.Errorf("session fields clobbered: id=%d title=%q", e.SessionID, e.SessionTitle)
+	}
+	if e.AppCategory != "Development" {
+		t.Errorf("app_category clobbered: %q", e.AppCategory)
+	}
+	if e.WindowTitle != "main.go | editor" {
+		t.Errorf("window_title clobbered: %q", e.WindowTitle)
+	}
+
+	if err := database.UpdateLogAnalysis(id, "Browsing", "", "", "", 0, "All Day", false, 20, 0.5, "re"); err != nil {
+		t.Fatalf("session title only update: %v", err)
+	}
+	logs, _ = database.GetLogsFiltered(0, 0, "", "")
+	if logs[0].SessionTitle != "All Day" || logs[0].SessionID != 7 {
+		t.Errorf("session pairing broken: id=%d title=%q", logs[0].SessionID, logs[0].SessionTitle)
+	}
+}
+
+// TestIncrementAIRetryCountCapsAndPreservesCaptureFields exercises the atomic
+// retry gate: 9 increments still leave the row eligible, the 10th marks it
+// Failed (excluded from the retry queue) without wiping the capture fields.
+func TestIncrementAIRetryCountCapsAndPreservesCaptureFields(t *testing.T) {
+	database, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	id, err := database.InsertLog(&LogEntry{
+		Timestamp:    time.Now().UTC(),
+		ImagePath:    "/tmp/shot.png",
+		EntropyScore: 12,
+		AppName:      "Terminal",
+		WindowTitle:  "work-session-log — konsole",
+	})
+	if err != nil {
+		t.Fatalf("InsertLog: %v", err)
+	}
+
+	for i := 1; i <= 9; i++ {
+		if err := database.IncrementAIRetryCount(id); err != nil {
+			t.Fatalf("increment %d: %v", i, err)
+		}
+		eligible, err := database.CountUnanalyzedLogs()
+		if err != nil {
+			t.Fatalf("CountUnanalyzedLogs: %v", err)
+		}
+		if eligible != 1 {
+			t.Fatalf("after %d increments: %d eligible, want 1", i, eligible)
+		}
+	}
+
+	if err := database.IncrementAIRetryCount(id); err != nil {
+		t.Fatalf("capping increment: %v", err)
+	}
+	if eligible, _ := database.CountUnanalyzedLogs(); eligible != 0 {
+		t.Fatalf("retry-capped entry still eligible: %d", eligible)
+	}
+	if latest, _ := database.GetLatestUnanalyzedLog(); latest != nil {
+		t.Fatalf("GetLatestUnanalyzedLog returned retry-capped entry: %+v", latest)
+	}
+
+	entry, err := database.GetLogByID(id)
+	if err != nil {
+		t.Fatalf("GetLogByID: %v", err)
+	}
+	if entry.AICategory != "Failed" {
+		t.Errorf("expected Failed category, got %q", entry.AICategory)
+	}
+	if entry.AIRetryCount != 9 {
+		t.Errorf("expected retry count 9, got %d", entry.AIRetryCount)
+	}
+	if entry.WindowTitle != "work-session-log — konsole" {
+		t.Errorf("retry-cap path clobbered window title: %q", entry.WindowTitle)
+	}
+
+	// Non-existent IDs must not panic or resurrect anything.
+	if err := database.IncrementAIRetryCount(987654); err != nil {
+		t.Errorf("increment on missing row: %v", err)
+	}
+}
+
+// TestIsProductiveReadDerivations verifies the read-side healing of
+// legacy is_productive=1 rows that lack a stored score, and that a legit
+// analyzed unproductive row (productive=0, score=0) is never promoted to 100.
+func TestIsProductiveReadDerivations(t *testing.T) {
+	database, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	unproductiveID, err := database.InsertLog(&LogEntry{Timestamp: time.Now().UTC(), ImagePath: "/tmp/u.png"})
+	if err != nil {
+		t.Fatalf("insert unproductive: %v", err)
+	}
+	if err := database.UpdateLogAnalysis(unproductiveID, "Browsing", "", "Web", "news", 0, "", false, 0, 0.7, "reading the news"); err != nil {
+		t.Fatalf("analysis on unproductive: %v", err)
+	}
+
+	productiveNoScoreID, err := database.InsertLog(&LogEntry{Timestamp: time.Now().UTC(), ImagePath: "/tmp/p.png"})
+	if err != nil {
+		t.Fatalf("insert productive: %v", err)
+	}
+	if err := database.UpdateLogAnalysis(productiveNoScoreID, "Coding", "", "Development", "ide", 0, "", true, 0, 0.9, "coding"); err != nil {
+		t.Fatalf("analysis on productive: %v", err)
+	}
+
+	highScoreID, err := database.InsertLog(&LogEntry{Timestamp: time.Now().UTC(), ImagePath: "/tmp/h.png"})
+	if err != nil {
+		t.Fatalf("insert high score: %v", err)
+	}
+	if err := database.UpdateLogAnalysis(highScoreID, "Coding", "", "Development", "ide", 0, "", false, 60, 0.9, "deep work"); err != nil {
+		t.Fatalf("analysis on high score: %v", err)
+	}
+
+	logs, err := database.GetLogsFiltered(0, 0, "", "")
+	if err != nil {
+		t.Fatalf("GetLogsFiltered: %v", err)
+	}
+	byID := make(map[int64]LogEntry, len(logs))
+	for _, l := range logs {
+		byID[l.ID] = l
+	}
+
+	low := byID[unproductiveID]
+	if low.IsProductive || low.ProductiveScore != 0 {
+		t.Errorf("0/0 analyzed unproductive row became productive: %+v — condition ordering must stay (productive==1 || score>=50) BEFORE the 0-score heal", low)
+	}
+
+	leg := byID[productiveNoScoreID]
+	if !leg.IsProductive || leg.ProductiveScore != 100 {
+		t.Errorf("legacy productive row without score not healed to 100: %+v", leg)
+	}
+
+	high := byID[highScoreID]
+	if !high.IsProductive {
+		t.Errorf("writer invariant violation: score >= 50 must store is_productive=1: %+v", high)
+	}
+
+	if single, err := database.GetLogByID(unproductiveID); err != nil || single == nil {
+		t.Fatalf("GetLogByID: %v %v", single, err)
+	} else if single.IsProductive || single.ProductiveScore != 0 {
+		t.Errorf("GetLogByID derivation diverges from the list readers: %+v", single)
+	} else if healed, err := database.GetLogByID(productiveNoScoreID); err != nil {
+		t.Fatalf("GetLogByID healed: %v", err)
+	} else if !healed.IsProductive || healed.ProductiveScore != 100 {
+		t.Errorf("GetLogByID does not apply the same legacy heal: %+v", healed)
+	}
+}
+
+// TestDateWindowPredicatesHelper checks the month/year boundary arithmetic of
+// the local-day window helper with a fixed non-UTC timezone.
+func TestDateWindowPredicatesHelper(t *testing.T) {
+	ist := time.FixedZone("IST", 5*3600+1800)
+
+	w, ok := parseDateWindow("2026-01-01", "2026-01-01", ist)
+	if !ok {
+		t.Fatal("inclusive single-day window must parse")
+	}
+	if got, want := w.start.Format(time.RFC3339), "2025-12-31T18:30:00Z"; got != want {
+		t.Errorf("start = %s, want %s", got, want)
+	}
+	if got, want := w.end.Format(time.RFC3339), "2026-01-01T18:30:00Z"; got != want {
+		t.Errorf("end = %s, want %s", got, want)
+	}
+
+	startOnly, ok := parseDateWindow("2026-03-10", "", ist)
+	if !ok || startOnly.start == nil || startOnly.end != nil {
+		t.Fatalf("start-only window = %+v ok=%v", startOnly, ok)
+	}
+
+	endOnly, ok := parseDateWindow("", "2026-03-10", ist)
+	if !ok || endOnly.start != nil || endOnly.end == nil {
+		t.Fatalf("end-only window = %+v ok=%v", endOnly, ok)
+	}
+
+	if _, ok := parseDateWindow("not-a-date", "also-not", ist); ok {
+		t.Fatal("unparseable strings must not contribute a window")
+	}
+
+	preds := dateWindowPredicates("timestamp", "2026-01-01", "2026-01-01", ist)
+	if len(preds) != 2 {
+		t.Fatalf("expected GTE+LT predicates, got %d", len(preds))
+	}
+	if len(dateWindowPredicates("timestamp", "", "", ist)) != 0 {
+		t.Fatal("empty range must produce no predicates")
+	}
+}
+
+// TestDateFiltersUseLocalDayWindows inserts one log per calendar day around
+// local midnight and asserts every date-filtered reader agrees with the LOCAL
+// calendar, not the UTC calendar used for storage.
+func TestDateFiltersUseLocalDayWindows(t *testing.T) {
+	database, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	nowLocal := time.Now()
+	today := nowLocal.Format("2006-01-02")
+	yesterdayNoon := nowLocal.AddDate(0, 0, -1)
+	yesterday := yesterdayNoon.Format("2006-01-02")
+
+	todayNoon := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 12, 0, 0, 0, nowLocal.Location())
+	insert := func(ts time.Time) int64 {
+		id, err := database.InsertLog(&LogEntry{Timestamp: ts.UTC(), ImagePath: "/tmp/x.png", EntropyScore: 5})
+		if err != nil {
+			t.Fatalf("InsertLog: %v", err)
+		}
+		return id
+	}
+	todayID := insert(todayNoon)
+	insert(yesterdayNoon)
+
+	days, err := database.GetLogsForDate(today)
+	if err != nil {
+		t.Fatalf("GetLogsForDate(today): %v", err)
+	}
+	if len(days) != 1 || days[0].ID != todayID {
+		t.Fatalf("today filter = %+v, want exactly today's log %d — stored-UTC timestamps must not shift local day bucketing", days, todayID)
+	}
+
+	yesterdayLogs, err := database.GetLogsForDate(yesterday)
+	if err != nil {
+		t.Fatalf("GetLogsForDate(yesterday): %v", err)
+	}
+	if len(yesterdayLogs) != 1 || yesterdayLogs[0].ID == todayID {
+		t.Fatalf("yesterday filter = %+v, want exactly yesterday's log", yesterdayLogs)
+	}
+
+	page, err := database.GetLogsFilteredPaginated(0, 0, today, today, 1, 50)
+	if err != nil {
+		t.Fatalf("GetLogsFilteredPaginated: %v", err)
+	}
+	if page.Total != 1 || len(page.Logs) != 1 || page.Logs[0].ID != todayID {
+		t.Fatalf("paginated today = %+v", page)
+	}
+
+	var page2, err2 = database.GetLogsFilteredPaginated(0, 0, yesterday, yesterday, 1, 50)
+	if err2 != nil {
+		t.Fatalf("paginated yesterday: %v", err2)
+	}
+	if page2.Total != 1 || page2.Logs[0].ID == todayID {
+		t.Fatalf("paginated yesterday = %+v", page2)
+	}
+
+	statsToday, err := database.GetProductivityStats(today)
+	if err != nil {
+		t.Fatalf("GetProductivityStats(today): %v", err)
+	}
+	if statsToday.TotalMinutes != 1 {
+		t.Fatalf("today stats minutes = %d, want 1", statsToday.TotalMinutes)
+	}
+	statsYesterday, _ := database.GetProductivityStats(yesterday)
+	if statsYesterday.TotalMinutes != 1 {
+		t.Fatalf("yesterday stats minutes = %d, want 1", statsYesterday.TotalMinutes)
+	}
+
+	yesterdaySessions, err := database.GetWorkSessionsForDate(yesterday)
+	if err != nil {
+		t.Fatalf("GetWorkSessionsForDate(yesterday): %v", err)
+	}
+	if len(yesterdaySessions) != 1 {
+		t.Fatalf("yesterday work sessions from logs = %d, want 1 (logs fallback)", len(yesterdaySessions))
+	}
+}
+
+// TestGetLogsFilteredPaginatedStableWithEqualTimestamps pins the (timestamp, id)
+// sort contract: colliding timestamps must not duplicate or drop rows across
+// pages.
+func TestGetLogsFilteredPaginatedStableWithEqualTimestamps(t *testing.T) {
+	database, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	shared := time.Now().UTC().Truncate(time.Second)
+	var ids []int64
+	for i := 0; i < 3; i++ {
+		id, err := database.InsertLog(&LogEntry{Timestamp: shared, ImagePath: "/tmp/x.png"})
+		if err != nil {
+			t.Fatalf("InsertLog: %v", err)
+		}
+		ids = append(ids, id)
+	}
+
+	seen := make(map[int64]bool)
+	for page := 1; page <= 3; page++ {
+		res, err := database.GetLogsFilteredPaginated(0, 0, "", "", page, 1)
+		if err != nil {
+			t.Fatalf("page %d: %v", page, err)
+		}
+		if len(res.Logs) != 1 {
+			t.Fatalf("page %d returned %d rows, want 1", page, len(res.Logs))
+		}
+		if seen[res.Logs[0].ID] {
+			t.Fatalf("row %d repeated across pages", res.Logs[0].ID)
+		}
+		seen[res.Logs[0].ID] = true
+	}
+	if len(seen) != 3 {
+		t.Fatalf("pagination dropped rows: seen=%v ids=%v", seen, ids)
+	}
+}
+
+// TestGetTodayTrackedSeconds counts only captures belonging to today's local
+// calendar day, with the interval multiplier intact.
+func TestGetTodayTrackedSeconds(t *testing.T) {
+	database, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	nowLocal := time.Now()
+	todayNoon := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 12, 0, 0, 0, nowLocal.Location())
+	if _, err := database.InsertLog(&LogEntry{Timestamp: todayNoon.UTC(), ImagePath: "/tmp/x.png"}); err != nil {
+		t.Fatalf("InsertLog today: %v", err)
+	}
+	yesterdayNoon := nowLocal.AddDate(0, 0, -1)
+	if _, err := database.InsertLog(&LogEntry{Timestamp: yesterdayNoon.UTC(), ImagePath: "/tmp/y.png"}); err != nil {
+		t.Fatalf("InsertLog yesterday: %v", err)
+	}
+
+	if got := database.GetTodayTrackedSeconds(30); got != 30 {
+		t.Fatalf("tracked seconds = %d, want 30 — yesterday's log must not leak into the today bucket", got)
+	}
+	if got := database.GetTodayTrackedSeconds(0); got != 30 {
+		t.Fatalf("tracked seconds with defaulted interval = %d, want 30", got)
+	}
+}
+
+// TestSaveWorkSessionsRoundTripAndWindow verifies the transactional write and
+// the local-day start_time window (including the end-only half-open branch).
+func TestSaveWorkSessionsRoundTripAndWindow(t *testing.T) {
+	database, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Build both sessions inside the SAME local calendar day (local mid-day
+	// hours) so the day window asserts correctly in any runner timezone.
+	nowLocal := time.Now()
+	dayDate := nowLocal.Format("2006-01-02")
+	at := func(hour int) time.Time {
+		return time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), hour, 0, 0, 0, nowLocal.Location())
+	}
+	want := []WorkSession{
+		{OrgID: 1, UserID: 1, Title: "morning", Summary: "s", StartTime: at(10), EndTime: at(11), LogCount: 5, ProductivePct: 60, TopAppName: "Code Editor", TopCategory: "Development"},
+		{OrgID: 1, UserID: 1, Title: "late", Summary: "s", StartTime: at(16), EndTime: at(17), LogCount: 3, ProductivePct: 40, TopAppName: "Terminal", TopCategory: "Development"},
+	}
+	if err := database.SaveWorkSessions(want); err != nil {
+		t.Fatalf("SaveWorkSessions: %v", err)
+	}
+
+	got, err := database.GetWorkSessionsFiltered(1, 1, "", "")
+	if err != nil {
+		t.Fatalf("GetWorkSessionsFiltered: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d sessions, want 2", len(got))
+	}
+	byTitle := make(map[string]WorkSession, len(got))
+	for _, s := range got {
+		byTitle[s.Title] = s
+	}
+	if s := byTitle["late"]; s.StartTime.UTC() != at(16).UTC() {
+		t.Errorf("insert/scan roundtrip mismatch for %q: %v vs %v", s.Title, s.StartTime.UTC(), at(16).UTC())
+	}
+
+	fullDay, err := database.GetWorkSessionsFiltered(1, 1, dayDate, dayDate)
+	if err != nil {
+		t.Fatalf("windowed sessions: %v", err)
+	}
+	if len(fullDay) != 2 {
+		t.Fatalf("full-day window got %d sessions, want 2", len(fullDay))
+	}
+
+	startOnly, err := database.GetWorkSessionsFiltered(1, 1, dayDate, "")
+	if err != nil {
+		t.Fatalf("start-only window: %v", err)
+	}
+	if len(startOnly) != 2 {
+		t.Fatalf("start-only window got %d sessions, want 2", len(startOnly))
+	}
+}
+
+// TestLegacyTimestampNormalizationMigration feeds legacy go-sqlite3 /
+// CURRENT_TIMESTAMP elapsed formats into a fresh database, resets the schema
+// version, and asserts reopening rewrites them into UTC RFC3339 exactly once.
+func TestLegacyTimestampNormalizationMigration(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "minitracker-legacy-ts-*")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	os.RemoveAll(tmpDir)
+	database, err := Open(tmpDir)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	if _, err := database.rawDB.Exec(`INSERT INTO work_sessions (title, summary, start_time, end_time, log_count)
+		VALUES ('legacy', 's', '2026-01-05 09:30:00.123456789+05:30', '2026-01-05 11:30:00.123456789+05:30', 3)`); err != nil {
+		t.Fatalf("legacy work session insert: %v", err)
+	}
+	if _, err := database.rawDB.Exec(`INSERT INTO api_usage_logs (key_source, prompt_tokens, candidate_tokens, total_tokens, model_name, created_at)
+		VALUES ('guest', 10, 5, 15, 'm', '2026-01-05 10:00:00')`); err != nil {
+		t.Fatalf("legacy usage insert: %v", err)
+	}
+	if _, err := database.rawDB.Exec("PRAGMA user_version = 0"); err != nil {
+		t.Fatalf("reset schema version: %v", err)
+	}
+	database.Close()
+
+	database2, err := Open(tmpDir)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		t.Fatalf("re-open: %v", err)
+	}
+	defer func() {
+		database2.Close()
+		os.RemoveAll(tmpDir)
+	}()
+
+	var schemaVersion int
+	if err := database2.rawDB.QueryRow("PRAGMA user_version").Scan(&schemaVersion); err != nil || schemaVersion != 1 {
+		t.Fatalf("schema version after re-open = %d (err %v), want 1", schemaVersion, err)
+	}
+
+	var startTS, endTS string
+	if err := database2.rawDB.QueryRow("SELECT start_time, end_time FROM work_sessions WHERE title = 'legacy'").Scan(&startTS, &endTS); err != nil {
+		t.Fatalf("read legacy session: %v", err)
+	}
+	if startTS != "2026-01-05T04:00:00Z" || endTS != "2026-01-05T06:00:00Z" {
+		t.Errorf("normalized timestamps = %q / %q, want UTC RFC3339 04:00/06:00", startTS, endTS)
+	}
+
+	var createdAt string
+	if err := database2.rawDB.QueryRow("SELECT created_at FROM api_usage_logs WHERE model_name = 'm'").Scan(&createdAt); err != nil {
+		t.Fatalf("read legacy usage: %v", err)
+	}
+	if createdAt != "2026-01-05T10:00:00Z" {
+		t.Errorf("normalized created_at = %q, want 2026-01-05T10:00:00Z", createdAt)
+	}
+
+	// After normalization the legacy row must be reachable by its local
+	// calendar day. Derive the date from the runner's own zone so the assertion
+	// holds regardless of the CI timezone.
+	local, err := time.Parse(time.RFC3339, startTS)
+	if err != nil {
+		t.Fatalf("parse normalized start time: %v", err)
+	}
+	day := local.In(time.Local).Format("2006-01-02")
+	session, err := database2.GetWorkSessionsFiltered(0, 0, day, day)
+	if err != nil {
+		t.Fatalf("normalized session date filter: %v", err)
+	}
+	if len(session) != 1 {
+		t.Errorf("normalized legacy row not found by its local day %s, got %d", day, len(session))
+	}
+}

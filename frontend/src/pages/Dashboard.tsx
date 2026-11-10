@@ -490,14 +490,14 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
                   ? Math.round(log.productive_score)
                   : log.is_productive ? 100 : 0;
                 return (
-                  <div key={log.id} className="timeline-item">
+                  <div key={`${log.id}-${log.timestamp}-${log.image_path}`} className="timeline-item">
                     <span className="timeline-time">
                       {format(new Date(log.timestamp), 'HH:mm')}
                     </span>
 
                     <ScreenshotThumb
                       imagePath={log.image_path}
-                      onClick={() => setSelectedImage(log.image_path)}
+                      onClick={log.image_path ? () => setSelectedImage(log.image_path) : undefined}
                     />
 
                     <div className="timeline-info">

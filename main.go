@@ -13,6 +13,14 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// version is the release version reported by the app (Dev panel / diagnostics).
+// Release builds override it at link time:
+//
+//	wails build -ldflags "-s -w -X main.version=2.1.0"
+//
+// Unset ("dev") builds fall back to VCS revision info embedded by the toolchain.
+var version = "dev"
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--background" {
 		runBackgroundApp()

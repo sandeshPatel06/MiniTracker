@@ -126,14 +126,14 @@ jobs:
           wails build \
             -platform "${{ matrix.platform }}" \
             -tags "${{ matrix.tags }}" \
-            -ldflags "-s -w" \
+            -ldflags "-s -w -X main.version=${{ github.ref_name }}" \
             -clean -s -m -skipbindings
 
       - name: Build Server Binary
         shell: bash
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags="-s -w" -o "dist/${{ matrix.server_asset }}" ./cmd/server
+          go build -trimpath -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o "dist/${{ matrix.server_asset }}" ./cmd/server
 
       - name: Package Linux Desktop
         if: runner.os == 'Linux'

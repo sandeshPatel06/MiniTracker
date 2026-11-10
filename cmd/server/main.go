@@ -217,20 +217,41 @@ func main() {
 
 	// Background cleanup routine: Retain screenshots for 7 days (168 hours)
 	go func() {
-		ticker := time.NewTicker(6 * time.Hour)
-		defer ticker.Stop()
-		for range ticker.C {
+		cleanup := func() {
 			imgDir := filepath.Join(cfg.DataDir, "images")
 			cutoff := time.Now().Add(-7 * 24 * time.Hour)
 			_ = filepath.Walk(imgDir, func(path string, info os.FileInfo, err error) error {
-				if err == nil && !info.IsDir() && info.ModTime().Before(cutoff) {
-					if strings.HasSuffix(path, ".png") || strings.HasSuffix(path, ".jpg") || strings.HasSuffix(path, ".jpeg") {
-						_ = os.Remove(path)
-						log.Printf("[server] 7-day retention cleanup: deleted old screenshot %s", path)
+				if err != nil {
+					return nil
+				}
+				if !info.IsDir() && info.ModTime().Before(cutoff) {
+					switch strings.ToLower(filepath.Ext(path)) {
+					case ".webp", ".png", ".jpg", ".jpeg":
+						if os.Remove(path) == nil {
+							log.Printf("[server] 7-day retention cleanup: deleted old screenshot %s", path)
+						}
 					}
 				}
 				return nil
 			})
+			// Remove date folders left empty by the walk (YYYY-MM-DD dirs).
+			if entries, err := os.ReadDir(imgDir); err == nil {
+				for _, entry := range entries {
+					if !entry.IsDir() {
+						continue
+					}
+					full := filepath.Join(imgDir, entry.Name())
+					if sub, err := os.ReadDir(full); err == nil && len(sub) == 0 {
+						_ = os.Remove(full)
+					}
+				}
+			}
+		}
+		cleanup()
+		ticker := time.NewTicker(6 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			cleanup()
 		}
 	}()
 

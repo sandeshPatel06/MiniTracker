@@ -31,6 +31,27 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  // App version is read from the desktop binding ("version" field of
+  // GetDevDiagnostics, backed by app.go's appVersion()) so the UI always shows
+  // the real build version instead of a hardcoded string that drifts.
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    const goApp = (window as any).go?.main?.App;
+    if (!goApp?.GetDevDiagnostics) return;
+    let mounted = true;
+    goApp
+      .GetDevDiagnostics()
+      .then((diag: any) => {
+        if (mounted && typeof diag?.version === 'string' && diag.version) {
+          setAppVersion(diag.version);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const fetchUsageSummary = useCallback(async () => {
     // Desktop runs standalone (no backend): read today's usage from the local DB.
@@ -531,6 +552,12 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
           </button>
         </div>
       </div>
+
+      {appVersion && (
+        <div style={{ marginTop: 14, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+          get-Hike desktop · version {appVersion}
+        </div>
+      )}
     </div>
   );
 }

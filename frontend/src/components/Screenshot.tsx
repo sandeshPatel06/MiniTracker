@@ -51,6 +51,15 @@ function releaseThumbSlot() {
   if (next) next();
 }
 
+// Web mode serves raw files through the backend image route. A capture can be
+// re-saved under the same path (per-minute files, regenerated thumbnails), so
+// the URL carries a cache-busting timestamp to keep the webview HTTP cache
+// from serving stale bytes. The result is memoized per path, so the URL stays
+// stable for the session after the first fetch.
+function buildImageUrl(imagePath: string): string {
+  return buildApiUrl(`/api/image?path=${encodeURIComponent(imagePath)}&t=${Date.now()}`);
+}
+
 function cacheImage(path: string, dataUrl: string) {
   if (imageMemoryCache.size >= MAX_CACHE_SIZE) {
     const firstKey = imageMemoryCache.keys().next().value;
@@ -92,7 +101,7 @@ function fetchImageData(imagePath: string): Promise<string | null> {
           return res;
         }
       } else {
-        const url = buildApiUrl(`/api/image?path=${encodeURIComponent(imagePath)}`);
+        const url = buildImageUrl(imagePath);
         cacheImage(imagePath, url);
         return url;
       }
@@ -127,31 +136,38 @@ function fetchThumbData(imagePath: string): Promise<string | null> {
       const goApp = (window as any).go?.main?.App;
       if (goApp?.GetThumbnailBase64) {
         await acquireThumbSlot();
+        let res: string | null = null;
         try {
-          const res = await goApp.GetThumbnailBase64(imagePath);
-          if (res) {
-            cacheThumb(imagePath, res);
-            return res;
-          }
+          res = await goApp.GetThumbnailBase64(imagePath);
         } finally {
           releaseThumbSlot();
+        }
+        if (res) {
+          cacheThumb(imagePath, res);
+          return res;
         }
       }
       if (!goApp) {
         // Web mode: a relative API URL is already far lighter than raw data
-        const url = buildApiUrl(`/api/image?path=${encodeURIComponent(imagePath)}`);
+        const url = buildImageUrl(imagePath);
         cacheThumb(imagePath, url);
         return url;
       }
     } catch {
       // fall through to the full-image loader
-    } finally {
-      pendingThumbRequests.delete(imagePath);
     }
-    const full = await fetchImageData(imagePath);
-    if (full) cacheThumb(imagePath, full);
-    return full;
+    // Desktop fallback when the thumbnail is missing or failed: load the full
+    // image but do NOT store it in the thumb cache — pinning full-resolution
+    // data URLs here would bloat memory and swap the huge image into list rows
+    // (the two-cache split exists precisely to prevent that).
+    return fetchImageData(imagePath);
   })();
+
+  // Keep the pending entry (so concurrent mounts of the same path share one
+  // request) until the whole chain above — including the full-image fallback —
+  // settles.
+  const clearPendingThumb = () => { pendingThumbRequests.delete(imagePath); };
+  promise.then(clearPendingThumb, clearPendingThumb);
 
   pendingThumbRequests.set(imagePath, promise);
   return promise;
@@ -466,6 +482,14 @@ export function ImageModal({ imagePath, onClose }: ImageModalProps) {
               boxShadow: 'var(--shadow-card)',
               imageRendering: '-webkit-optimize-contrast',
               transition: 'width 0.15s ease-out',
+            }}
+            onError={() => {
+              // Never let a failed URL-based entry poison the memory cache:
+              // evict it so reopening the modal retries the load.
+              if (src && !src.startsWith('data:')) {
+                imageMemoryCache.delete(imagePath || src);
+              }
+              setSrc(null);
             }}
           />
         ) : (

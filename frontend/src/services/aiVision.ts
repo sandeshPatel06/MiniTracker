@@ -44,7 +44,7 @@ export async function loadImageAsDataUrl(imagePath: string): Promise<string | nu
     return typeof dataUrl === 'string' && dataUrl.startsWith('data:image/') ? dataUrl : null;
   }
   try {
-    const res = await apiFetch(`/api/image?path=${encodeURIComponent(imagePath)}`);
+    const res = await apiFetch(`/api/image?path=${encodeURIComponent(imagePath)}&t=${Date.now()}`);
     if (!res.ok) return null;
     const blob = await res.blob();
     return await new Promise<string | null>((resolve) => {

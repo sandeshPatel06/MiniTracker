@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -96,6 +97,12 @@ func (a *App) startup(ctx context.Context) {
 		log.Printf("[app] config load error: %v", err)
 		cfg = &config.Config{ScreenshotInterval: 30 * time.Second, DataDir: "/tmp/get-hike"}
 	}
+	// config.yaml.example documents `data_dir: ~/.local/share/get-hike`, but the
+	// loader never expands the tilde: Go does no shell expansion, so screenshots,
+	// SQLite and logs would silently land in a literal "./~" directory while the
+	// DB stores "~/..." paths that no os.ReadFile can ever open — timeline
+	// previews fail everywhere. Normalise once, before anything consumes DataDir.
+	cfg.DataDir = expandHomePath(filepath.Clean(cfg.DataDir))
 	a.cfg = cfg
 	a.appIcons = appicon.NewResolver()
 	go a.appIcons.Warm()
@@ -106,6 +113,12 @@ func (a *App) startup(ctx context.Context) {
 	// Reclaim tracking from a detached background tracker spawned by a previous run.
 	if !a.headless {
 		stopBackgroundDaemon(cfg.DataDir)
+		// Register this GUI as the live capture owner so a concurrently started
+		// background daemon (autostart, scheduler, manual `--background`) detects
+		// it and refuses to run a second capture loop on the same data dir.
+		if err := writePIDFile(guiPidPath(cfg.DataDir), os.Getpid()); err != nil {
+			log.Printf("[app] write gui pidfile error: %v", err)
+		}
 	}
 
 	// Open database
@@ -599,6 +612,10 @@ func (a *App) shutdown(_ context.Context) {
 	// If tracking is still active, hand it off to a detached background process
 	// so capture continues after this app exits.
 	if !a.headless && a.cfg != nil {
+		// Release GUI ownership BEFORE handing capture to the background daemon,
+		// so the daemon's "desktop app is running" guard does not see this dying
+		// process and refuse to start.
+		removePIDFileIfOwner(guiPidPath(a.cfg.DataDir), os.Getpid())
 		a.statsMu.Lock()
 		active := a.isTrackingActive
 		a.statsMu.Unlock()
@@ -893,23 +910,107 @@ func (a *App) GetActiveTask() string {
 	return a.activeTask
 }
 
-// GetImageBase64 reads an image file from disk and returns it as a data URL.
-func (a *App) GetImageBase64(imagePath string) (string, error) {
-	if imagePath == "" {
-		return "", nil
+// maxImageReadBytes caps how large an image file the preview bindings will read
+// into memory (25 MB is far above the ~100 KB typical WebP capture, but stops a
+// bogus path from OOM-ing the app).
+const maxImageReadBytes = 25 << 20
+
+// expandHomePath expands a leading "~" or "~/" to the user's home directory.
+// Go performs no shell expansion, so legacy configs with `data_dir: ~/...` and
+// DB rows recorded before tilde normalisation both rely on this.
+func expandHomePath(p string) string {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			if p == "~" {
+				return home
+			}
+			return filepath.Join(home, p[2:])
+		}
 	}
-	data, err := os.ReadFile(imagePath)
+	return p
+}
+
+// resolveImageRequestPath validates a frontend-supplied image path before it is
+// read from disk: tildes are expanded, the cleaned path must stay inside the
+// app data directory (the same containment guard the backend /api/image handler
+// applies), and the target must be a regular file within the size cap.
+// Symlinks are rejected so a planted link cannot escape the data directory.
+func (a *App) resolveImageRequestPath(imagePath string) (string, error) {
+	raw := strings.TrimSpace(imagePath)
+	if raw == "" {
+		return "", fmt.Errorf("empty image path")
+	}
+	p := expandHomePath(raw)
+	if !filepath.IsAbs(p) {
+		return "", fmt.Errorf("image path must be absolute")
+	}
+	p = filepath.Clean(p)
+
+	dataDir := ""
+	if a.cfg != nil {
+		dataDir = a.cfg.DataDir
+	}
+	if dataDir == "" {
+		return "", fmt.Errorf("config/data dir unavailable")
+	}
+	rel, relErr := filepath.Rel(filepath.Clean(dataDir), p)
+	if relErr != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("image path outside data directory")
+	}
+
+	info, err := os.Lstat(p)
 	if err != nil {
 		return "", err
 	}
-	mimeType := "image/jpeg"
-	ext := strings.ToLower(filepath.Ext(imagePath))
-	if ext == ".webp" {
-		mimeType = "image/webp"
-	} else if ext == ".png" {
-		mimeType = "image/png"
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("image path is not a regular file")
 	}
-	return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data)), nil
+	if info.Size() > maxImageReadBytes {
+		return "", fmt.Errorf("image too large (%d bytes)", info.Size())
+	}
+	return p, nil
+}
+
+// imageMimeFor maps an image file extension to its MIME type. Captures are
+// WebP; unknown extensions are sniffed from the content so legacy PNG/JPEG
+// files with unexpected names still preview correctly.
+func imageMimeFor(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".webp":
+		return "image/webp"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "application/octet-stream"
+	}
+	defer f.Close()
+	buf := make([]byte, 512)
+	n, _ := f.Read(buf)
+	if m := http.DetectContentType(buf[:n]); strings.HasPrefix(m, "image/") {
+		return m
+	}
+	return "application/octet-stream"
+}
+
+// GetImageBase64 reads a screenshot image from disk and returns it as a data URL.
+// Paths are validated by resolveImageRequestPath — only regular files inside the
+// app data directory can be served.
+func (a *App) GetImageBase64(imagePath string) (string, error) {
+	path, err := a.resolveImageRequestPath(imagePath)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("data:%s;base64,%s", imageMimeFor(path), base64.StdEncoding.EncodeToString(data)), nil
 }
 
 // GetAppIcon resolves an installed application's icon and returns it as a data URL.
@@ -926,33 +1027,27 @@ func (a *App) GetAppIcon(appName string) string {
 
 // GetThumbnailBase64 serves a cached downscaled WebP thumbnail (512px) as a data
 // URL. List views (Timeline) use this so previews stay tiny and instant, while
-// full-resolution images stay reserved for the inspection modal.
+// full-resolution images stay reserved for the inspection modal. The resolved
+// path is validated like GetImageBase64; the mime type always matches the file
+// actually being served.
 func (a *App) GetThumbnailBase64(imagePath string) (string, error) {
-	if imagePath == "" {
-		return "", nil
+	path, err := a.resolveImageRequestPath(imagePath)
+	if err != nil {
+		return "", err
 	}
 	dataDir := ""
 	if a.cfg != nil {
 		dataDir = a.cfg.DataDir
 	}
-	thumbPath := ai.ThumbnailForImage(imagePath, dataDir)
+	thumbPath := ai.ThumbnailForImage(path, dataDir)
 	if thumbPath == "" {
-		thumbPath = imagePath
+		thumbPath = path
 	}
 	data, err := os.ReadFile(thumbPath)
 	if err != nil {
 		return "", err
 	}
-	// ThumbnailForImage falls back to the original file when no thumbnail could
-	// be produced — match the mime type to the file actually being served.
-	mimeType := "image/webp"
-	ext := strings.ToLower(filepath.Ext(thumbPath))
-	if ext == ".png" {
-		mimeType = "image/png"
-	} else if ext == ".jpg" || ext == ".jpeg" {
-		mimeType = "image/jpeg"
-	}
-	return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data)), nil
+	return fmt.Sprintf("data:%s;base64,%s", imageMimeFor(thumbPath), base64.StdEncoding.EncodeToString(data)), nil
 }
 
 // UpdateScreenshotInterval updates and persists the screenshot interval, then resets
@@ -1966,22 +2061,30 @@ func copyFileContents(src, dst string) error {
 	return out.Close()
 }
 
-// appVersion returns the main module version with a short VCS revision when available.
+// appVersion reports the release version (overridable at build time via
+// -ldflags "-X main.version=..."), appending a short VCS revision when the
+// toolchain embedded one. Builds without either fall back to the module
+// version, and lastly to "dev".
 func appVersion() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "dev"
-	}
-	version := info.Main.Version
-	if version == "" || version == "(devel)" {
-		version = "dev"
-	}
-	for _, setting := range info.Settings {
-		if setting.Key == "vcs.revision" && len(setting.Value) >= 7 {
-			return version + "+" + setting.Value[:7]
+	v := version
+	revision := ""
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" && len(setting.Value) >= 7 {
+				revision = setting.Value[:7]
+				break
+			}
+		}
+		if v == "dev" {
+			if main := info.Main.Version; main != "" && main != "(devel)" {
+				v = main
+			}
 		}
 	}
-	return version
+	if revision != "" {
+		return v + "+" + revision
+	}
+	return v
 }
 
 // OpenTrackerWizard opens the wizard as a separate OS-level popup window.

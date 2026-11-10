@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/chai2010/webp"
@@ -30,10 +31,17 @@ const (
 	webpQuality = 55 // 55% is visually indistinguishable for AI analysis, encodes ~15% faster
 )
 
+// captureMu serializes concurrent CaptureScreenshot calls (scheduled tick,
+// manual "collect now", daemon) so captures never overlap or interleave writes.
+var captureMu sync.Mutex
+
 // CaptureScreenshot takes a screenshot of all active displays, combines them into
 // a single grid image, compresses it to WebP at 60% quality (max 720p), saves it
 // to disk, and returns a base64 encoded copy for AI analysis.
 func CaptureScreenshot(dataDir string) (*ScreenshotResult, error) {
+	captureMu.Lock()
+	defer captureMu.Unlock()
+
 	n := screenshot.NumActiveDisplays()
 	if n == 0 {
 		return nil, fmt.Errorf("no active displays detected")
@@ -68,16 +76,21 @@ func CaptureScreenshot(dataDir string) (*ScreenshotResult, error) {
 
 	webpData := buf.Bytes()
 
-	// Determine save path: dataDir/images/YYYY-MM-DD/HH-MM-SS.webp
+	// Determine save path: dataDir/images/YYYY-MM-DD/HH-MM-SS.mmm.webp.
+	// Millisecond precision plus an existence-checked suffix keeps concurrent
+	// captures (scheduled tick vs manual collect vs daemon) from overwriting
+	// each other's files at the same path.
 	now := time.Now()
 	dateDir := filepath.Join(dataDir, "images", now.Format("2006-01-02"))
 	if err := os.MkdirAll(dateDir, 0755); err != nil {
 		return nil, fmt.Errorf("create image dir: %w", err)
 	}
-	filename := now.Format("15-04-05") + ".webp"
-	filePath := filepath.Join(dateDir, filename)
+	filePath := uniqueScreenshotPath(dateDir, now)
 
 	if err := os.WriteFile(filePath, webpData, 0644); err != nil {
+		// Best-effort cleanup of a partially written file so a failed write
+		// never leaves a corrupt image on disk.
+		_ = os.Remove(filePath)
 		return nil, fmt.Errorf("write screenshot: %w", err)
 	}
 
@@ -89,6 +102,20 @@ func CaptureScreenshot(dataDir string) (*ScreenshotResult, error) {
 		Height:     b.Dy(),
 		SizeBytes:  len(webpData),
 	}, nil
+}
+
+// uniqueScreenshotPath returns a not-yet-taken .webp path under dateDir for the
+// given timestamp: HH-MM-SS.mmm.webp, with a -N suffix added on collision so
+// rapid or concurrent captures never overwrite one another on disk.
+func uniqueScreenshotPath(dateDir string, now time.Time) string {
+	base := now.Format("15-04-05.000")
+	filePath := filepath.Join(dateDir, base+".webp")
+	for i := 1; ; i++ {
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			return filePath
+		}
+		filePath = filepath.Join(dateDir, fmt.Sprintf("%s-%d.webp", base, i))
+	}
 }
 
 // stitchDisplayImages combines multiple display images into a single grid image.

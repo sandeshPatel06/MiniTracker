@@ -22,6 +22,10 @@ import (
 func runBackgroundApp() {
 	cfg, err := config.Load()
 	if err == nil && cfg != nil {
+		if guiAppRunning(cfg.DataDir) {
+			log.Printf("[bg] desktop app is running — refusing to start a second capture loop (pidfile %s)", guiPidPath(cfg.DataDir))
+			return
+		}
 		pid := readPIDFile(pidPath(cfg.DataDir))
 		if pid > 0 && pid != os.Getpid() && processAlive(pid) && processMatchesDaemon(pid) {
 			log.Printf("[bg] another background tracker is already running (pid %d) — exiting", pid)
@@ -56,6 +60,58 @@ func pidPath(dataDir string) string {
 	return filepath.Join(dataDir, "tracker.pid")
 }
 
+// guiPidPath returns the pidfile marking a live GUI capture owner for a data
+// directory. The GUI writes it at startup and releases it at shutdown; the
+// daemon checks it so exactly one capture loop (GUI or daemon) ever runs.
+func guiPidPath(dataDir string) string {
+	return filepath.Join(dataDir, "gui.pid")
+}
+
+// guiAppRunning reports whether a live GUI capture owner is registered for
+// dataDir. The pid is only trusted when the process is this same binary, so a
+// recycled pid from a stale pidfile is never mistaken for a running app.
+func guiAppRunning(dataDir string) bool {
+	pid := readPIDFile(guiPidPath(dataDir))
+	return pid > 0 && pid != os.Getpid() && processAlive(pid) && processMatchesBinary(pid)
+}
+
+// removePIDFileIfOwner removes path only when it still records pid, so a later
+// instance's registration is never wiped by an exiting older one.
+func removePIDFileIfOwner(path string, pid int) {
+	if readPIDFile(path) == pid {
+		_ = os.Remove(path)
+	}
+}
+
+// processMatchesBinary verifies that pid runs this same binary: the
+// /proc/<pid>/exe link where it names the binary (Linux), else the
+// /proc/<pid>/cmdline basename — Android runs binaries through its dynamic
+// linker so /proc/<pid>/exe names linker64 and cmdline must decide. Without
+// /proc the pidfile is trusted as-is.
+func processMatchesBinary(pid int) bool {
+	if !procAvailable() {
+		return true
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	selfName := filepath.Base(self)
+
+	if link, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid)); err == nil && filepath.Base(link) == selfName {
+		return true
+	}
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return false
+	}
+	arg0 := strings.FieldsFunc(string(data), func(r rune) bool { return r == '\x00' })
+	if len(arg0) == 0 {
+		return false
+	}
+	return filepath.Base(arg0[0]) == selfName
+}
+
 // writePIDFile persists pid to path.
 func writePIDFile(path string, pid int) error {
 	return os.WriteFile(path, []byte(strconv.Itoa(pid)), 0644)
@@ -74,9 +130,16 @@ func readPIDFile(path string) int {
 	return pid
 }
 
+// procAvailable reports whether /proc pseudo-files can be inspected. Linux and
+// Android both provide /proc/<pid>/{cmdline,exe}; other platforms rely on the
+// pidfile being trusted as-is.
+func procAvailable() bool {
+	return runtime.GOOS == "linux" || runtime.GOOS == "android"
+}
+
 // processMatchesDaemon verifies on Linux that pid is indeed our --background daemon.
 func processMatchesDaemon(pid int) bool {
-	if runtime.GOOS != "linux" {
+	if !procAvailable() {
 		return true
 	}
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))

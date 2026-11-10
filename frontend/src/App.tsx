@@ -457,8 +457,17 @@ export default function App() {
       if (fetchedLists.length === 0) {
         logsData = null;
       } else {
+        // Per-day fetches are flattened; drop any row whose id already appeared
+        // so overlapping results can never produce duplicate React keys or
+        // doubled timeline rows.
+        const seen = new Set<number>();
         logsData = fetchedLists
           .flat()
+          .filter((log) => {
+            if (seen.has(log.id)) return false;
+            seen.add(log.id);
+            return true;
+          })
           .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
       }
       statsData = statsResult;

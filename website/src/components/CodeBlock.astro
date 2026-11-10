@@ -48,6 +48,7 @@ const uniqueId = `code-block-${Math.random().toString(36).substring(2, 9)}`;
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
+          aria-hidden="true"
         >
           <path
             stroke-linecap="round"
@@ -63,6 +64,7 @@ const uniqueId = `code-block-${Math.random().toString(36).substring(2, 9)}`;
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
+          aria-hidden="true"
         >
           <path
             stroke-linecap="round"
@@ -96,6 +98,10 @@ const uniqueId = `code-block-${Math.random().toString(36).substring(2, 9)}`;
         // Fallback
         const textarea = document.createElement('textarea');
         textarea.value = code;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        textarea.style.pointerEvents = 'none';
         document.body.appendChild(textarea);
         textarea.select();
         document.execCommand('copy');

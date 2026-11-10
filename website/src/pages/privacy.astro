@@ -28,7 +28,7 @@ const githubIssuesUrl = 'https://github.com/sandeshPatel06/mini-tracker/issues';
     <!-- Core Commitment Banner -->
     <section class="p-4 sm:p-8 rounded-xl sm:rounded-2xl bg-emerald-950/20 border border-emerald-500/30 mb-8 sm:mb-12" aria-label="Privacy core commitment">
       <h2 class="text-base sm:text-lg font-bold text-white mb-2 flex items-center gap-2">
-        <svg class="w-5 h-5 text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg class="w-5 h-5 text-emerald-400 shrink-0" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
           <path d="M9 12l2 2 4-4" />
         </svg>
@@ -70,36 +70,36 @@ const githubIssuesUrl = 'https://github.com/sandeshPatel06/mini-tracker/issues';
         <p class="mb-4 text-slate-400">
           To protect user security and prevent credential leakage, get-Hike is architecturally barred from capturing:
         </p>
-        <figure class="p-4 sm:p-5 rounded-xl bg-slate-900 border border-slate-800 space-y-3">
-          <div class="flex items-start gap-2.5 text-xs sm:text-sm">
-            <span class="font-bold text-red-400 mt-0.5 shrink-0">✗</span>
+        <ul class="p-4 sm:p-5 rounded-xl bg-slate-900 border border-slate-800 space-y-3 list-none">
+          <li class="flex items-start gap-2.5 text-xs sm:text-sm">
+            <span class="font-bold text-red-400 mt-0.5 shrink-0" aria-hidden="true">✗</span>
             <div>
               <span class="text-white font-semibold">No Keylogger: </span>
               <span class="text-slate-300">We never capture, buffer, or record actual characters, strings, passwords, or keys pressed.</span>
             </div>
-          </div>
-          <div class="flex items-start gap-2.5 text-xs sm:text-sm">
-            <span class="font-bold text-red-400 mt-0.5 shrink-0">✗</span>
+          </li>
+          <li class="flex items-start gap-2.5 text-xs sm:text-sm">
+            <span class="font-bold text-red-400 mt-0.5 shrink-0" aria-hidden="true">✗</span>
             <div>
               <span class="text-white font-semibold">No Audio or Microphone: </span>
               <span class="text-slate-300">get-Hike has zero microphone listening hooks.</span>
             </div>
-          </div>
-          <div class="flex items-start gap-2.5 text-xs sm:text-sm">
-            <span class="font-bold text-red-400 mt-0.5 shrink-0">✗</span>
+          </li>
+          <li class="flex items-start gap-2.5 text-xs sm:text-sm">
+            <span class="font-bold text-red-400 mt-0.5 shrink-0" aria-hidden="true">✗</span>
             <div>
               <span class="text-white font-semibold">No Webcam Feeds: </span>
               <span class="text-slate-300">We never access or activate camera hardware.</span>
             </div>
-          </div>
-          <div class="flex items-start gap-2.5 text-xs sm:text-sm">
-            <span class="font-bold text-red-400 mt-0.5 shrink-0">✗</span>
+          </li>
+          <li class="flex items-start gap-2.5 text-xs sm:text-sm">
+            <span class="font-bold text-red-400 mt-0.5 shrink-0" aria-hidden="true">✗</span>
             <div>
               <span class="text-white font-semibold">No Default Cloud Telemetry: </span>
               <span class="text-slate-300">No telemetry pings, tracking beacons, or analytics servers are contacted by the desktop app.</span>
             </div>
-          </div>
-        </figure>
+          </li>
+        </ul>
       </section>
 
       <!-- 3. Local Storage Location -->

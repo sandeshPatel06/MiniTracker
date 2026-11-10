@@ -110,9 +110,8 @@
 }
 
 /* Theme toggle icon swap */
-[data-theme="dark"] .icon-sun { display: none; }
 [data-theme="light"] .icon-moon { display: none; }
-html:not([data-theme]) .theme-moon-default { display: none; }
+html:not([data-theme="light"]) .icon-sun { display: none; }
 
 /* Light theme: remap Tailwind v4 palette vars so every utility flips theme */
 [data-theme="light"] {
@@ -140,8 +139,18 @@ html:not([data-theme]) .theme-moon-default { display: none; }
   --color-emerald-400: #047857;
   --color-emerald-300: #047857;
   --color-emerald-200: #065f46;
+  --color-emerald-950: #d1fae5;
   --color-teal-200: #0f766e;
   --color-teal-300: #0d9488;
+}
+
+/* Light-theme focus ring & selection: keep brand-green indicators visible on pale surfaces */
+[data-theme="light"] *:focus-visible {
+  outline-color: #059669;
+}
+
+[data-theme="light"] ::selection {
+  color: #04231a;
 }
 
 [data-theme="light"] .glass-panel {

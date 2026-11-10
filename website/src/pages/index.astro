@@ -8,8 +8,6 @@ import FAQ from '../components/FAQ.astro';
 import CTASection from '../components/CTASection.astro';
 import CodeBlock from '../components/CodeBlock.astro';
 
-const getHikeUrl = 'https://sandeshpatel06.github.io/mini-tracker';
-
 const jsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
@@ -141,7 +139,7 @@ const githubUrl = 'https://github.com/sandeshPatel06/mini-tracker';
         <!-- CTAs -->
         <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2.5 sm:gap-4 mb-8 sm:mb-10 w-full sm:w-auto">
           <Button href="/mini-tracker/download" variant="primary" size="lg" class="w-full sm:w-auto min-h-[48px]">
-            <svg class="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
             Download free
@@ -155,7 +153,7 @@ const githubUrl = 'https://github.com/sandeshPatel06/mini-tracker';
             target="_blank"
             rel="noopener noreferrer"
           >
-            <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24">
+            <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24" aria-hidden="true">
               <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
             </svg>
             GitHub Releases
@@ -234,7 +232,7 @@ const githubUrl = 'https://github.com/sandeshPatel06/mini-tracker';
               <div>
                 <div class="flex items-center justify-between">
                   <span class="text-[11px] sm:text-xs uppercase tracking-wider text-slate-400 font-mono">Focus Entropy</span>
-                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30 font-mono">NO KEYLOGGER</span>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-mono">NO KEYLOGGER</span>
                 </div>
                 <div class="text-2xl sm:text-3xl font-extrabold text-emerald-400 font-mono mt-1">8.7 / 10</div>
                 <div class="text-xs text-slate-400 font-mono mt-1">
@@ -252,7 +250,7 @@ const githubUrl = 'https://github.com/sandeshPatel06/mini-tracker';
               <div>
                 <div class="flex items-center justify-between">
                   <span class="text-[11px] sm:text-xs uppercase tracking-wider text-slate-400 font-mono">Gemini AI Model</span>
-                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-500/30 font-mono">3.5-FLASH-LITE</span>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-mono">3.5-FLASH-LITE</span>
                 </div>
                 <div class="text-xl sm:text-2xl font-bold text-white font-mono mt-1">Coding &amp; Review</div>
                 <div class="text-xs text-emerald-400 font-mono mt-1">
@@ -379,7 +377,7 @@ const githubUrl = 'https://github.com/sandeshPatel06/mini-tracker';
           class="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-emerald-400 hover:text-emerald-300 transition-colors"
         >
           Explore deep architecture &amp; technical specs
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
           </svg>
         </a>
@@ -441,23 +439,23 @@ const githubUrl = 'https://github.com/sandeshPatel06/mini-tracker';
             Zero character logging. No secret telemetry.
           </h2>
           <p class="text-slate-300 text-xs sm:text-base lg:text-lg leading-relaxed mb-6">
-            We built get-Hike for engineers who refuse to compromise their digital sovereignty. Every byte stays on your workstation at <code class="text-emerald-300 bg-emerald-950/50 px-1.5 sm:px-2 py-0.5 rounded text-xs sm:text-sm font-mono break-all">~/.local/share/get-hike/</code>.
+            We built get-Hike for engineers who refuse to compromise their digital sovereignty. Every byte stays on your workstation at <code class="text-emerald-300 bg-emerald-500/10 px-1.5 sm:px-2 py-0.5 rounded text-xs sm:text-sm font-mono break-all">~/.local/share/get-hike/</code>.
           </p>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 text-xs sm:text-sm text-slate-300 mb-6 sm:mb-8 font-mono">
-            <div class="flex items-center gap-2">
-              <span class="text-emerald-400 font-bold">✓</span> No character keystroke logging
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="text-emerald-400 font-bold">✓</span> No default cloud uploads
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="text-emerald-400 font-bold">✓</span> Offline Guest mode included
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="text-emerald-400 font-bold">✓</span> Bring your own Gemini API key
-            </div>
-          </div>
+          <ul class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 text-xs sm:text-sm text-slate-300 mb-6 sm:mb-8 font-mono">
+            <li class="flex items-center gap-2">
+              <span class="text-emerald-400 font-bold" aria-hidden="true">✓</span> No character keystroke logging
+            </li>
+            <li class="flex items-center gap-2">
+              <span class="text-emerald-400 font-bold" aria-hidden="true">✓</span> No default cloud uploads
+            </li>
+            <li class="flex items-center gap-2">
+              <span class="text-emerald-400 font-bold" aria-hidden="true">✓</span> Offline Guest mode included
+            </li>
+            <li class="flex items-center gap-2">
+              <span class="text-emerald-400 font-bold" aria-hidden="true">✓</span> Bring your own Gemini API key
+            </li>
+          </ul>
 
           <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
             <Button href="/mini-tracker/privacy" variant="primary" size="md" class="w-full sm:w-auto min-h-[46px]">

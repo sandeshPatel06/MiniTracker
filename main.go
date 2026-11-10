@@ -2,7 +2,9 @@ package main
 
 import (
 	"embed"
+	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -29,7 +31,40 @@ func main() {
 
 	app := NewApp()
 
-	err := wails.Run(&options.App{
+	if err := runGUI(app); err != nil {
+		println("Error:", err.Error())
+		os.Exit(1)
+	}
+}
+
+// runGUI starts the desktop window. On Linux a failed GTK initialisation
+// panics inside Wails (gtk_init_check), typically because the process has no
+// graphical session or is missing GTK3/WebKitGTK system libraries. Recover
+// that panic and exit with clear guidance instead of a stack trace.
+func runGUI(app *App) (err error) {
+	if runtime.GOOS == "linux" && !hasGraphicalSession() {
+		return fmt.Errorf("no graphical session detected (DISPLAY/WAYLAND_DISPLAY are empty).\n" +
+			"  • Desktop use: launch get-Hike from your desktop environment.\n" +
+			"  • SSH/headless: run the server binary instead (get-hike-server),\n" +
+			"    or the capture-only daemon: ./get-hike --background")
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			if fmt.Sprint(r) == "failed to init GTK" {
+				err = fmt.Errorf("GTK could not start the desktop window.\n" +
+					"  • Install the required system libraries (Debian/Ubuntu):\n" +
+					"      sudo apt install libgtk-3-0 libwebkit2gtk-4.0-37\n" +
+					"    (Fedora: gtk3 webkit2gtk-4.0 · Arch: gtk3 webkit2gtk)\n" +
+					"  • Or run inside a graphical session — SSH/headless setups\n" +
+					"    should use the get-hike-server binary instead")
+				return
+			}
+			panic(r)
+		}
+	}()
+
+	return wails.Run(&options.App{
 		Title:            "get-Hike",
 		Width:            1200,
 		Height:           800,
@@ -49,8 +84,10 @@ func main() {
 			WebviewGpuPolicy:    linux.WebviewGpuPolicyAlways,
 		},
 	})
+}
 
-	if err != nil {
-		println("Error:", err.Error())
-	}
+// hasGraphicalSession reports whether the process can reach an X11 or Wayland
+// display, which Wails' GTK backend requires on Linux.
+func hasGraphicalSession() bool {
+	return os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != ""
 }

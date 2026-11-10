@@ -3,8 +3,8 @@
 Persistent notes of decisions, state and pitfalls. Read this first when resuming work.
 
 ## Identity
-- Repo `sandeshPatel06/mini-tracker` (public, SSH remote). Repo root is the whole app; this folder is only the marketing site.
-- Live URL: `https://sandeshpatel06.github.io/mini-tracker/` (7 pages: index, features, download, get-started, privacy, changelog, 404).
+- Repo `sandeshPatel06/MiniTracker` (public, SSH remote). Repo root is the whole app; this folder is only the marketing site.
+- Live URL: `https://sandeshpatel06.github.io/MiniTracker/` (7 pages: index, features, download, get-started, privacy, changelog, 404).
 - User language: Hinglish. Brand: emerald-on-dark, "Privacy-first productivity for Linux".
 
 ## Locked-in decisions (do not revisit silently)
@@ -13,7 +13,7 @@ Persistent notes of decisions, state and pitfalls. Read this first when resuming
 3. **Self-hosted fonts** only (Inter Variable + JetBrains Mono Variable) — migration from CDN started when desktop app (`frontend/src/style.css`) adopted the same two fonts.
 4. **Static changelog.** A live API changelog (marked + localStorage cache) was built and deployed in `aebcd26`, user disliked it visually → reverted clean in `549a686`. Current static release list is final until user re-asks.
 5. **Release CI is manual-only** (`build.yml`, workflow_dispatch). Pages deploy is automatic for `website/**` pushes.
-6. **History was rewritten once** (git-filter-repo: purged 13MB desktop binary, `build/` dir, `logo-universal.png`). Full pre-rewrite backup: `/data/data/com.termux/files/usr/tmp/opencode/mini-tracker-pre-rewrite.bundle`. Never reintroduce that data.
+6. **History was rewritten once** (git-filter-repo: purged 13MB desktop binary, `build/` dir, `logo-universal.png`). Full pre-rewrite backup: `/data/data/com.termux/files/usr/tmp/opencode/MiniTracker-pre-rewrite.bundle`. Never reintroduce that data.
 
 ## Recent commit trail (main)
 - `ca1f581` rewrite housekeeping → `51956ad` restore `build/appicon.png` (wails packaging needs it) → PR #20 website sync → Pages pipeline → `3f39434` responsive fixes → `b3b5814` mobile terminal-wrap → `c006645` theme/fonts/readability → revert → `ba573fe` skill-driven polish (44px targets, SVG icons, lazy logo, copy hit-area).

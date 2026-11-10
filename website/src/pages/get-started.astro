@@ -3,7 +3,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 import Button from '../components/Button.astro';
 import CodeBlock from '../components/CodeBlock.astro';
 
-const githubUrl = 'https://github.com/sandeshPatel06/mini-tracker';
+const githubUrl = 'https://github.com/sandeshPatel06/MiniTracker';
 ---
 
 <BaseLayout
@@ -35,7 +35,7 @@ const githubUrl = 'https://github.com/sandeshPatel06/mini-tracker';
             Download verified executables for Linux x64/ARM64, Windows .exe, or macOS directly without installing Go or Node.
           </p>
         </div>
-        <Button href="/mini-tracker/download" variant="primary" size="sm" class="shrink-0 w-full sm:w-auto">
+        <Button href="/MiniTracker/download" variant="primary" size="sm" class="shrink-0 w-full sm:w-auto">
           Go to Downloads
         </Button>
       </aside>
@@ -98,14 +98,14 @@ const githubUrl = 'https://github.com/sandeshPatel06/mini-tracker';
 
         <div class="space-y-4">
           <CodeBlock
-            code="curl -sSL https://raw.githubusercontent.com/sandeshPatel06/mini-tracker/main/install.sh | bash"
+            code="curl -sSL https://raw.githubusercontent.com/sandeshPatel06/MiniTracker/main/install.sh | bash"
             label="Direct curl installation"
           />
 
           <p class="text-xs text-slate-400">Or clone and inspect the script locally before running:</p>
 
           <CodeBlock
-            code="git clone https://github.com/sandeshPatel06/mini-tracker.git && cd mini-tracker && ./install.sh"
+            code="git clone https://github.com/sandeshPatel06/MiniTracker.git && cd mini-tracker && ./install.sh"
             label="Clone & local installer"
           />
         </div>
@@ -254,7 +254,7 @@ const githubUrl = 'https://github.com/sandeshPatel06/mini-tracker';
         <Button href={githubUrl} variant="primary" size="md" target="_blank" rel="noopener noreferrer" class="w-full sm:w-auto">
           View full GitHub README
         </Button>
-        <Button href="/mini-tracker/privacy" variant="outline" size="md" class="w-full sm:w-auto">
+        <Button href="/MiniTracker/privacy" variant="outline" size="md" class="w-full sm:w-auto">
           Review Privacy Policy
         </Button>
       </div>

@@ -120,7 +120,7 @@ async function main() {
         and optional Gemini AI batch analysis. 100% Free &amp; MIT.
       </text>
       <text x="0" y="220" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="500" fill="#64748b">
-        github.com/sandeshPatel06/mini-tracker • © REAK INFOTECH LLP
+        github.com/sandeshPatel06/MiniTracker • © REAK INFOTECH LLP
       </text>
     </g>
   </svg>

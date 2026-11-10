@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://sandeshpatel06.github.io/mini-tracker/sitemap-index.xml
+Sitemap: https://sandeshpatel06.github.io/MiniTracker/sitemap-index.xml

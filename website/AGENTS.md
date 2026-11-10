@@ -1,7 +1,7 @@
 # AGENTS.md — working rules for AI agents on this website
 
-Project: **get-Hike** marketing site (`/website` folder of `sandeshPatel06/mini-tracker`).
-Published at: `https://sandeshpatel06.github.io/mini-tracker/` (auto-deploy from `main`).
+Project: **get-Hike** marketing site (`/website` folder of `sandeshPatel06/MiniTracker`).
+Published at: `https://sandeshpatel06.github.io/MiniTracker/` (auto-deploy from `main`).
 
 ## Stack
 - Astro (static output) + Tailwind CSS v4 (via Vite plugin) + TypeScript.
@@ -16,7 +16,7 @@ npm run build          # 7 pages; verify no warnings in output
 ```
 
 ## Hard rules
-1. **Base path:** `astro.config.mjs` has `site: 'https://sandeshpatel06.github.io'` and `base: '/mini-tracker'`. Every internal link must start with `/mini-tracker/`. NEVER remove/change the base.
+1. **Base path:** `astro.config.mjs` has `site: 'https://sandeshpatel06.github.io'` and `base: '/MiniTracker'`. Every internal link must start with `/MiniTracker/`. NEVER remove/change the base.
 2. **Theme:** dark is default; light palette is remapped under `[data-theme="light"]` in `src/styles/global.css`. Use Tailwind palette utility classes only — **no raw hex colors** on elements.
 3. **On-brand text:** text sitting on emerald-filled surfaces must use `text-on-brand` (custom token), not `text-slate-950`.
 4. **Accessibility:** interactive targets ≥ 44px (`size-11` for icon buttons; expand hit-area with `before:` pseudo if the visual control is small), ≥ 8px gap between targets, decorative SVGs get `aria-hidden="true"`, stateful controls expose `aria-expanded` / `aria-pressed` / `aria-controls`. Focus-visible rings are never removed.
@@ -30,7 +30,7 @@ npm run build          # 7 pages; verify no warnings in output
 ## Git / CI
 - `main` is source of truth; small focused commits; **never force-push `main`**.
 - `.github/workflows/deploy-website.yml` deploys on push to `main` touching `website/**` — verify with:
-  `gh run watch <id> --repo sandeshPatel06/mini-tracker --exit-status` then `curl -s -o /dev/null -w '%{http_code}' https://sandeshpatel06.github.io/mini-tracker/<page>/`.
+  `gh run watch <id> --repo sandeshPatel06/MiniTracker --exit-status` then `curl -s -o /dev/null -w '%{http_code}' https://sandeshpatel06.github.io/MiniTracker/<page>/`.
 - `.github/workflows/build.yml` (desktop release binaries) is `workflow_dispatch` only — do not re-add push triggers.
 - `dist/` is gitignored; the local build may be stale — **always rebuild before visual verification**.
 

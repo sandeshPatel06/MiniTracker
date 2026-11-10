@@ -6,7 +6,7 @@ import tailwindcss from '@tailwindcss/vite';
 // Deployed to GitHub Pages project site; internal links are base-prefixed.
 export default defineConfig({
   site: 'https://sandeshpatel06.github.io',
-  base: '/mini-tracker',
+  base: '/MiniTracker',
   integrations: [sitemap()],
   vite: {
     plugins: [tailwindcss()],

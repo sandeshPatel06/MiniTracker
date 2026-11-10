@@ -2,15 +2,15 @@
 import Button from './Button.astro';
 
 const navLinks = [
-  { label: 'Download', href: '/mini-tracker/download' },
-  { label: 'Features', href: '/mini-tracker/features' },
-  { label: 'Quick Start', href: '/mini-tracker/get-started' },
-  { label: 'Privacy', href: '/mini-tracker/privacy' },
-  { label: 'Changelog', href: '/mini-tracker/changelog' },
+  { label: 'Download', href: '/MiniTracker/download' },
+  { label: 'Features', href: '/MiniTracker/features' },
+  { label: 'Quick Start', href: '/MiniTracker/get-started' },
+  { label: 'Privacy', href: '/MiniTracker/privacy' },
+  { label: 'Changelog', href: '/MiniTracker/changelog' },
 ];
 
-const githubUrl = 'https://github.com/sandeshPatel06/mini-tracker';
-const releasesUrl = 'https://github.com/sandeshPatel06/mini-tracker/releases';
+const githubUrl = 'https://github.com/sandeshPatel06/MiniTracker';
+const releasesUrl = 'https://github.com/sandeshPatel06/MiniTracker/releases';
 const currentPath = Astro.url.pathname;
 ---
 
@@ -39,13 +39,13 @@ const currentPath = Astro.url.pathname;
       
       <!-- Logo -->
       <a
-        href="/mini-tracker/"
+        href="/MiniTracker/"
         class="flex items-center gap-3 group focus-visible:outline-2 focus-visible:outline-emerald-500 rounded-lg p-1 -ml-1"
         aria-label="get-Hike Home"
       >
         <span class="w-9 h-9 rounded-xl bg-slate-900 border border-emerald-500/30 flex items-center justify-center p-1 shadow-md group-hover:border-emerald-400 group-hover:shadow-emerald-500/20 transition-all duration-200">
           <img
-            src="/mini-tracker/app-logo.png"
+            src="/MiniTracker/app-logo.png"
             alt="get-Hike App Logo"
             class="w-7 h-7 object-contain group-hover:scale-105 transition-transform duration-200"
             width="28"
@@ -100,7 +100,7 @@ const currentPath = Astro.url.pathname;
         <span class="theme-slot hidden md:inline"></span>
 
         <!-- Download CTA -->
-        <Button href="/mini-tracker/download" variant="primary" size="sm">
+        <Button href="/MiniTracker/download" variant="primary" size="sm">
           Download
         </Button>
       </div>
@@ -183,7 +183,7 @@ const currentPath = Astro.url.pathname;
     </nav>
 
     <nav class="pt-3 border-t border-slate-800/80 flex flex-col gap-2.5">
-      <Button href="/mini-tracker/download" variant="primary" size="md" class="w-full text-center">
+      <Button href="/MiniTracker/download" variant="primary" size="md" class="w-full text-center">
         Download
       </Button>
       <Button

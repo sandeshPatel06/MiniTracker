@@ -22,6 +22,8 @@ interface Props {
   onRetry?: () => void;
 }
 
+const SKELETON_ROWS = [1, 2, 3, 4, 5];
+
 export default function Timeline({ logs, loading, today, onDateChange, loadError, onRetry }: Props) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -101,12 +103,52 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
 
   const hasActiveFilters = Boolean(searchQuery.trim()) || selectedApp !== 'ALL' || selectedCategory !== 'ALL';
 
+  const clearFilters = () => {
+    setSearchQuery('');
+    setSelectedApp('ALL');
+    setSelectedCategory('ALL');
+    setCurrentPage(1);
+  };
+
+  const updateSearchQuery = (value: string) => {
+    setSearchQuery(value);
+    setCurrentPage(1);
+  };
+
+  const updateSelectedApp = (value: string) => {
+    setSelectedApp(value);
+    setCurrentPage(1);
+  };
+
+  const updateSelectedCategory = (value: string) => {
+    setSelectedCategory(value);
+    setCurrentPage(1);
+  };
+
+  const activeFilters = useMemo(() => {
+    const chips: Array<{ key: string; label: string; value: string; onRemove: () => void }> = [];
+    if (searchQuery.trim()) {
+      const query = searchQuery.trim();
+      chips.push({ key: 'search', label: 'Search', value: query, onRemove: () => updateSearchQuery('') });
+    }
+    if (selectedApp !== 'ALL') {
+      chips.push({ key: 'app', label: 'App', value: selectedApp, onRemove: () => updateSelectedApp('ALL') });
+    }
+    if (selectedCategory !== 'ALL') {
+      chips.push({ key: 'category', label: 'Category', value: selectedCategory, onRemove: () => updateSelectedCategory('ALL') });
+    }
+    return chips;
+  }, [searchQuery, selectedApp, selectedCategory]);
+
+  const pageFirstRow = filteredLogs.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const pageLastRow = Math.min(currentPage * pageSize, filteredLogs.length);
+
   return (
-    <div aria-busy={loading} className="fade-in-up">
+    <div aria-busy={loading} className="tl-page fade-in-up">
       <ImageModal imagePath={selectedImage} onClose={() => setSelectedImage(null)} />
 
       {/* Header Bar */}
-      <div className="page-header" style={{ marginBottom: 16 }}>
+      <div className="page-header tl-header" style={{ marginBottom: 16 }}>
         <div>
           <h1 className="page-title">Activity Timeline</h1>
           <p className="page-subtitle">Detailed minute-by-minute activity captures &amp; AI focus ratings.</p>
@@ -114,50 +156,41 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
       </div>
 
       {/* Compact filter toolbar */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="card-body" style={{ padding: '12px 16px' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+      <div className="card tl-filter-card" style={{ marginBottom: 16 }}>
+        <div className="card-body tl-filter-body">
+          <div className="tl-filter-bar">
             <DateNavigator
+              className="tl-date-nav"
               currentDate={today}
               maxDate={localISODate()}
               onDateChange={onDateChange}
             />
 
-            <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 170 }}>
+            <div className="tl-search-wrap">
               <input
                 type="text"
                 placeholder="Search apps, windows, reason..."
-                className="form-input"
+                className="form-input tl-search"
                 aria-label="Search captures"
                 value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setCurrentPage(1);
-                }}
-                style={{ height: 34, paddingLeft: 32, fontSize: 13, width: '100%' }}
+                onChange={(e) => updateSearchQuery(e.target.value)}
               />
-              <div style={{ position: 'absolute', left: 10, top: 10, color: 'var(--text-muted)' }}>
+              <span className="tl-search-icon" aria-hidden="true">
                 <Icon name="search" size={14} />
-              </div>
+              </span>
             </div>
 
             <AppFilterSelect
               apps={uniqueApps}
               value={selectedApp}
-              onChange={(value) => {
-                setSelectedApp(value);
-                setCurrentPage(1);
-              }}
+              onChange={updateSelectedApp}
             />
 
             <CustomSelect
+              className="tl-category-select"
               value={selectedCategory}
-              onChange={(value) => {
-                setSelectedCategory(value);
-                setCurrentPage(1);
-              }}
+              onChange={updateSelectedCategory}
               ariaLabel="Filter by category"
-              triggerStyle={{ minWidth: 140 }}
               options={[
                 {
                   value: 'ALL',
@@ -169,55 +202,101 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
             />
           </div>
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginTop: 10, fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
-            <span>
-              Showing <strong style={{ color: 'var(--text-primary)' }}>{paginatedLogs.length}</strong> of {filteredLogs.length}
-            </span>
-            <span style={{ color: 'var(--border-medium)' }}>•</span>
-            <span style={{ fontWeight: 600, color: avgDayScore >= FOCUS_OK ? 'var(--badge-productive-text)' : 'var(--accent-primary-text)' }}>
-              Avg Day Focus: {analyzedLogs.length === 0 ? '—' : `${avgDayScore}%`}
-            </span>
+          {/* Meta summary + active filter chips */}
+          <div className="tl-meta-bar">
+            <div className="tl-meta">
+              <div className="tl-stat">
+                <span className="tl-stat-label">Showing</span>
+                <span className="tl-stat-value">
+                  {paginatedLogs.length} of {filteredLogs.length}
+                </span>
+              </div>
+              <div className="tl-stat">
+                <span className="tl-stat-label">Avg Day Focus</span>
+                {analyzedLogs.length === 0 ? (
+                  <span className="tl-stat-value">—</span>
+                ) : (
+                  <span
+                    className="tl-stat-value"
+                    data-ok={avgDayScore >= FOCUS_OK ? 'true' : 'false'}
+                  >
+                    {avgDayScore}%
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {hasActiveFilters && (
+              <div className="tl-chips" aria-label="Active filters">
+                {activeFilters.map((chip) => (
+                  <span key={chip.key} className="tl-chip" title={chip.value}>
+                    <span className="tl-chip-label">{chip.value}</span>
+                    <button
+                      type="button"
+                      className="tl-chip-x"
+                      aria-label={`Remove ${chip.label} filter`}
+                      onClick={chip.onRemove}
+                    >
+                      <Icon name="x" size={12} />
+                    </button>
+                  </span>
+                ))}
+                <button type="button" className="tl-chip-clear" onClick={clearFilters}>
+                  <Icon name="x" size={12} />
+                  Clear filters
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       {/* Main Activity Timeline List */}
-      <div className="card">
+      <div className="card tl-list-card">
         <div className="card-header">
-          <span className="card-title" style={{ textTransform: 'none', fontSize: 14, color: 'var(--text-primary)' }}>
-            📅 {today === localISODate() ? 'Today\'s Log Feed' : format(new Date(today + 'T00:00:00'), 'MMMM d, yyyy')}
+          <span className="card-title tl-card-title">
+            <Icon name="calendar" size={14} color="var(--accent-primary)" />
+            {today === localISODate() ? 'Today\'s Log Feed' : format(new Date(today + 'T00:00:00'), 'MMMM d, yyyy')}
           </span>
         </div>
 
-        <div className="card-body" style={{ padding: '12px 16px' }}>
+        <div className="card-body tl-list-body">
           {loadError && logs.length > 0 && (
             <Alert
               type="error"
               message={loadError}
               onRetry={onRetry}
-              style={{ marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}
+              className="tl-error-alert"
             />
           )}
           {loading && logs.length === 0 ? (
-            <div className="timeline-list">
-              {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="timeline-item" style={{ padding: '8px 12px', gap: 10 }}>
-                  <div className="skeleton" style={{ width: 40, height: 16 }} />
-                  <div className="skeleton timeline-thumb-placeholder" style={{ border: 'none' }} />
-                  <div style={{ flex: 1 }}>
-                    <div className="skeleton" style={{ width: '50%', height: 16, marginBottom: 8 }} />
-                    <div className="skeleton" style={{ width: '80%', height: 12 }} />
+            <ul className="timeline-list tl-rows" aria-label="Loading captures">
+              {SKELETON_ROWS.map((i) => (
+                <li key={i} className="timeline-item tl-row tl-skeleton-row">
+                  <span className="skeleton tl-sk-time" />
+                  <span className="skeleton tl-sk-thumb" />
+                  <div className="tl-sk-info">
+                    <div className="tl-sk-chips">
+                      <span className="skeleton tl-sk-chip tl-sk-chip-a" />
+                      <span className="skeleton tl-sk-chip tl-sk-chip-b" />
+                    </div>
+                    <span className="skeleton tl-sk-line" />
+                    <span className="skeleton tl-sk-line2" />
+                    <span className="skeleton tl-sk-keys" />
                   </div>
-                  <div className="skeleton" style={{ width: 70, height: 22, borderRadius: 99 }} />
-                </div>
+                  <div className="tl-sk-score">
+                    <span className="skeleton tl-sk-badge" />
+                    <span className="skeleton tl-sk-conf" />
+                  </div>
+                </li>
               ))}
-            </div>
+            </ul>
           ) : loadError && logs.length === 0 ? (
             <Alert
               type="error"
               message={loadError}
               onRetry={onRetry}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}
+              className="tl-error-alert"
             />
           ) : paginatedLogs.length === 0 ? (
             <EmptyState
@@ -230,10 +309,7 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
               }
               action={
                 hasActiveFilters ? (
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => { setSearchQuery(''); setSelectedApp('ALL'); setSelectedCategory('ALL'); setCurrentPage(1); }}
-                  >
+                  <button className="btn btn-secondary btn-sm" onClick={clearFilters}>
                     Clear filters
                   </button>
                 ) : today !== localISODate() ? (
@@ -242,17 +318,22 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
               }
             />
           ) : (
-            <div className="timeline-list">
+            <ul className="timeline-list tl-rows">
               {paginatedLogs.map((log) => {
                 const scoreVal = typeof log.productive_score === 'number'
                   ? Math.round(log.productive_score)
                   : log.is_productive ? 100 : 0;
+                const appName = canonicalAppName(log.app_name);
+                const time = format(new Date(log.timestamp), 'HH:mm:ss');
+                const stateLabel = isPendingLog(log) ? 'pending' : scoreVal >= 50 ? 'productive' : 'unproductive';
 
                 return (
-                  <div key={log.id} className="timeline-item" style={{ padding: '8px 12px', gap: 10 }}>
-                    <span className="timeline-time" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                      {format(new Date(log.timestamp), 'HH:mm:ss')}
-                    </span>
+                  <li
+                    key={log.id}
+                    className="timeline-item tl-row"
+                    aria-label={`${time} — ${appName || 'Unknown app'} — ${stateLabel}`}
+                  >
+                    <span className="timeline-time tl-time">{time}</span>
 
                     <ScreenshotThumb
                       imagePath={log.image_path}
@@ -260,56 +341,24 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
                     />
 
                     <div className="timeline-info">
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <div className="tl-tags">
                         <CategoryBadge category={log.ai_category} />
-                        {canonicalAppName(log.app_name) && (
-                          <span
-                            title={canonicalAppName(log.app_name)}
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 5,
-                              fontSize: 11,
-                              fontWeight: 600,
-                              padding: '1px 7px',
-                              borderRadius: 4,
-                              background: 'var(--bg-elevated)',
-                              color: 'var(--text-secondary)',
-                              border: '1px solid var(--border-subtle)',
-                              maxWidth: 180,
-                              overflow: 'hidden',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            <AppIcon name={canonicalAppName(log.app_name)} size={14} />
-                            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {canonicalAppName(log.app_name)}
-                            </span>
+                        {appName && (
+                          <span className="tl-app-chip" title={appName}>
+                            <AppIcon name={appName} size={14} />
+                            <span className="tl-app-chip-label">{appName}</span>
                           </span>
                         )}
                         {log.app_category && (
-                          <span
-                            title={log.app_category}
-                            style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                          >
+                          <span className="tl-app-category" title={log.app_category}>
                             ({log.app_category})
                           </span>
                         )}
                       </div>
 
                       {log.window_title && (
-                        <div
-                          title={log.window_title}
-                          style={{
-                            fontSize: 12,
-                            fontWeight: 600,
-                            color: 'var(--text-primary)',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                          }}
-                        >
-                          🪟 {log.window_title}
+                        <div className="tl-window-title" title={log.window_title}>
+                          {log.window_title}
                         </div>
                       )}
 
@@ -317,40 +366,43 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
                         {log.ai_reason || '—'}
                       </div>
 
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', fontSize: 11, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
-                        <span>⌨️ {log.total_keys} keys · {log.unique_keys} unique</span>
-                        <span style={{ color: 'var(--border-medium)' }}>•</span>
+                      <div className="tl-keys">
+                        <span className="tl-keys-icon" aria-hidden="true">
+                          <Icon name="keyboard" size={12} />
+                        </span>
+                        <span>{log.total_keys} keys · {log.unique_keys} unique</span>
+                        <span className="tl-dot" aria-hidden="true">•</span>
                         <span>Entropy: {log.entropy_score.toFixed(1)}</span>
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, flexShrink: 0 }}>
+                    <div className="tl-score-col">
                       {isPendingLog(log) ? (
-                        <span className="badge badge-pending" style={{ fontVariantNumeric: 'tabular-nums' }}>Pending AI</span>
+                        <span className="badge badge-pending">Pending AI</span>
                       ) : (
-                        <span className={`badge ${scoreVal >= 50 ? 'badge-productive' : 'badge-unproductive'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                        <span className={`badge ${scoreVal >= 50 ? 'badge-productive' : 'badge-unproductive'}`}>
                           <Icon name={scoreVal >= 50 ? 'check' : 'x'} size={13} />
                           {scoreVal}% Focus
                         </span>
                       )}
                       {log.ai_confidence > 0 && (
-                        <span style={{ fontSize: 10, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                        <span className="tl-confidence">
                           {(log.ai_confidence * 100).toFixed(0)}% AI confidence
                         </span>
                       )}
                     </div>
-                  </div>
+                  </li>
                 );
               })}
-            </div>
+            </ul>
           )}
         </div>
 
         {/* Pagination Footer */}
         {filteredLogs.length > 0 && (
-          <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <label htmlFor="timeline-page-size" style={{ fontSize: 12, color: 'var(--text-muted)' }}>Per page</label>
+          <footer className="tl-pagination">
+            <div className="tl-pagination-side tl-pagination-left">
+              <label htmlFor="timeline-page-size" className="tl-pagination-label">Per page</label>
               <CustomSelect
                 id="timeline-page-size"
                 ariaLabel="Rows per page"
@@ -360,7 +412,6 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
                   setPageSize(Number(value));
                   setCurrentPage(1);
                 }}
-                triggerStyle={{ minWidth: 64 }}
                 options={[15, 25, 50, 100].map((size) => ({
                   value: String(size),
                   label: String(size),
@@ -368,26 +419,34 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
               />
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div className="tl-pagination-nav">
               <button
+                type="button"
                 disabled={currentPage <= 1}
                 onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                className="btn btn-secondary btn-sm"
+                className="btn btn-secondary btn-sm tl-page-btn"
               >
-                ← Previous
+                <Icon name="chevron-left" size={14} />
+                Previous
               </button>
-              <span style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+              <span className="tl-page-info">
                 {currentPage} / {totalPages}
               </span>
               <button
+                type="button"
                 disabled={currentPage >= totalPages}
                 onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                className="btn btn-secondary btn-sm"
+                className="btn btn-secondary btn-sm tl-page-btn"
               >
-                Next →
+                Next
+                <Icon name="chevron-right" size={14} />
               </button>
             </div>
-          </div>
+
+            <div className="tl-pagination-side tl-pagination-range">
+              Rows {pageFirstRow}–{pageLastRow} of {filteredLogs.length}
+            </div>
+          </footer>
         )}
       </div>
     </div>

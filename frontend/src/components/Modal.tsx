@@ -5,6 +5,8 @@ export interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
   title?: React.ReactNode;
+  description?: React.ReactNode;
+  icon?: React.ReactNode;
   children: React.ReactNode;
   footer?: React.ReactNode;
   maxWidth?: number | string;
@@ -33,10 +35,27 @@ function getFocusable(container: HTMLElement): HTMLElement[] {
   );
 }
 
+function ModalCloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClose}
+      className="modal-close-hit"
+      aria-label="Close modal dialog"
+    >
+      <span className="modal-close" aria-hidden="true">
+        <Icon name="x" size={16} />
+      </span>
+    </button>
+  );
+}
+
 export function Modal({
   isOpen,
   onClose,
   title,
+  description,
+  icon,
   children,
   footer,
   maxWidth = 480,
@@ -46,6 +65,7 @@ export function Modal({
   closeOnBackdropClick = true,
 }: ModalProps) {
   const titleId = useId();
+  const descriptionId = useId();
   const cardRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
@@ -147,7 +167,7 @@ export function Modal({
 
   if (!isOpen) return null;
 
-  const hasHeader = Boolean(title || actions);
+  const hasHeader = Boolean(title || description || icon || actions);
 
   return (
     <div
@@ -163,22 +183,51 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={title ? titleId : undefined}
+        aria-describedby={description ? descriptionId : undefined}
         aria-label={title ? undefined : ariaLabel}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         {hasHeader ? (
           <div className="modal-header">
-            {title && (
-              <h3
-                className="modal-title"
-                id={titleId}
-                title={typeof title === 'string' ? title : undefined}
-                style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                flex: '1 1 auto',
+                minWidth: 0,
+              }}
+            >
+              {icon && <div className="modal-icon-chip">{icon}</div>}
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 2,
+                  minWidth: 0,
+                }}
               >
-                {title}
-              </h3>
-            )}
+                {title && (
+                  <h3
+                    className="modal-title"
+                    id={titleId}
+                    title={typeof title === 'string' ? title : undefined}
+                    style={{ minWidth: 0, overflowWrap: 'anywhere' }}
+                  >
+                    {title}
+                  </h3>
+                )}
+                {description && (
+                  <p
+                    id={descriptionId}
+                    className="modal-description"
+                  >
+                    {description}
+                  </p>
+                )}
+              </div>
+            </div>
             <div
               style={{
                 display: 'flex',
@@ -189,26 +238,13 @@ export function Modal({
               }}
             >
               {actions}
-              <button
-                type="button"
-                onClick={onClose}
-                className="modal-close"
-                aria-label="Close modal dialog"
-              >
-                <Icon name="x" size={16} />
-              </button>
+              <ModalCloseButton onClose={onClose} />
             </div>
           </div>
         ) : (
-          <button
-            type="button"
-            onClick={onClose}
-            className="modal-close"
-            aria-label="Close modal dialog"
-            style={{ position: 'absolute', top: 10, right: 10, zIndex: 1 }}
-          >
-            <Icon name="x" size={16} />
-          </button>
+          <div style={{ position: 'absolute', top: 4, right: 4, zIndex: 5 }}>
+            <ModalCloseButton onClose={onClose} />
+          </div>
         )}
 
         <div className="modal-body">{children}</div>

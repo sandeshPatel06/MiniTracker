@@ -378,15 +378,6 @@ export function ImageModal({ imagePath, onClose }: ImageModalProps) {
     return () => window.removeEventListener('keydown', handleZoomKeyDown);
   }, [imagePath, handleZoomIn, handleZoomOut, handleResetZoom]);
 
-  const titleNode = imagePath ? (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-      <Icon name="desktop" size={18} color="var(--accent-primary)" />
-      <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-        Desktop Screenshot Inspection
-      </span>
-    </span>
-  ) : null;
-
   const zoomControls = imagePath ? (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       <button
@@ -429,7 +420,9 @@ export function ImageModal({ imagePath, onClose }: ImageModalProps) {
     <Modal
       isOpen={Boolean(imagePath)}
       onClose={onClose}
-      title={titleNode}
+      icon={<Icon name="desktop" size={18} color="var(--accent-primary)" />}
+      title="Desktop Screenshot Inspection"
+      description="Full-resolution capture from the tracked display."
       actions={zoomControls}
       maxWidth={1060}
       footer={

@@ -914,7 +914,7 @@ html, body, #root {
 .btn:focus-visible, .btn-oauth:focus-visible, .btn-primary:focus-visible,
 .btn-auth-submit:focus-visible, .btn-task-goal:focus-visible, .btn-sync-now:focus-visible,
 .btn-tracker-toggle:focus-visible, .btn-link-guest:focus-visible, .auth-tab:focus-visible,
-.modal-close:focus-visible, .nav-item:focus-visible, .mobile-menu-toggle:focus-visible,
+.modal-close-hit:focus-visible, .modal-close:focus-visible, .nav-item:focus-visible, .mobile-menu-toggle:focus-visible,
 .timeline-thumb-img:focus-visible, .skip-link:focus {
   outline: 2px solid var(--accent-primary);
   outline-offset: 2px;
@@ -1103,7 +1103,8 @@ html, body, #root {
   background: var(--bg-card);
   border: 1px solid var(--border-medium);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-modal);
+  /* Layered border: outer border + faint top hairline (ring-1 ring-white/5 equivalent, theme-aware) */
+  box-shadow: var(--shadow-modal), inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
   width: 100%;
   max-width: 480px;
   max-height: calc(100vh - 40px);
@@ -1112,6 +1113,12 @@ html, body, #root {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  animation: modal-pop-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes modal-pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.95); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .modal-header {
@@ -1124,10 +1131,59 @@ html, body, #root {
   flex-shrink: 0;
 }
 
+.modal-icon-chip {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 26%, transparent);
+  color: var(--accent-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .modal-title {
   font-size: 16px;
   font-weight: 700;
   color: var(--text-primary);
+}
+
+.modal-description {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* Keyboard-hint chips rendered by dialog footers (screenshot inspector). */
+.kbd-shortcut {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  display: inline-block;
+  line-height: 1.4;
+}
+
+.modal-close-hit {
+  width: 44px;
+  height: 44px;
+  padding: 6px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  color: inherit;
 }
 
 .modal-close {
@@ -1162,6 +1218,7 @@ html, body, #root {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .modal-footer {
@@ -2453,4 +2510,1065 @@ img.app-icon {
 
 .app-filter .custom-select-trigger {
   min-width: 150px;
+}
+
+/* ============================================================
+   DASHBOARD — PAGE-SCOPED POLISH (AI ANALYSIS OUTPUT)
+   Every rule is scoped under .dash-page so the shared
+   .stat-card / .timeline-* / .badge-* classes used by Timeline,
+   Analytics, Settings and Organization pages stay untouched.
+   ============================================================ */
+
+/* --- Stat cards row: equal heights + numeric hierarchy --- */
+.dash-page .stats-grid.dash-stats .stat-card {
+  height: 100%;
+}
+
+.dash-page .dash-stats .stat-label {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.dash-page .dash-stats .stat-value {
+  letter-spacing: -0.4px;
+}
+
+.dash-page .dash-stats .stat-sub {
+  /* Sub-labels were 11px non-uppercase: below the 12px floor. */
+  font-size: 12px;
+  line-height: 1.45;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+  display: block;
+}
+
+/* --- Activity stream rows (analysis output cards) --- */
+.dash-page .dash-log-row {
+  padding: 12px 16px;
+  gap: 12px;
+  align-items: center;
+}
+
+.dash-page .dash-log-row:hover {
+  border-color: var(--border-medium);
+}
+
+/* Chips row: consistent 8px gap, baseline-aligned icon + text. */
+.dash-page .dash-chip-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* App chip: raised off inline styles, bumped from 11px to 12px. */
+.dash-page .dash-app-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  max-width: 200px;
+  overflow: hidden;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dash-page .dash-app-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash-page .dash-app-category {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dash-page .dash-window-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Reason text: the AI's primary output. Two-line clamp with a
+   readable 1.5 line-height (full text via title tooltip). */
+.dash-page .dash-reason {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  min-height: calc(2 * 1.5em);
+}
+
+/* Pending captures: skeleton-style shimmer placeholders instead of
+   a dead "—" placeholder. Neutral surface tones only, never red. */
+.dash-page .dash-reason-skeleton {
+  margin-top: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  max-width: 280px;
+}
+
+.dash-page .dash-shimmer-line {
+  height: 9px;
+  border-radius: 99px;
+  position: relative;
+  overflow: hidden;
+}
+
+.dash-page .dash-shimmer-line::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--text-primary) 8%, transparent),
+    transparent
+  );
+  animation: dash-shimmer-sweep 1.5s ease-in-out 0.3s infinite;
+}
+
+@keyframes dash-shimmer-sweep {
+  to { transform: translateX(100%); }
+}
+
+/* Pending chip: soft neutral pulse + mini spinner (no error-red). */
+.dash-page .dash-pending-chip {
+  gap: 6px;
+  animation: dash-pending-pulse 1.8s ease-in-out 0.4s infinite;
+}
+
+@keyframes dash-pending-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.dash-page .dash-mini-spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, currentColor 32%, transparent);
+  border-top-color: currentColor;
+  animation: spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+
+/* Feed header meta: count + pending pill side by side. */
+.dash-page .dash-feed-meta {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.dash-page .dash-pending-pill {
+  font-size: 12px;
+}
+
+.dash-page .dash-pending-pill.is-processing {
+  animation: none;
+}
+
+/* Score column: badge + subtle per-capture focus meter, kept on one
+   optical axis (right-aligned so numbers line up down the feed). */
+.dash-page .dash-score-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  justify-self: end;
+  flex-shrink: 0;
+}
+
+.dash-page .dash-score-bar {
+  width: 64px;
+  height: 4px;
+  border-radius: 99px;
+  background: var(--bg-elevated);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.dash-page .dash-score-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  transition: width var(--transition);
+}
+
+/* Pressed feedback for the clickable screenshot thumbnails: transform
+   only, so nothing shifts layout. */
+.dash-page .dash-log-row .timeline-thumb-img {
+  transition: border-color var(--transition), transform 0.12s ease-out;
+}
+
+.dash-page .dash-log-row .timeline-thumb-img:active {
+  transform: scale(0.96);
+}
+
+/* Micro-copy floor: category/# badges render at 12px inside the
+   Activity Stream (CategoryBadge sets 11px inline, hence !important,
+   scoped strictly to this page). */
+.dash-page .dash-activity .badge {
+  font-size: 12px;
+}
+
+.dash-page .dash-activity .category-badge {
+  font-size: 12px !important;
+}
+
+/* --- Empty states inside dashboard cards --- */
+.dash-page .dash-activity .empty-state {
+  padding: 34px 20px;
+}
+
+.dash-page .dash-topapps .empty-state {
+  padding: 18px 12px;
+  gap: 8px;
+}
+
+.dash-page .dash-topapps .empty-state-title {
+  font-size: 13px;
+}
+
+.dash-page .dash-topapps .empty-state-desc {
+  font-size: 12px;
+}
+
+/* --- Narrow screens: the shared 1-column timeline collapse applies;
+     keep the score column flush-left once rows stack. --- */
+@media (max-width: 540px) {
+  .dash-page .dash-score-col {
+    justify-self: start;
+    align-items: flex-start;
+  }
+
+  .dash-page .dash-reason-skeleton {
+    max-width: 100%;
+  }
+}
+
+/* ============================================================
+   TIMELINE — PAGE-SCOPED POLISH (AI ANALYSIS OUTPUT)
+   Every new class is prefixed with .tl-. Shared .timeline-* /
+   .card-* / .badge-* / .custom-select-* rules are only ever
+   overridden in a .tl-page- or .tl--scoped rule so other pages
+   using those selectors stay untouched.
+   ============================================================ */
+
+.tl-page {
+  /* Row rhythm tokens (background-only highlights, zero layout shift) */
+  --tl-row-alt: color-mix(in srgb, var(--bg-elevated) 26%, var(--bg-surface));
+  --tl-row-hover: color-mix(in srgb, var(--bg-card-hover) 82%, var(--bg-surface));
+}
+
+/* --- Card header: icon + non-uppercase title ------------------- */
+.tl-page .tl-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.tl-page .tl-header { margin-bottom: 16px; }
+
+/* --- Filter bar: aligned controls on a uniform 36px band ------- */
+.tl-filter-body {
+  padding: 12px 16px;
+}
+
+.tl-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.tl-date-nav {
+  flex-shrink: 0;
+}
+
+.tl-search-wrap {
+  position: relative;
+  flex: 1 1 210px;
+  min-width: 180px;
+}
+
+.tl-search {
+  height: 36px;
+  padding-left: 32px;
+  font-size: 13px;
+}
+
+.tl-search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+/* Both dropdown triggers sit on the same 36px optical band as the
+   search input and the compound DateNavigator. */
+.tl-filter-bar .custom-select-trigger {
+  height: 36px;
+}
+
+.tl-category-select { flex: 0 1 auto; }
+.tl-category-select .custom-select-trigger { min-width: 132px; }
+
+/* --- Meta summary + active filter chips ------------------------ */
+.tl-meta-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: 10px;
+}
+
+.tl-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+}
+
+.tl-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tl-stat-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+}
+
+.tl-stat-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-stat-value[data-ok='true'] { color: var(--badge-productive-text); }
+.tl-stat-value[data-ok='false'] { color: var(--accent-primary-text); }
+
+.tl-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.tl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 240px;
+  padding: 0 3px 0 9px;
+  height: 24px;
+  border-radius: 99px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-medium);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.tl-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tl-chip-x {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+
+/* Pseudo-element enlarges the remove hit target without visual growth. */
+.tl-chip-x::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+}
+
+.tl-chip-x:hover {
+  background: color-mix(in srgb, var(--accent-red) 18%, transparent);
+  color: var(--badge-unproductive-text);
+}
+
+.tl-chip-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.tl-chip-clear:hover {
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+}
+
+.tl-chip-x:focus-visible,
+.tl-chip-clear:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+/* --- Rows: uniform height, zebra + hover, background-only ------ */
+.tl-list-body {
+  padding: 12px 16px;
+}
+
+.tl-page .timeline-list {
+  gap: 6px;
+  min-width: 0;
+}
+
+.tl-page .timeline-item {
+  grid-template-columns: max-content 72px minmax(0, 1fr) minmax(96px, auto);
+  gap: 12px;
+  padding: 8px 14px;
+  min-height: 86px;
+  list-style: none;
+  border-color: var(--border-subtle);
+}
+
+/* Zebra stripe: even rows get a whisper-lighter surface. */
+.tl-page .tl-rows > .tl-row:not(.tl-skeleton-row):nth-child(even) {
+  background: var(--tl-row-alt);
+}
+
+/* Hover/press: background only — borders never move. */
+.tl-page .timeline-item:not(.tl-skeleton-row):hover {
+  background: var(--tl-row-hover);
+  border-color: var(--border-subtle);
+}
+
+.tl-page .timeline-item:not(.tl-skeleton-row):active {
+  background: color-mix(in srgb, var(--bg-card-hover) 92%, var(--bg-surface));
+}
+
+/* --- Row internals --------------------------------------------- */
+.tl-page .timeline-time {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-secondary);
+  letter-spacing: 0.2px;
+}
+
+.tl-page .timeline-info {
+  min-width: 0;
+}
+
+.tl-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* App chip at the 12px floor with ellipsis + tooltip. */
+.tl-app-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  max-width: 200px;
+  overflow: hidden;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.tl-app-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tl-app-category {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.tl-window-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tl-page .timeline-reason {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.tl-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-keys .tl-keys-icon {
+  display: inline-flex;
+  opacity: 0.85;
+}
+
+.tl-dot { color: var(--border-medium); }
+
+/* Screenshot thumbnail: fixed 72x42 box (shared rule), pressed
+   feedback via transform only. */
+.tl-page .timeline-thumb-img,
+.tl-page .timeline-thumb-placeholder {
+  transition: border-color var(--transition), transform 0.12s ease-out;
+}
+
+.tl-page .timeline-thumb-img:active {
+  transform: scale(0.95);
+}
+
+/* Score column: fixed minimum width so "100% Focus", "84% Focus"
+   and "Pending AI" all share the same optical axis. */
+.tl-score-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.tl-page .tl-score-col .badge {
+  font-variant-numeric: tabular-nums;
+}
+
+/* AI confidence is a micro-label: minimum 11px, tabular numerals. */
+.tl-confidence {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --- Pagination: centered nav, 32px visual / 44px hit buttons -- */
+.tl-pagination {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 14px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tl-pagination-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tl-pagination-left { justify-self: start; }
+.tl-pagination-range { justify-self: end; }
+
+.tl-pagination-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+}
+
+.tl-pagination .custom-select-trigger {
+  height: 32px;
+}
+
+.tl-pagination-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-self: center;
+}
+
+.tl-page-btn {
+  position: relative;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+/* Invisible 6px halo expands the hit area to ~44px with no layout shift. */
+.tl-page-btn::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: calc(var(--radius-sm) + 6px);
+}
+
+.tl-page .tl-page-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.tl-page .tl-page-btn:disabled:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-medium);
+  transform: none;
+}
+
+.tl-page-info {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  min-width: 56px;
+  text-align: center;
+}
+
+.tl-pagination-range {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- Skeleton rows: same geometry as real rows (no CLS) -------- */
+.tl-page .tl-skeleton-row {
+  pointer-events: none;
+}
+
+.tl-sk-time {
+  width: 58px;
+  height: 12px;
+}
+
+.tl-sk-thumb {
+  width: 72px;
+  height: 42px;
+  border-radius: 4px;
+}
+
+.tl-sk-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  width: 100%;
+}
+
+.tl-sk-chips {
+  display: flex;
+  gap: 6px;
+}
+
+.tl-sk-chip {
+  width: 84px;
+  height: 20px;
+  border-radius: 4px;
+}
+
+.tl-sk-chip-b { width: 64px; }
+
+.tl-sk-line {
+  width: 55%;
+  min-width: 120px;
+  height: 16px;
+}
+
+.tl-sk-line2 {
+  width: 70%;
+  min-width: 140px;
+  height: 14px;
+}
+
+.tl-sk-keys {
+  width: 45%;
+  min-width: 110px;
+  height: 13px;
+  border-radius: 99px;
+}
+
+.tl-sk-score {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.tl-sk-badge {
+  width: 86px;
+  height: 21px;
+  border-radius: 99px;
+}
+
+.tl-sk-conf {
+  width: 74px;
+  height: 11px;
+}
+
+/* --- Error alert spacing inside the list body ------------------ */
+.tl-page .tl-error-alert { margin-bottom: 12px; }
+
+/* ============================================================
+   TIMELINE — RESPONSIVE (mirrors the shared breakpoints above
+   because every .tl-page- scoped base rule outranks them)
+   ============================================================ */
+@media (max-width: 1200px) {
+  .tl-page .timeline-item {
+    grid-template-columns: max-content 72px minmax(0, 1fr) minmax(88px, auto);
+    gap: 10px;
+  }
+
+  .tl-page .tl-sk-badge { width: 76px; }
+}
+
+@media (max-width: 768px) {
+  .tl-page .timeline-item {
+    grid-template-columns: max-content 72px minmax(0, 1fr);
+  }
+
+  .tl-page .timeline-item > div:last-child {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+  }
+
+  .tl-page .tl-sk-score {
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .tl-page .tl-pagination {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .tl-page .tl-pagination-left,
+  .tl-page .tl-pagination-range {
+    justify-self: center;
+  }
+}
+
+@media (max-width: 540px) {
+  .tl-page .timeline-item {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    min-height: 0;
+  }
+
+  /* Shared 540px rule widens thumbs; mirror it inside page scope. */
+  .tl-page .timeline-thumb,
+  .tl-page .timeline-thumb-img,
+  .tl-page .timeline-thumb-placeholder {
+    width: 100%;
+    height: 100px;
+  }
+
+  .tl-page .tl-sk-thumb {
+    width: 100%;
+    height: 100px;
+  }
+
+  .tl-page .tl-score-col {
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .tl-page .tl-sk-chip-a { width: 72px; }
+  .tl-page .tl-sk-chip-b { width: 56px; }
+
+  .tl-filter-body,
+  .tl-list-body {
+    padding: 14px;
+  }
+
+  .tl-chips { margin-left: 0; }
+
+  .tl-page .tl-pagination {
+    padding: 10px 14px;
+  }
+}
+
+@media (max-width: 420px) {
+  .tl-page .timeline-item { padding: 8px 10px; }
+
+  .tl-page .tl-sk-line { min-width: 90px; }
+  .tl-page .tl-sk-line2 { min-width: 100px; }
+  .tl-page .tl-sk-keys { min-width: 80px; }
+}
+
+/* ============================================================
+   ANALYTICS — PAGE-SCOPED POLISH (UI PASS 4)
+   Scoped under .an-page (rendered only by pages/Analytics.tsx).
+   Shared .card / .stat-card / .date-input / .custom-select-* base
+   rules are untouched; every override lives in a page-scoped
+   compound selector so other pages stay unaffected.
+   ============================================================ */
+
+/* --- Filter toolbar: one 36px optical band (matches Timeline) --- */
+.an-page .custom-select-trigger,
+.an-page .date-input {
+  height: 36px;
+}
+
+.an-page .date-input {
+  padding: 0 10px 0 12px;
+}
+
+.an-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+
+.an-dates {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.an-dates-sep {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* Active preset affordance while collapsed (the open menu already
+   marks the selected option): a quiet emerald tint on the trigger. */
+.an-preset-active .custom-select-trigger {
+  border-color: color-mix(in srgb, var(--accent-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  color: var(--accent-primary-text);
+}
+
+.an-preset-active .custom-select-trigger:hover {
+  background: color-mix(in srgb, var(--accent-primary) 16%, transparent);
+}
+
+/* --- Stat cards: equal heights + 12px micro-copy floor ---------- */
+.an-page .stats-grid .stat-card {
+  height: 100%;
+}
+
+.an-page .stats-grid .stat-label {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.an-page .stats-grid .stat-value {
+  letter-spacing: -0.4px;
+}
+
+.an-page .stats-grid .stat-sub {
+  display: block;
+  font-size: 12px; /* sub-labels render at 11px via the shared rule */
+  line-height: 1.45;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Card content stack + breakdown grid ------------------------ */
+.an-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.an-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  gap: 16px;
+  min-width: 0;
+}
+
+/* Muted helper line under each card header (replaces per-card inline styles). */
+.an-card-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* App category chip in the usage list: 12px readability floor. */
+.an-page .an-app-category {
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: 120px;
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.an-chart {
+  width: 100%;
+}
+
+/* --- Tooltip: dark surface, border, tabular-nums, fixed chrome ---
+   min-width keeps the frame stable as values change; rows never
+   reflow the surrounding card. */
+.an-tooltip {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+  min-width: 132px;
+  font-variant-numeric: tabular-nums;
+}
+
+.an-tooltip-label {
+  color: var(--text-secondary);
+  font-weight: 600;
+  margin-bottom: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.an-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.an-tooltip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Legend: roomier item spacing (recharts hardcodes marginRight:10px
+   inline on each item, hence !important; scoped to this page). */
+.an-page .recharts-legend-item {
+  margin-right: 18px !important;
+}
+
+/* --- Skeletons: geometry mirrors the loaded page (no CLS) -------- */
+.an-sk-label { width: 96px; height: 14px; margin-bottom: 10px; }
+.an-sk-value { width: 132px; height: 28px; margin-bottom: 8px; }
+.an-sk-sub   { width: 62%; min-width: 148px; height: 12px; }
+.an-sk-title { width: 46%; min-width: 150px; height: 12px; }
+.an-sk-note  { width: 52%; min-width: 190px; height: 12px; margin-bottom: 12px; }
+
+.an-sk-approw { display: flex; flex-direction: column; gap: 8px; }
+
+.an-sk-appsize {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.an-sk-appname { width: 150px; max-width: 40%; height: 13px; }
+.an-sk-appnum  { width: 72px; height: 13px; margin-left: auto; }
+.an-sk-track   { width: 100%; height: 6px; border-radius: 99px; }
+
+/* --- Responsive mirrors (inline-grid collapse was a shared rule) --- */
+@media (max-width: 540px) {
+  .an-page .an-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .an-page .an-stack {
+    gap: 14px;
+  }
+}
+
+@media (max-width: 420px) {
+  .an-dates {
+    flex-wrap: wrap;
+  }
 }

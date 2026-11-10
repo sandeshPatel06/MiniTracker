@@ -249,7 +249,7 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
                   : log.is_productive ? 100 : 0;
 
                 return (
-                  <div key={`${log.id}-${log.timestamp}-${log.image_path}`} className="timeline-item" style={{ padding: '8px 12px', gap: 10 }}>
+                  <div key={log.id} className="timeline-item" style={{ padding: '8px 12px', gap: 10 }}>
                     <span className="timeline-time" style={{ fontVariantNumeric: 'tabular-nums' }}>
                       {format(new Date(log.timestamp), 'HH:mm:ss')}
                     </span>

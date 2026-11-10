@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useMemo, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo, ReactNode } from 'react';
 import { Icon } from '../components/Icon';
 
 export type ToastType = 'info' | 'success' | 'warning' | 'error';
@@ -24,10 +24,31 @@ const ToastContext = createContext<ToastContextType | undefined>(undefined);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  // Auto-dismiss timers are tracked per toast id so dismissing a toast
+  // manually cancels its pending timeout, and unmounting the provider
+  // (StrictMode double-mount / HMR in dev) never fires a setter afterwards.
+  const timersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const clearTimerFor = useCallback((id: string) => {
+    const timer = timersRef.current.get(id);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timersRef.current.delete(id);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
+    };
+  }, []);
 
   const dismissToast = useCallback((id: string) => {
+    clearTimerFor(id);
     setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
+  }, [clearTimerFor]);
 
   const showToast = useCallback(
     (message: string, type: ToastType = 'info', duration: number = 4000) => {
@@ -36,12 +57,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       setToasts((prev) => [...prev.slice(-4), newToast]); // keep at most 5
 
       if (duration > 0) {
-        setTimeout(() => {
-          dismissToast(id);
-        }, duration);
+        const existing = timersRef.current.get(id);
+        if (existing !== undefined) clearTimeout(existing);
+        timersRef.current.set(
+          id,
+          setTimeout(() => {
+            timersRef.current.delete(id);
+            setToasts((prev) => prev.filter((t) => t.id !== id));
+          }, duration)
+        );
       }
     },
-    [dismissToast]
+    []
   );
 
   const success = useCallback((msg: string, d?: number) => showToast(msg, 'success', d), [showToast]);

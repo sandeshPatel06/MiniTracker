@@ -44,9 +44,18 @@ export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token, onSuccess
     const checkToken = async () => {
       setLoading(true);
       try {
-        const res = await apiFetch(`/api/org/invite-info?token=${token}`);
+        const res = await apiFetch(`/api/org/invite-info?token=${encodeURIComponent(token)}`);
         const data = await parseJsonSafe(res);
         if (!res.ok || data.valid === false) {
+          // Server returns {valid:false} with no error key for used/finished invites
+          // (only GET-invitation failure sets "error"); prefer status detail so an
+          // already-accepted invite isn't mislabeled as expired.
+          if (data.status === 'expired' || data.status === 'revoked') {
+            throw new Error('This invitation has expired or been revoked — ask an admin to resend it.');
+          }
+          if (data.status && data.status !== 'pending') {
+            throw new Error('This invitation has already been used.');
+          }
           throw new Error(data.error || data.message || 'Invalid or expired invitation token');
         }
         setInvitation(data);
@@ -66,6 +75,7 @@ export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token, onSuccess
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return; // guard against double submit
     if (!fullName.trim() || !password) return;
 
     setSubmitting(true);
@@ -169,6 +179,7 @@ export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token, onSuccess
               <input
                 type="text"
                 required
+                autoComplete="name"
                 placeholder="Jane Doe"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
@@ -181,8 +192,9 @@ export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token, onSuccess
               <input
                 type="password"
                 required
-                minLength={6}
-                placeholder="••••••••"
+                autoComplete="new-password"
+                minLength={8}
+                placeholder="••••••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="form-input"

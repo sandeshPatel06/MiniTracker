@@ -152,7 +152,9 @@ export function Modal({
   return (
     <div
       className="modal-backdrop"
-      onClick={closeOnBackdropClick ? onClose : undefined}
+      onClick={(e) => {
+        if (closeOnBackdropClick && e.target === e.currentTarget) onClose();
+      }}
     >
       <div
         ref={cardRef}

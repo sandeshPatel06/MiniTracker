@@ -6,12 +6,30 @@ import { EmptyState } from '../components/EmptyState';
 import { Alert } from '../components/Alert';
 import { StatCard } from '../components/StatCard';
 
+const fmtDateOrDash = (ts: string | undefined, mode: 'date' | 'datetime' = 'date') => {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? '—' : mode === 'date' ? d.toLocaleDateString() : d.toLocaleString();
+};
+
+// Invitation links must point at the Get-Hike server, not the webview origin.
+// In the desktop webview (wails origin) the copied link would be unreachable for
+// the recipient, so prefer the configured backend base URL when available.
+const buildInvitationLink = (token: string) => {
+  const base = getApiBaseUrl().replace(/\/$/, '');
+  const origin = base || window.location.origin;
+  return `${origin}/#/accept-invite?token=${encodeURIComponent(token)}`;
+};
+
 export const OrganizationPage: React.FC = () => {
   const [org, setOrg] = useState<Organization | null>(null);
   const [members, setMembers] = useState<User[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
+  // Backend /api/org/members returns 403 for role === "member"; show a friendly
+  // read-only explanation instead of the generic "couldn't load" failure state.
+  const [memberForbidden, setMemberForbidden] = useState(false);
 
   // Team & organization features live on the Get-Hike server. The desktop build
   // runs standalone unless a synced/authenticated backend is configured — detect
@@ -76,8 +94,14 @@ export const OrganizationPage: React.FC = () => {
   const fetchTeamData = async () => {
     setLoading(true);
     setLoadFailed(false);
+    setMemberForbidden(false);
     try {
       const res = await apiFetch('/api/org/members?org_id=1');
+      if (res.status === 403) {
+        // Authenticated "member" roles are not allowed to read the roster.
+        setMemberForbidden(true);
+        return;
+      }
       if (!res.ok) {
         setLoadFailed(true);
         return;
@@ -215,6 +239,35 @@ export const OrganizationPage: React.FC = () => {
     );
   }
 
+  if (memberForbidden && !org) {
+    return (
+      <div className="fade-in-up">
+        <div className="page-header" style={{ marginBottom: 16 }}>
+          <div>
+            <h1 className="page-title">Team &amp; Organization</h1>
+            <p className="page-subtitle">Manage members, permissions and invitations.</p>
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-body" style={{ padding: '28px 22px', textAlign: 'center' }}>
+            <div style={{ fontSize: 34, marginBottom: 10 }}>🔒</div>
+            <div className="empty-state-title" style={{ fontSize: 17 }}>
+              Admin access required
+            </div>
+            <div className="empty-state-desc" style={{ maxWidth: 520, margin: '10px auto 0' }}>
+              Your account has the <strong>member</strong> role. The member roster, invitations and
+              organization settings are visible to owners and admins only — your team history and
+              personal analytics still work normally.
+            </div>
+            <span className="badge badge-pending" style={{ marginTop: 16, fontSize: 11 }}>
+              Ask an organization admin to promote your role
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (loadFailed && !org) {
     return (
       <EmptyState
@@ -348,7 +401,7 @@ export const OrganizationPage: React.FC = () => {
                             {u.email}
                           </td>
                           <td style={cellPad}>
-                            <span className="badge badge-pending">{u.role.toUpperCase()}</span>
+                            <span className="badge badge-pending">{(u.role || 'member').toUpperCase()}</span>
                           </td>
                           <td style={cellPad}>{u.total_requests}</td>
                           <td className="text-muted" style={cellPad}>{u.prompt_tokens.toLocaleString()}</td>
@@ -416,10 +469,10 @@ export const OrganizationPage: React.FC = () => {
                   }`}
                   style={{ flexShrink: 0 }}
                 >
-                  {u.role.toUpperCase()}
+                  {(u.role || 'member').toUpperCase()}
                 </span>
                 <span style={{ fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 }}>
-                  {new Date(u.created_at).toLocaleDateString()}
+                  {fmtDateOrDash(u.created_at)}
                 </span>
               </div>
             ))
@@ -434,7 +487,7 @@ export const OrganizationPage: React.FC = () => {
             </div>
             <div className="card-body" style={{ padding: 0 }}>
               {invitations.map((inv, i) => {
-                const inviteLink = `${window.location.origin}/#/accept-invite?token=${inv.token}`;
+                const inviteLink = buildInvitationLink(inv.token);
                 return (
                   <div
                     key={inv.id}
@@ -454,11 +507,11 @@ export const OrganizationPage: React.FC = () => {
                         {inv.email}
                       </div>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        Expires {new Date(inv.expires_at).toLocaleString()}
+                        Expires {fmtDateOrDash(inv.expires_at, 'datetime')}
                       </div>
                     </div>
                     <span className="badge badge-pending" style={{ flexShrink: 0 }}>
-                      {inv.role.toUpperCase()}
+                      {(inv.role || 'member').toUpperCase()}
                     </span>
                     <button
                       onClick={() => copyToClipboard(inviteLink, inv.token)}

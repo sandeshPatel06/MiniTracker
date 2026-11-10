@@ -1,5 +1,6 @@
 import React from 'react';
 import { Icon } from './Icon';
+import { localISODate } from '../utils';
 
 interface DateNavigatorProps {
   currentDate: string;
@@ -18,24 +19,26 @@ export function DateNavigator({
   className = '',
   style = {},
 }: DateNavigatorProps) {
-  const handlePrevDay = () => {
+  const shiftDate = (days: number) => {
     const d = new Date(`${currentDate}T00:00:00`);
-    d.setDate(d.getDate() - 1);
-    onDateChange(d.toISOString().slice(0, 10));
+    d.setDate(d.getDate() + days);
+    return localISODate(d);
+  };
+
+  const handlePrevDay = () => {
+    onDateChange(shiftDate(-1));
   };
 
   const handleNextDay = () => {
-    const d = new Date(`${currentDate}T00:00:00`);
-    d.setDate(d.getDate() + 1);
-    const nextDate = d.toISOString().slice(0, 10);
+    const nextDate = shiftDate(1);
     if (!maxDate || nextDate <= maxDate) {
       onDateChange(nextDate);
     }
   };
 
   const handleToday = () => {
-    const today = new Date().toISOString().slice(0, 10);
-    onDateChange(today);
+    const today = localISODate();
+    onDateChange(!maxDate || today <= maxDate ? today : maxDate);
   };
 
   const isToday = !maxDate ? false : currentDate >= maxDate;
@@ -122,7 +125,7 @@ export function DateNavigator({
         <Icon name="chevron-right" size={14} />
       </button>
 
-      {!isToday && (
+      {(!maxDate || currentDate !== maxDate) && (
         <button
           type="button"
           onClick={handleToday}

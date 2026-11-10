@@ -111,6 +111,7 @@ export function AuthPage({ onAuthSuccess, onSkip, backendUnavailable = false, on
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return; // guard against implicit re-submit (Enter key / double click)
     setError('');
 
     if (!isLogin && password.length < 8) {
@@ -132,13 +133,21 @@ export function AuthPage({ onAuthSuccess, onSkip, backendUnavailable = false, on
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      // Server / proxies may return plain-text or HTML error bodies; parse safely
+      // so a 400/401/409 with a message isn't misreported as a network failure.
+      const raw = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        data = raw ? { error: raw } : {};
+      }
       if (res.ok && data.success) {
         onAuthSuccess(data.user, data.org || null, data.token);
       } else {
         setError(data.error || data.message || 'Authentication failed. Please check your credentials.');
       }
-    } catch (err: any) {
+    } catch {
       setError('Network error. Unable to reach authentication server.');
     } finally {
       setLoading(false);

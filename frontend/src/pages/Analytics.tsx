@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { LogEntry, ProductivityStats, User, AppConfig } from '../types';
 import { apiFetch } from '../api';
 import { format } from 'date-fns';
@@ -64,6 +64,19 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
   );
 };
 
+// Rating for one capture. The server always serializes productive_score as a
+// number (0 for captures still awaiting AI analysis), so the boolean fallback
+// exists only for robustness. Score averages in this page intentionally use
+// analyzed captures only (see derived-data blocks) so pending rows can't drag
+// ratings toward 0%.
+function captureScore(log: LogEntry): number {
+  return typeof log.productive_score === 'number'
+    ? log.productive_score
+    : log.is_productive
+    ? 100
+    : 0;
+}
+
 export default function Analytics({
   logs,
   stats,
@@ -83,17 +96,39 @@ export default function Analytics({
   const [members, setMembers] = useState<{ id: number; full_name: string; email: string; role: string }[]>([]);
 
   useEffect(() => {
-    if (currentUser?.role === 'admin' || currentUser?.role === 'owner') {
-      apiFetch('/api/org/members')
-        .then(r => r.ok ? r.json() : null)
-        .then(data => {
-          if (data?.members) {
-            setMembers(data.members);
-          }
-        })
-        .catch(() => {});
+    if (currentUser?.role !== 'admin' && currentUser?.role !== 'owner') {
+      setMembers([]);
+      return;
     }
+
+    // Abort keeps a slow roster response from landing after quick navigation
+    // or an auth change replaces this page's user.
+    const controller = new AbortController();
+    apiFetch('/api/org/members', { signal: controller.signal })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!controller.signal.aborted && data?.members) {
+          setMembers(data.members);
+        }
+      })
+      .catch(() => {});
+    return () => controller.abort();
   }, [currentUser]);
+
+  // App only refetches data when `today` changes or when this page's filters
+  // are edited, so after visiting Dashboard/Timeline (which load a different
+  // day) Analytics would render that stale day's logs under its own range
+  // filters. Refetching the active range on mount keeps the page consistent
+  // with its filter state without reaching into App-owned logic.
+  const mountRefetchedRef = useRef(false);
+  useEffect(() => {
+    if (mountRefetchedRef.current) return;
+    mountRefetchedRef.current = true;
+    onRetry?.();
+    // Intentionally runs once per mount; onRetry is a plain App function, not
+    // a stable callback, so it must not enter the dependency list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Analyzed logs for focus percentage
   const analyzedLogs = useMemo(() => {
@@ -104,34 +139,48 @@ export default function Analytics({
   const avgFocusScore = useMemo(() => {
     if (analyzedLogs.length === 0) return 0;
     return Math.round(
-      analyzedLogs.reduce((acc, l) => acc + (typeof l.productive_score === 'number' ? l.productive_score : l.is_productive ? 100 : 0), 0) / analyzedLogs.length
+      analyzedLogs.reduce((acc, l) => acc + captureScore(l), 0) / analyzedLogs.length
     );
   }, [analyzedLogs]);
 
-  // Build hourly focus score trend chart data
+  // Build hourly focus score trend chart data. Capture counts per hour cover
+  // every log; the average focus rating only uses analyzed captures, because
+  // the server serializes pending rows with productive_score 0.
   const hourlyData = useMemo(() => {
-    return Array.from({ length: 24 }, (_, h) => {
-      const hourLogs = logs.filter(l => new Date(l.timestamp).getHours() === h);
-      const totalScore = hourLogs.reduce((acc, l) => acc + (typeof l.productive_score === 'number' ? l.productive_score : l.is_productive ? 100 : 0), 0);
-      const avgScore = hourLogs.length > 0 ? Math.round(totalScore / hourLogs.length) : 0;
-      return {
-        hour: `${String(h).padStart(2, '0')}:00`,
-        'Focus Rating': avgScore,
-        Captures: hourLogs.length,
-      };
+    const hourCounts = Array.from({ length: 24 }, () => 0);
+    const hourScores: Array<{ total: number; count: number }> = Array.from({ length: 24 }, () => ({ total: 0, count: 0 }));
+
+    logs.forEach(l => {
+      const h = new Date(l.timestamp).getHours();
+      if (h < 0 || h > 23) return;
+      hourCounts[h]++;
+      if (!isPendingLog(l)) {
+        hourScores[h].total += captureScore(l);
+        hourScores[h].count++;
+      }
     });
+
+    return hourScores.map((s, h) => ({
+      hour: `${String(h).padStart(2, '0')}:00`,
+      'Focus Rating': s.count > 0 ? Math.round(s.total / s.count) : 0,
+      Captures: hourCounts[h],
+    }));
   }, [logs]);
 
-  // App Usage Breakdown calculation
+  // App usage breakdown: time-share counts span every capture, focus-rating
+  // averages only analyzed ones (pending rows serialize with score 0).
   const appData = useMemo(() => {
-    const appMap: Record<string, { count: number; category: string; totalScore: number }> = {};
+    const appMap: Record<string, { count: number; category: string; scoreTotal: number; scoreCount: number }> = {};
     logs.forEach(l => {
       const app = canonicalAppName(l.app_name) || 'Other';
       if (!appMap[app]) {
-        appMap[app] = { count: 0, category: l.app_category || 'Application', totalScore: 0 };
+        appMap[app] = { count: 0, category: l.app_category || 'Application', scoreTotal: 0, scoreCount: 0 };
       }
       appMap[app].count++;
-      appMap[app].totalScore += typeof l.productive_score === 'number' ? l.productive_score : l.is_productive ? 100 : 0;
+      if (!isPendingLog(l)) {
+        appMap[app].scoreTotal += captureScore(l);
+        appMap[app].scoreCount++;
+      }
     });
 
     const total = logs.length || 1;
@@ -141,21 +190,30 @@ export default function Analytics({
         category: d.category,
         count: d.count,
         percent: Math.round((d.count / total) * 100),
-        avgScore: Math.round(d.totalScore / d.count),
+        avgScore: d.scoreCount > 0 ? Math.round(d.scoreTotal / d.scoreCount) : 0,
       }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 6);
   }, [logs]);
 
-  // Entropy & Typing Line Chart Data
+  // Entropy & Typing Line Chart Data. Entropy is guarded against non-numeric
+  // rows (one bad row would otherwise throw inside render and blank the page),
+  // and the Focus line reports null for pending captures so it only tracks
+  // AI-evaluated points instead of dipping to 0 while analysis is in flight.
   const multiDay = !!(startDate && endDate && startDate !== endDate);
   const entropyData = useMemo(() => {
     return [...logs]
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
       .map(l => ({
         time: format(new Date(l.timestamp), multiDay ? 'MMM d HH:mm' : 'HH:mm'),
-        Entropy: parseFloat(l.entropy_score.toFixed(1)),
-        FocusScore: l.productive_score !== undefined ? Math.round(l.productive_score) : l.is_productive ? 100 : 0,
+        Entropy: typeof l.entropy_score === 'number' ? parseFloat(l.entropy_score.toFixed(1)) : 0,
+        FocusScore: isPendingLog(l)
+          ? null
+          : typeof l.productive_score === 'number'
+          ? Math.round(l.productive_score)
+          : l.is_productive
+          ? 100
+          : 0,
       }));
   }, [logs, multiDay]);
 
@@ -180,11 +238,15 @@ export default function Analytics({
     'var(--accent-red)',
   ];
 
+  // For a single-day range the label must come from startDate — previously it
+  // fell back to the App-global `today`, so picking "Yesterday" or any past
+  // day via the date inputs still showed Today — or today's date — in the
+  // header while the charts rendered the selected day's data.
   const dateLabel = startDate && endDate && startDate !== endDate
     ? `${format(new Date(startDate + 'T00:00:00'), 'MMM d, yyyy')} - ${format(new Date(endDate + 'T00:00:00'), 'MMM d, yyyy')}`
-    : today === localISODate()
+    : (startDate || today) === localISODate()
     ? 'Today'
-    : format(new Date(today + 'T00:00:00'), 'MMMM d, yyyy');
+    : format(new Date((startDate || today) + 'T00:00:00'), 'MMMM d, yyyy');
 
   const intervalSec = config?.screenshot_interval_seconds ?? 30;
   const activeMinutes = logs.length > 0 ? (logs.length * intervalSec) / 60 : 0;
@@ -378,7 +440,7 @@ export default function Analytics({
             <div className="card-header">
               <span className="card-title">📊 Hourly AI Focus Rating</span>
               <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--purple-text)', fontVariantNumeric: 'tabular-nums' }}>
-                Overall Focus: {avgFocusScore}%
+                Overall Focus: {analyzedLogs.length === 0 ? '—' : `${avgFocusScore}%`}
               </span>
             </div>
             <div className="card-body">

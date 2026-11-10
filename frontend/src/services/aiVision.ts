@@ -1,5 +1,5 @@
 import { LogEntry } from '../types';
-import { apiFetch } from '../api';
+import { apiFetch, readJsonSafe } from '../api';
 import { bumpUsageCount } from '../utils';
 import { callGo } from './wailsBridge';
 
@@ -210,7 +210,8 @@ Base every field strictly on the provided screenshot and metadata. Do NOT invent
       })
     });
     if (!res.ok) return 0;
-    const json = await res.json();
+    const json = await readJsonSafe<any>(res);
+    if (!json) return 0;
     const parsedResults = parseAIJSONResponse(json?.candidates?.[0]?.content?.parts?.[0]?.text);
     if (!parsedResults) return 0;
     const applied = applyResults(parsedResults);

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { LogEntry, ProductivityStats, AppConfig, Page, User } from './types';
-import { apiFetch, setRuntimeBackendUrl } from './api';
+import { apiFetch, readJsonSafe, setRuntimeBackendUrl } from './api';
 import { useToast } from './context/ToastContext';
 import Dashboard from './pages/Dashboard';
 import Timeline from './pages/Timeline';
@@ -16,6 +16,7 @@ import { TaskGoalModal } from './components/TaskGoalModal';
 import { EmptyState } from './components/EmptyState';
 import { Alert } from './components/Alert';
 import { DevMenu } from './components/DevMenu';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { useDevMode } from './hooks/useDevMode';
 import { useInputTracker } from './hooks/useInputTracker';
 import { runClientVisionAnalysis } from './services/aiVision';
@@ -121,7 +122,7 @@ export default function App() {
 
       try {
         const res = await apiFetch('/api/auth/me');
-        const data = res.ok ? await res.json() : null;
+        const data = res.ok ? await readJsonSafe<{ authenticated?: boolean; user?: User }>(res) : null;
         setBackendUnavailable(false);
         if (data && data.authenticated && data.user) {
           setCurrentUser(data.user);
@@ -212,6 +213,16 @@ export default function App() {
     setCurrentUser(null);
     setIsGuestMode(false);
     setPage('dashboard');
+    // Reset in-flight/poll-dependent local state so the next session starts
+    // clean: no stale load error banner, no leftover sync toast, no running
+    // work-clock readout, and no AI dedup memory from the ended session.
+    setLoadError(null);
+    setSyncMessage('');
+    setTrackerError(null);
+    setElapsedSeconds(0);
+    setIsTrackingActive(false);
+    aiAnalysisInFlightRef.current = false;
+    aiSubmittedLogIdsRef.current.clear();
   };
 
   // Desktop AI usage event listener
@@ -226,8 +237,18 @@ export default function App() {
     };
   }, []);
 
-  // Fetch initial tracker status
+  // Session is "active" once a user is signed in or the user opted for the
+  // offline guest mode. Polling of logs/status/AI is gated on this so we
+  // never hammer the API with 401s before the auth check resolves — and the
+  // same gate stops every interval at logout (App stays mounted, only the
+  // rendered view changes).
+  const hasSession = Boolean(currentUser) || isGuestMode;
+
+  // Fetch initial tracker status — re-runs when the session changes so the
+  // elapsed/active state is refreshed after sign-in instead of racing the
+  // auth check on mount.
   useEffect(() => {
+    if (!hasSession) return;
     const app = (window as any).go?.main?.App;
     if (app?.GetTrackingStatus) {
       callGo(() => app.GetTrackingStatus())
@@ -244,7 +265,7 @@ export default function App() {
     }
 
     apiFetch('/api/tracker/status')
-      .then(r => r.ok ? r.json() : null)
+      .then(r => r.ok ? readJsonSafe(r) : null)
       .then(data => {
         if (data) {
           setIsTrackingActive(!!data.active);
@@ -254,7 +275,7 @@ export default function App() {
         }
       })
       .catch(() => {});
-  }, []);
+  }, [hasSession]);
 
   // Timer ticker
   useEffect(() => {
@@ -279,9 +300,11 @@ export default function App() {
         }
         const res = await apiFetch('/api/tracker/status');
         if (res.ok) {
-          const data = await res.json();
-          setIsTrackingActive(!!data.active);
-          setElapsedSeconds(data.elapsed_seconds || 0);
+          const data = await readJsonSafe<{ active?: boolean; elapsed_seconds?: number }>(res);
+          if (data) {
+            setIsTrackingActive(!!data.active);
+            setElapsedSeconds(data.elapsed_seconds || 0);
+          }
         }
       } catch {}
     };
@@ -299,11 +322,16 @@ export default function App() {
       }
       const res = await apiFetch('/api/tracker/toggle', { method: 'POST' });
       if (res.ok) {
-        const data = await res.json();
-        setIsTrackingActive(!!data.active);
-        setElapsedSeconds(data.elapsed_seconds || 0);
-        setTrackerError(null);
-        toast.success(data.active ? 'Work tracker started' : 'Work tracker paused');
+        const data = await readJsonSafe<{ active?: boolean; elapsed_seconds?: number }>(res);
+        if (data) {
+          setIsTrackingActive(!!data.active);
+          setElapsedSeconds(data.elapsed_seconds || 0);
+          setTrackerError(null);
+          toast.success(data.active ? 'Work tracker started' : 'Work tracker paused');
+        } else {
+          setTrackerError('Tracker did not respond. Please try again.');
+          await refreshStatus();
+        }
       } else {
         const msg = 'Failed to update tracker status.';
         setTrackerError(msg);
@@ -477,15 +505,15 @@ export default function App() {
         const [resLogs, resStats, resConfig] = await Promise.all([
           apiFetch(`/api/logs?${dateParam}${userParam}`).then(r => {
             if (!r.ok) throw new Error(`Logs failed with status ${r.status}`);
-            return r.json();
+            return readJsonSafe<LogEntry[]>(r);
           }),
           apiFetch(`/api/stats?${dateParam}${userParam}`).then(r => {
             if (!r.ok) throw new Error(`Stats failed with status ${r.status}`);
-            return r.json();
+            return readJsonSafe<ProductivityStats>(r);
           }),
           apiFetch(`/api/config`).then(r => {
             if (!r.ok) throw new Error(`Config failed with status ${r.status}`);
-            return r.json();
+            return readJsonSafe<AppConfig>(r);
           }),
         ]);
         logsData = resLogs;
@@ -539,11 +567,12 @@ export default function App() {
           })
             .then(async (res) => {
               if (res.ok) {
-                const data = await res.json();
-                if (data.results && Array.isArray(data.results)) {
+                const data = await readJsonSafe<{ results?: any[] }>(res);
+                const results = Array.isArray(data?.results) ? data!.results : null;
+                if (results) {
                   if (requestId === requestIdRef.current) {
                     setLogs((prev) => prev.map((log) => {
-                      const match = data.results.find((r: any) => r.LogID === log.id);
+                      const match = results.find((r: any) => r.LogID === log.id);
                       if (match) {
                         return {
                           ...log,
@@ -611,12 +640,19 @@ export default function App() {
     }
   };
 
+  // Skip data loading until the session exists, and drop it again on
+  // sign-out: prevents unauthenticated 401 spam on mount and stops the
+  // poll-after-logout leak. It also re-keys the load when sign-in completes,
+  // so the stale pre-auth error state is never shown after a fresh login.
   useEffect(() => {
+    if (!hasSession) return;
     loadData(today);
-  }, [today, loadData]);
+  }, [hasSession, today, loadData]);
 
-  // Periodic background refresh & 7-day retention cleanup
+  // Periodic background refresh & 7-day retention cleanup — gated on the
+  // session so logged-out states don't keep polling in the background.
   useEffect(() => {
+    if (!hasSession) return;
     const syncInterval = setInterval(() => {
       loadDataRef.current(undefined, undefined, undefined, undefined, { background: true });
 
@@ -624,7 +660,7 @@ export default function App() {
         const retentionCutoff = new Date();
         retentionCutoff.setDate(retentionCutoff.getDate() - 7);
         const cutoffStr = localISODate(retentionCutoff);
-        
+
         Object.keys(localStorage).forEach(key => {
           if (key.startsWith('mini_logs_') || key.startsWith('mini_stats_')) {
             const datePart = key.split('_').pop();
@@ -637,7 +673,7 @@ export default function App() {
     }, 30000);
 
     return () => clearInterval(syncInterval);
-  }, []);
+  }, [hasSession]);
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
@@ -803,7 +839,8 @@ export default function App() {
               style={{ marginBottom: 16 }}
             />
           )}
-          {page === 'dashboard' && (
+          <ErrorBoundary level="page" key={page}>
+            {page === 'dashboard' && (
             <Dashboard
               logs={logs}
               stats={stats}
@@ -895,6 +932,7 @@ export default function App() {
               onSuccess={completeInviteSignIn}
             />
           )}
+          </ErrorBoundary>
         </div>
       </main>
 

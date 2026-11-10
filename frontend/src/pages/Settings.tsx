@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch } from '../api';
 import { getTodayUsageCount, bumpUsageCount, resetUsageCount } from '../utils';
 import { CustomSelect } from '../components/CustomSelect';
@@ -14,6 +14,13 @@ interface AIModel {
   inputTokenLimit: number;
   outputTokenLimit: number;
 }
+
+// Backend routes /api/ai/models & /api/ai/test return names with the "models/"
+// prefix stripped (internal/ai FetchAvailableModels trims it), while the direct
+// Google API used in desktop mode returns "models/...". Normalize to the
+// prefixed form so the stored selection and selectedModelInfo matching stay
+// consistent across both modes.
+const normalizeModelName = (raw: string) => (raw.startsWith('models/') ? raw : `models/${raw}`);
 
 interface SettingsPageProps {
   theme?: 'dark' | 'light' | 'auto';
@@ -35,6 +42,23 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
   // GetDevDiagnostics, backed by app.go's appVersion()) so the UI always shows
   // the real build version instead of a hardcoded string that drifts.
   const [appVersion, setAppVersion] = useState<string | null>(null);
+
+  // Central status-message helper so status-clearing timers are tracked and
+  // cancelled on unmount instead of firing setStatusMessage on a dead page.
+  const statusTimerRef = useRef<number | null>(null);
+  const showStatus = useCallback((msg: string | null, ttlMs?: number) => {
+    if (statusTimerRef.current) {
+      clearTimeout(statusTimerRef.current);
+      statusTimerRef.current = null;
+    }
+    setStatusMessage(msg);
+    if (ttlMs) {
+      statusTimerRef.current = window.setTimeout(() => setStatusMessage(null), ttlMs);
+    }
+  }, []);
+  useEffect(() => () => {
+    if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+  }, []);
 
   useEffect(() => {
     const goApp = (window as any).go?.main?.App;
@@ -121,8 +145,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 outputTokenLimit: m.outputTokenLimit || 0,
               }));
             setAvailableModels(generateModels);
-            setStatusMessage('✓ Dynamically loaded models from Google Gemini API');
-            setTimeout(() => setStatusMessage(null), 3000);
+            showStatus('✓ Dynamically loaded models from Google Gemini API', 3000);
           }
         }
       } else {
@@ -131,13 +154,16 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
         if (res.ok) {
           const data = await res.json();
           if (data.models && Array.isArray(data.models)) {
-            setAvailableModels(data.models.map((m: any) => ({
-              name: m.name,
-              displayName: m.displayName || m.name.replace('models/', ''),
-              description: '',
-              inputTokenLimit: 0,
-              outputTokenLimit: 0,
-            })));
+            setAvailableModels(data.models.map((m: any) => {
+              const name = normalizeModelName(m.name);
+              return {
+                name,
+                displayName: m.displayName || name.replace('models/', ''),
+                description: '',
+                inputTokenLimit: 0,
+                outputTokenLimit: 0,
+              };
+            }));
           }
         }
       }
@@ -153,7 +179,12 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
   }, [fetchAvailableModels]);
 
   const [screenshotInterval, setScreenshotInterval] = useState<number>(() => {
-    return parseInt(localStorage.getItem('mini_screenshot_interval') || '60', 10);
+    const parsed = parseInt(localStorage.getItem('mini_screenshot_interval') || '60', 10);
+    // Guard against NaN/garbage stored values: parseInt returns NaN on non-numeric
+    // input, which would break the readout below and serialize as null over the
+    // desktop JSON binding / web body payload.
+    if (!Number.isFinite(parsed)) return 60;
+    return Math.min(Math.max(parsed, 5), 3600); // sane range, backend web rule accepts >= 5
   });
 
   const handleSave = async () => {
@@ -194,18 +225,17 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
     localStorage.setItem('mini_screenshot_interval', screenshotInterval.toString());
 
     if (backendError) {
-      setStatusMessage(`✕ Saved locally, but backend update failed: ${backendError}`);
+      showStatus(`✕ Saved locally, but backend update failed: ${backendError}`, 4000);
     } else {
-      setStatusMessage('✓ Settings & Selected Model saved successfully!');
+      showStatus('✓ Settings & Selected Model saved successfully!', 4000);
     }
-    setTimeout(() => setStatusMessage(null), 4000);
     setSaving(false);
   };
 
   const handleTestAPI = async () => {
     if (testing) return;
     setTesting(true);
-    setStatusMessage('Testing connection and verifying models…');
+    showStatus('Testing connection and verifying models…');
     try {
       if ((window as any).go?.main?.App) {
         if (!apiKey.trim()) {
@@ -243,13 +273,16 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
         if (res.ok) {
           const data = await res.json();
           if (data.models && Array.isArray(data.models)) {
-            setAvailableModels(data.models.map((m: any) => ({
-              name: m.name,
-              displayName: m.displayName || m.name.replace('models/', ''),
-              description: '',
-              inputTokenLimit: 0,
-              outputTokenLimit: 0,
-            })));
+            setAvailableModels(data.models.map((m: any) => {
+              const name = normalizeModelName(m.name);
+              return {
+                name,
+                displayName: m.displayName || name.replace('models/', ''),
+                description: '',
+                inputTokenLimit: 0,
+                outputTokenLimit: 0,
+              };
+            }));
           }
           setStatusMessage(`✓ Server verified Gemini connection successfully!`);
         } else {
@@ -460,7 +493,10 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                   fullWidth
                   ariaLabel="Capture Interval"
                   value={String(screenshotInterval)}
-                  onChange={(value) => setScreenshotInterval(parseInt(value, 10))}
+                  onChange={(value) => {
+                    const parsed = parseInt(value, 10);
+                    setScreenshotInterval(Number.isFinite(parsed) ? Math.min(Math.max(parsed, 5), 3600) : 60);
+                  }}
                   options={[
                     { value: '15', label: '15s — High frequency', leading: <Icon name="clock" size={14} /> },
                     { value: '30', label: '30s — Active tracking', leading: <Icon name="clock" size={14} /> },

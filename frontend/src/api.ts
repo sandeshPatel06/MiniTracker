@@ -1,4 +1,14 @@
-// API helper module for environment-aware backend URL resolution
+// API helper module for environment-aware backend URL resolution.
+//
+// Contract used across the app (keep consistent!):
+// - apiFetch resolves to the raw `Response` and only rejects on network
+//   failure (offline / connection refused). HTTP error statuses (401, 500…)
+//   resolve normally — callers must check `res.ok` themselves.
+//   Pages (Dashboard, Settings, Organization, Auth…) all follow this.
+// - A 401 response additionally dispatches the window event
+//   'mini-auth-expired' so the shell can drop the session.
+// - For optional/potentially empty bodies use `readJsonSafe(response)` —
+//   plain `response.json()` throws on 204/empty/non-JSON bodies.
 
 let runtimeBackendUrl = '';
 
@@ -18,12 +28,25 @@ export function getApiBaseUrl(): string {
     (import.meta as any).env?.VITE_BACKEND_ENDPOINT;
 
   if (envUrl) {
-    return envUrl.replace(/\/$/, '');
+    // A dev-only localhost URL baked into the bundle must not leak into a
+    // packaged build (builds are static — env vars are inlined at build
+    // time), where it would try to reach the developer's own machine.
+    // Fall back to relative paths in that case.
+    const isProd = (import.meta as any).env?.PROD;
+    if (!isProd || !isLocalhostUrl(envUrl)) {
+      return envUrl.replace(/\/$/, '');
+    }
   }
   if ((window as any).__BACKEND_URL__) {
     return (window as any).__BACKEND_URL__.replace(/\/$/, '');
   }
+  // Empty base → relative paths, i.e. served from the app's own origin.
+  // This is the correct default for a packaged/same-origin deployment.
   return '';
+}
+
+function isLocalhostUrl(url: string): boolean {
+  return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(url);
 }
 
 export function buildApiUrl(path: string): string {
@@ -121,4 +144,17 @@ export function apiFetch(path: string, options: RequestInit = {}): Promise<Respo
       });
       throw error;
     });
+}
+
+// Parse a response body defensively: returns null for 204/empty or invalid
+// JSON instead of throwing a SyntaxError that callers would otherwise
+// misinterpret as a backend failure.
+export async function readJsonSafe<T = any>(response: Response): Promise<T | null> {
+  try {
+    const text = await response.text();
+    if (!text.trim()) return null;
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
 }

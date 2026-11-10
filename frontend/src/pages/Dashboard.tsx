@@ -35,6 +35,18 @@ function focusBarColor(score: number): string {
     : 'var(--accent-red)';
 }
 
+// Rating for one capture. The server always serializes productive_score as a
+// number (0 for captures that still await AI analysis), so treat the boolean
+// fallback strictly as a safety net for older/local shapes — and only count
+// analyzed captures toward score averages (see derived-data blocks below).
+function captureScore(log: LogEntry): number {
+  return typeof log.productive_score === 'number'
+    ? log.productive_score
+    : log.is_productive
+    ? 100
+    : 0;
+}
+
 declare const window: Window & {
   go?: {
     main: {
@@ -74,16 +86,31 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
       return;
     }
 
-    apiFetch(`/api/work-sessions?date=${today}`)
-      .then((res) => res.json())
+    // Web mode hits the HTTP server. This effect re-fires whenever `logs`
+    // change (AI merges, 30s background refresh), so guard against out-of-order
+    // responses overwriting newer state and against state updates from an
+    // unmounted page during fast navigation.
+    const controller = new AbortController();
+    let requestValid = true;
+
+    apiFetch(`/api/work-sessions?date=${today}`, { signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('work sessions unavailable'))))
       .then((data) => {
+        if (!requestValid) return;
         if (Array.isArray(data) && data.length > 0) {
           setWorkSessions(data);
         } else {
           setWorkSessions(buildLocalWorkSessions(logs));
         }
       })
-      .catch(() => setWorkSessions(buildLocalWorkSessions(logs)));
+      .catch(() => {
+        if (requestValid) setWorkSessions(buildLocalWorkSessions(logs));
+      });
+
+    return () => {
+      requestValid = false;
+      controller.abort();
+    };
   }, [today, logs]);
 
   const pendingCount = logs.filter(isPendingLog).length;
@@ -93,27 +120,29 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
   // Calculate Average AI-Returned Productivity Score
   const avgProductivityScore = analyzedLogs.length > 0
     ? Math.round(
-        analyzedLogs.reduce(
-          (acc, l) => acc + (typeof l.productive_score === 'number' ? l.productive_score : l.is_productive ? 100 : 0),
-          0
-        ) / analyzedLogs.length
+        analyzedLogs.reduce((acc, l) => acc + captureScore(l), 0) / analyzedLogs.length
       )
     : 0;
 
-  const totalKeys = logs.reduce((acc, l) => acc + l.total_keys, 0);
+  const totalKeys = logs.reduce((acc, l) => acc + (typeof l.total_keys === 'number' ? l.total_keys : 0), 0);
   const avgEntropy = logs.length
-    ? logs.reduce((acc, l) => acc + l.entropy_score, 0) / logs.length
+    ? logs.reduce((acc, l) => acc + (typeof l.entropy_score === 'number' ? l.entropy_score : 0), 0) / logs.length
     : 0;
 
-  // App Usage Breakdown calculation
-  const appCounts: Record<string, { count: number; category: string; totalScore: number }> = {};
+  // App usage breakdown: capture counts span every log, but focus-rating
+  // averages must only use analyzed captures — pending rows are serialized
+  // with productive_score 0 and would otherwise drag ratings toward 0%.
+  const appCounts: Record<string, { count: number; category: string; scoreTotal: number; scoreCount: number }> = {};
   logs.forEach((l) => {
     const app = canonicalAppName(l.app_name) || 'Other';
     if (!appCounts[app]) {
-      appCounts[app] = { count: 0, category: l.app_category || 'Application', totalScore: 0 };
+      appCounts[app] = { count: 0, category: l.app_category || 'Application', scoreTotal: 0, scoreCount: 0 };
+    }
+    if (!isPendingLog(l)) {
+      appCounts[app].scoreTotal += captureScore(l);
+      appCounts[app].scoreCount++;
     }
     appCounts[app].count++;
-    appCounts[app].totalScore += l.productive_score !== undefined ? l.productive_score : l.is_productive ? 100 : 0;
   });
 
   const totalLogCount = logs.length || 1;
@@ -123,17 +152,23 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
       category: data.category,
       count: data.count,
       percent: Math.round((data.count / totalLogCount) * 100),
-      avgScore: Math.round(data.totalScore / data.count),
+      avgScore: data.scoreCount > 0 ? Math.round(data.scoreTotal / data.scoreCount) : 0,
     }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 5);
 
-  // Hourly Productivity Trend data calculation
-  const hourlyMap: Record<string, { hour: string; totalScore: number; count: number }> = {};
+  // Hourly productivity trend: per-hour capture counts cover every log, while
+  // the average focus score only considers analyzed captures (pending rows
+  // would otherwise report 0% for hours that simply await AI analysis).
+  const hourKeys: string[] = [];
+  const hourlyCounts: Record<string, number> = {};
   for (let i = 8; i <= 20; i++) {
     const key = `${i.toString().padStart(2, '0')}:00`;
-    hourlyMap[key] = { hour: key, totalScore: 0, count: 0 };
+    hourKeys.push(key);
+    hourlyCounts[key] = 0;
   }
+
+  const hourlyScores: Record<string, { total: number; count: number }> = {};
 
   logs.forEach((l) => {
     try {
@@ -141,20 +176,24 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
       const h = date.getHours();
       if (h >= 8 && h <= 20) {
         const key = `${h.toString().padStart(2, '0')}:00`;
-        const score = l.productive_score !== undefined ? l.productive_score : l.is_productive ? 100 : 0;
-        if (hourlyMap[key]) {
-          hourlyMap[key].totalScore += score;
-          hourlyMap[key].count++;
+        hourlyCounts[key]++;
+        if (!isPendingLog(l)) {
+          if (!hourlyScores[key]) hourlyScores[key] = { total: 0, count: 0 };
+          hourlyScores[key].total += captureScore(l);
+          hourlyScores[key].count++;
         }
       }
     } catch {}
   });
 
-  const hourlyChartData = Object.values(hourlyMap).map((d) => ({
-    hour: d.hour,
-    score: d.count > 0 ? Math.round(d.totalScore / d.count) : 0,
-    count: d.count,
-  }));
+  const hourlyChartData = hourKeys.map((key) => {
+    const scoreData = hourlyScores[key];
+    return {
+      hour: key,
+      score: scoreData && scoreData.count > 0 ? Math.round(scoreData.total / scoreData.count) : 0,
+      count: hourlyCounts[key],
+    };
+  });
 
   // Latest 10 entries for Activity Feed
   const recent = [...logs].reverse().slice(0, 10);
@@ -486,9 +525,7 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
           ) : (
             <div className="timeline-list">
               {recent.map((log) => {
-                const scoreVal = typeof log.productive_score === 'number'
-                  ? Math.round(log.productive_score)
-                  : log.is_productive ? 100 : 0;
+                const scoreVal = Math.round(captureScore(log));
                 return (
                   <div key={`${log.id}-${log.timestamp}-${log.image_path}`} className="timeline-item">
                     <span className="timeline-time">
@@ -569,7 +606,7 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
                     </div>
 
                     <div>
-                      {!log.ai_category || log.ai_reason.includes('API key') || log.ai_reason.includes('No key') ? (
+                      {isPendingLog(log) ? (
                         <span className="badge badge-pending">
                           Pending AI
                         </span>

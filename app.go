@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"log"
-	"math"
 	"net"
 	"net/http"
 	"os"
@@ -1261,12 +1260,8 @@ func (a *App) ProcessPendingLogs() (int, error) {
 // currently-active window stays pending until it elapses. Request-level retry,
 // model failover and the Gemini context cache are handled by AnalyzeSessionBundle.
 func (a *App) processPendingAI() (int, error) {
-	if a.database == nil {
+	if a.database == nil || a.gemini == nil || !a.gemini.HasKey() {
 		return 0, nil
-	}
-	useAI := a.gemini != nil && a.gemini.HasKey()
-	if !useAI {
-		log.Printf("[app] no Gemini API key configured — scoring completed windows with the local activity heuristic")
 	}
 
 	logs, err := a.database.GetUnanalyzedLogs()
@@ -1333,22 +1328,6 @@ bundleLoop:
 				continue
 			}
 
-			if !useAI {
-				// No API key: keep the pipeline moving with a local activity
-				// heuristic so visible, active sessions never sit at 0 forever.
-				scored := heuristicChunkScore(chunk)
-				for _, entry := range chunk {
-					updateErr := a.database.UpdateLogAnalysis(entry.ID, scored.category, scored.appName, scored.appCategory, entry.WindowTitle, 0, "", scored.score >= 50, scored.score, scored.confidence, scored.reason)
-					if updateErr != nil {
-						log.Printf("[app] update heuristic score for #%d error: %v", entry.ID, updateErr)
-						continue
-					}
-					processed++
-				}
-				log.Printf("[app] local heuristic scored %d logs for %s (avg %.0f%%)", len(chunk), windowLabel, scored.score)
-				continue
-			}
-
 			requests++
 			sessionEvents := a.bundleSessionEvents(bundle.start)
 
@@ -1396,58 +1375,6 @@ bundleLoop:
 
 	log.Printf("[app] AI bundle analysis complete: %d/%d logs in %d requests", processed, len(logs), requests)
 	return processed, nil
-}
-
-type heuristicResult struct {
-	category    string
-	appName     string
-	appCategory string
-	reason      string
-	score       float64
-	confidence  float64
-}
-
-// heuristicChunkScore derives an offline productivity score for one 5-minute
-// chunk from the same telemetry the AI prompt receives: window/app visibility,
-// keystroke entropy (0-100), raw key and click counts. Reading with no input
-// still scores above the productive threshold on purpose — same philosophy as
-// ai.ApplyBundleActivityGuard. Confidence is low and the reason flags it, so
-// users know this is a local fallback, not AI scoring.
-func heuristicChunkScore(chunk []db.LogEntry) heuristicResult {
-	if len(chunk) == 0 {
-		return heuristicResult{category: "Idle", appCategory: "Idle", score: 5, confidence: 0.9, reason: "no active window content"}
-	}
-
-	keys, clicks, entropy := 0, 0, 0.0
-	appName := ""
-	for _, e := range chunk {
-		keys += e.TotalKeys
-		clicks += e.TotalClicks
-		if e.EntropyScore > entropy {
-			entropy = e.EntropyScore
-		}
-		if appName == "" && strings.TrimSpace(e.AppName) != "" {
-			appName = strings.TrimSpace(e.AppName)
-		}
-	}
-
-	reason := fmt.Sprintf("local heuristic — entropy %.0f, %d keys, %d clicks in window", entropy, keys, clicks)
-	score := 55.0 + entropy*0.4 + math.Min(float64(keys), 50)*0.2 + math.Min(float64(clicks), 30)*0.3
-	if score > 95 {
-		score = 95
-	}
-	if score < 50 {
-		score = 50
-	}
-
-	return heuristicResult{
-		category:    "Productive",
-		appName:     appName,
-		appCategory: "Heuristic",
-		reason:      reason + " (offline scoring — add a Gemini API key in Settings for AI analysis)",
-		score:       score,
-		confidence:  0.4,
-	}
 }
 
 // ---- Desktop-only developer / diagnostics bindings ----

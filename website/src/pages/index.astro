@@ -12,25 +12,43 @@ const jsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
     {
+      '@type': 'WebSite',
+      '@id': 'https://get-hike.pages.dev/#website',
+      url: 'https://get-hike.pages.dev/',
+      name: 'get-Hike',
+      alternateName: ['getHike', 'get-Hike Tracker', 'MiniTracker'],
+      description: 'Privacy-first productivity and focus tracker for Linux, Windows, and macOS',
+      publisher: {
+        '@id': 'https://reakinfotech.com/#organization',
+      },
+    },
+    {
       '@type': 'SoftwareApplication',
       '@id': 'https://get-hike.pages.dev/#software',
       name: 'get-Hike',
-      description: 'Privacy-first productivity tracking for Linux, Windows & macOS: open source, AI-assisted, optional teams.',
+      description: 'Privacy-first productivity tracking for Linux, Windows & macOS: open source, AI-assisted, local-first SQLite persistence.',
       operatingSystem: ['Linux', 'Windows', 'macOS'],
       applicationCategory: 'ProductivityApplication',
+      applicationSubCategory: 'Time Tracking Software',
       license: 'https://opensource.org/licenses/MIT',
       url: 'https://get-hike.pages.dev/',
       downloadUrl: 'https://github.com/sandeshPatel06/MiniTracker/releases',
       softwareVersion: '1.0.0',
+      screenshot: 'https://get-hike.pages.dev/og.png',
+      featureList: [
+        'Shannon keystroke entropy measurement (no character keylogging)',
+        'Local SQLite storage at ~/.local/share/get-hike/',
+        'Optional Bring-Your-Own-Key Google Gemini AI scoring',
+        'systemd user service integration for Linux background daemon',
+        'Cross-platform desktop companion widget',
+      ],
       offers: {
         '@type': 'Offer',
         price: '0',
         priceCurrency: 'USD',
       },
       author: {
-        '@type': 'Organization',
-        name: 'REAK INFOTECH LLP',
-        url: 'https://reakinfotech.com',
+        '@id': 'https://reakinfotech.com/#organization',
       },
     },
     {
@@ -38,6 +56,10 @@ const jsonLd = {
       '@id': 'https://reakinfotech.com/#organization',
       name: 'REAK INFOTECH LLP',
       url: 'https://reakinfotech.com',
+      logo: 'https://get-hike.pages.dev/app-logo.png',
+      sameAs: [
+        'https://github.com/sandeshPatel06/MiniTracker',
+      ],
     },
     {
       '@type': 'FAQPage',
@@ -65,6 +87,14 @@ const jsonLd = {
           acceptedAnswer: {
             '@type': 'Answer',
             text: 'No. get-Hike includes a zero-friction Guest mode. You can install it and start tracking productivity immediately without signing up, entering an email, or connecting any cloud account.',
+          },
+        },
+        {
+          '@type': 'Question',
+          name: 'Does get-Hike require root or sudo privileges to run?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'No. get-Hike runs entirely in your user space as a standard Linux user application or systemd user service. Root privileges are never required during regular operation or tracking.',
           },
         },
         {

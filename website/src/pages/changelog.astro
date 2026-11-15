@@ -44,11 +44,41 @@ const releases = [
 ];
 
 const githubReleasesUrl = 'https://github.com/sandeshPatel06/MiniTracker/releases';
+
+const changelogJsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        {
+          '@type': 'ListItem',
+          position: 1,
+          name: 'Home',
+          item: 'https://get-hike.pages.dev/',
+        },
+        {
+          '@type': 'ListItem',
+          position: 2,
+          name: 'Changelog',
+          item: 'https://get-hike.pages.dev/changelog',
+        },
+      ],
+    },
+    {
+      '@type': 'WebPage',
+      name: 'Changelog: get-Hike Product Updates',
+      url: 'https://get-hike.pages.dev/changelog',
+      description: 'All notable releases and updates to get-Hike: background tracking daemon, Gemini AI batch scoring, and Linux desktop integration.',
+    },
+  ],
+};
 ---
 
 <BaseLayout
   title="Changelog: get-Hike Product Updates"
   description="All notable releases and updates to get-Hike: background tracking daemon, Gemini AI batch scoring, and Linux desktop integration."
+  jsonLd={changelogJsonLd}
 >
   <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-16">
     

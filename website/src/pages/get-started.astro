@@ -123,26 +123,30 @@ const getStartedJsonLd = {
           System Prerequisites
         </h2>
         <p class="text-slate-300 text-sm sm:text-base leading-relaxed mb-4">
-          get-Hike is engineered for Linux distributions running either X11 or Wayland (with capture tools). If compiling from source, you will need:
+          get-Hike is engineered as a cross-platform solution supporting Linux, Windows, macOS, and Web Browsers:
         </p>
 
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
           <article class="p-4 rounded-xl bg-slate-900 border border-slate-800">
             <header class="font-mono text-emerald-400 font-semibold text-sm mb-1">Linux OS</header>
-            <p class="text-xs text-slate-400">Ubuntu 22.04+, Debian 12+, Fedora 38+, Arch Linux</p>
+            <p class="text-xs text-slate-400">Ubuntu 22.04+, Debian 12+, Fedora 38+, Arch (X11 &amp; Wayland)</p>
           </article>
           <article class="p-4 rounded-xl bg-slate-900 border border-slate-800">
-            <header class="font-mono text-emerald-400 font-semibold text-sm mb-1">Go Toolchain</header>
-            <p class="text-xs text-slate-400">Go 1.22+ required for backend daemon compilation</p>
+            <header class="font-mono text-emerald-400 font-semibold text-sm mb-1">Windows</header>
+            <p class="text-xs text-slate-400">Windows 10 / 11 (64-bit portable .exe, zero-install)</p>
           </article>
           <article class="p-4 rounded-xl bg-slate-900 border border-slate-800">
-            <header class="font-mono text-emerald-400 font-semibold text-sm mb-1">Node &amp; npm</header>
-            <p class="text-xs text-slate-400">Node 18+ for compiling the frontend UI bundle</p>
+            <header class="font-mono text-emerald-400 font-semibold text-sm mb-1">macOS</header>
+            <p class="text-xs text-slate-400">macOS 12+ Monterey on Apple Silicon (M-series) &amp; Intel</p>
+          </article>
+          <article class="p-4 rounded-xl bg-slate-900 border border-slate-800">
+            <header class="font-mono text-emerald-400 font-semibold text-sm mb-1">Web Browser</header>
+            <p class="text-xs text-slate-400">Chrome, Firefox, Safari, Edge cloud analytics portal</p>
           </article>
         </div>
 
         <p class="text-xs text-slate-400 break-words leading-relaxed">
-          Required system libraries: <code class="text-emerald-300 bg-slate-900 px-1.5 py-0.5 rounded font-mono break-all">libayatana-appindicator3-dev</code>, <code class="text-emerald-300 bg-slate-900 px-1.5 py-0.5 rounded font-mono break-all">libgtk-3-dev</code>, <code class="text-emerald-300 bg-slate-900 px-1.5 py-0.5 rounded font-mono break-all">libwebkit2gtk-4.0-dev</code> (or 4.1).
+          For Linux source compilation: requires Go 1.22+, Node 18+, and <code class="text-emerald-300 bg-slate-900 px-1.5 py-0.5 rounded font-mono break-all">libayatana-appindicator3-dev</code>, <code class="text-emerald-300 bg-slate-900 px-1.5 py-0.5 rounded font-mono break-all">libgtk-3-dev</code>, <code class="text-emerald-300 bg-slate-900 px-1.5 py-0.5 rounded font-mono break-all">libwebkit2gtk-4.0-dev</code>.
         </p>
       </section>
 
@@ -150,17 +154,45 @@ const getStartedJsonLd = {
       <section id="quick-install" class="scroll-mt-24">
         <h2 class="text-2xl font-bold text-white mb-4 flex items-center gap-2">
           <span class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-xs font-mono text-emerald-400">02</span>
-          One-Line Installation (Linux)
+          Quick Install by Operating System
         </h2>
         <p class="text-slate-300 text-sm sm:text-base leading-relaxed mb-4">
-          Install directly from the web without cloning:
+          Choose your operating system install command:
         </p>
 
         <div class="space-y-4">
-          <CodeBlock
-            code="curl -sSL https://raw.githubusercontent.com/sandeshPatel06/main/install.sh | bash"
-            label="Direct curl installation"
-          />
+          <div>
+            <div class="text-xs font-mono text-emerald-400 mb-1 flex items-center gap-1.5">
+              <span>Linux &amp; macOS (Automated Script)</span>
+            </div>
+            <CodeBlock
+              code="curl -sSL https://raw.githubusercontent.com/sandeshPatel06/MiniTracker/main/install.sh | bash"
+              label="Linux & macOS automated curl install"
+            />
+          </div>
+
+          <div>
+            <div class="text-xs font-mono text-emerald-400 mb-1 flex items-center gap-1.5">
+              <span>Windows (PowerShell One-Liner or Portable Binary)</span>
+            </div>
+            <CodeBlock
+              code="irm https://raw.githubusercontent.com/sandeshPatel06/MiniTracker/main/install.ps1 | iex"
+              label="Windows PowerShell install"
+              language="powershell"
+            />
+          </div>
+
+          <div>
+            <div class="text-xs font-mono text-emerald-400 mb-1 flex items-center gap-1.5">
+              <span>Web Browser Cloud Portal (Instant Access)</span>
+            </div>
+            <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+              <span class="text-xs font-mono text-slate-300">Open portal: https://minitracker.pages.dev</span>
+              <a href="https://minitracker.pages.dev" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 rounded-md bg-emerald-500 text-slate-950 text-xs font-bold hover:bg-emerald-400 transition-colors">
+                Launch Portal &rarr;
+              </a>
+            </div>
+          </div>
 
           <p class="text-xs text-slate-400">Or clone and inspect the script locally before running:</p>
 

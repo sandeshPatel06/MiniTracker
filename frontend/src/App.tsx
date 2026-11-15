@@ -70,6 +70,19 @@ export default function App() {
     localStorage.setItem('mini_theme', theme);
   }, [theme]);
 
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'mini_theme' && e.newValue) {
+        const newTheme = e.newValue as 'dark' | 'light' | 'auto';
+        if (newTheme === 'dark' || newTheme === 'light' || newTheme === 'auto') {
+          setTheme(newTheme);
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
   // Developer menu (unlocked by 7 quick taps on a logo, session-only)
   const dev = useDevMode();
   const [devToastVisible, setDevToastVisible] = useState(false);
@@ -718,12 +731,28 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
   useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth > 768) {
+        setIsMobileMenuOpen(false);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
     if (!isMobileMenuOpen) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setIsMobileMenuOpen(false);
     };
     window.addEventListener('keydown', handleEscape);
-    return () => window.removeEventListener('keydown', handleEscape);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener('keydown', handleEscape);
+    };
   }, [isMobileMenuOpen]);
 
   const navigateTo = (targetPage: Page) => {
@@ -796,7 +825,7 @@ export default function App() {
   }
 
   if (authChecked && !currentUser && !isGuestMode) {
-    if (window.location.hash.includes('accept-invite')) {
+    if (page === 'accept-invite' || window.location.hash.includes('accept-invite')) {
       return (
         <main className="main-content" id="main-content" tabIndex={-1}>
           <div className="page-container">
@@ -823,6 +852,8 @@ export default function App() {
           backendUnavailable={backendUnavailable}
           onRetryConnection={retryBackendConnection}
           onAuthSuccess={(user, org, token) => {
+            localStorage.removeItem('mini_guest_mode');
+            setIsGuestMode(false);
             if (user) {
               localStorage.setItem('mini_auth_user', JSON.stringify(user));
             }

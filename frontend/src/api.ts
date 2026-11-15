@@ -137,8 +137,8 @@ export function apiFetch(path: string, options: RequestInit = {}): Promise<Respo
         ms: Date.now() - startedAt,
         ok: response.ok,
       });
-      // Do not trigger session expiration banner for auth endpoints (e.g. login with wrong password)
-      const isAuthEndpoint = /\/api\/(auth\/(login|logout|me)|org\/(register|accept-invite))(\?|$)/i.test(path);
+      // Do not trigger session expiration banner for auth endpoints (e.g. login with wrong password or public invite info)
+      const isAuthEndpoint = /\/api\/(auth\/(login|logout|me)|org\/(register|accept-invite|invite-info))(\?|$)/i.test(path);
       if (response.status === 401 && !isAuthEndpoint) {
         window.dispatchEvent(new CustomEvent('mini-auth-expired'));
       }

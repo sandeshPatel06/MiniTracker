@@ -14,10 +14,11 @@ import {
   LineChart, Line, PieChart, Pie, Cell, Legend,
 } from 'recharts';
 import { localISODate, isPendingLog, FOCUS_GOOD, FOCUS_OK } from '../utils';
+import { isDesktopApp } from '../services/wailsBridge';
 
 interface Props {
   logs: LogEntry[];
-  stats: ProductivityStats | null;
+  stats?: ProductivityStats | null;
   loading: boolean;
   today: string;
   onDateChange: (date: string) => void;
@@ -35,6 +36,18 @@ interface Props {
 // Shared chart chrome: 11px readable ticks, subtle grid, consistent
 // hover states. Colors come from the brand palette (emerald primary,
 // muted slate for secondary series) rather than per-chart hues.
+
+function safeFormatDate(dateStr?: string | null, formatStr = 'MMMM d, yyyy', fallback = '—'): string {
+  if (!dateStr) return fallback;
+  try {
+    const clean = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+    const d = new Date(`${clean}T00:00:00`);
+    return !Number.isNaN(d.getTime()) ? format(d, formatStr) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 const AXIS_TICK = { fontSize: 11, fill: 'var(--text-muted)' } as const;
 const GRID_STROKE = 'var(--border-subtle)';
 
@@ -89,7 +102,7 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
 
 export default function Analytics({
   logs,
-  stats,
+  stats: _stats,
   loading,
   today,
   onDateChange,
@@ -106,7 +119,7 @@ export default function Analytics({
   const [members, setMembers] = useState<{ id: number; full_name: string; email: string; role: string }[]>([]);
 
   useEffect(() => {
-    if (currentUser?.role !== 'admin' && currentUser?.role !== 'owner') {
+    if (isDesktopApp() || (currentUser?.role !== 'admin' && currentUser?.role !== 'owner')) {
       setMembers([]);
       return;
     }
@@ -215,7 +228,7 @@ export default function Analytics({
         category: d.category,
         count: d.count,
         percent: Math.round((d.count / total) * 100),
-        avgScore: d.scoreCount > 0 ? Math.round(d.scoreTotal / d.scoreCount) : 0,
+        avgScore: d.scoreCount > 0 ? Math.round(d.scoreTotal / d.scoreCount) : null,
       }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 6);
@@ -628,8 +641,19 @@ export default function Analytics({
                           <span title={app.category} className="an-app-category">({app.category})</span>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
-                          <span style={{ fontSize: 12, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: app.avgScore >= FOCUS_GOOD ? 'var(--badge-productive-text)' : app.avgScore >= FOCUS_OK ? 'var(--badge-amber-text)' : 'var(--badge-unproductive-text)' }}>
-                            {app.avgScore}% Focus
+                          <span style={{
+                            fontSize: 12,
+                            fontWeight: 600,
+                            fontVariantNumeric: 'tabular-nums',
+                            color: app.avgScore == null
+                              ? 'var(--text-muted)'
+                              : app.avgScore >= FOCUS_GOOD
+                              ? 'var(--badge-productive-text)'
+                              : app.avgScore >= FOCUS_OK
+                              ? 'var(--badge-amber-text)'
+                              : 'var(--badge-unproductive-text)',
+                          }}>
+                            {app.avgScore == null ? 'Pending AI' : `${app.avgScore}% Focus`}
                           </span>
                           <span style={{ fontSize: 12, color: 'var(--text-muted)', width: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                             {app.percent}%
@@ -641,7 +665,13 @@ export default function Analytics({
                           style={{
                             width: `${app.percent}%`,
                             height: '100%',
-                            backgroundColor: app.avgScore >= FOCUS_GOOD ? 'var(--accent-green)' : app.avgScore >= FOCUS_OK ? 'var(--accent-amber)' : 'var(--accent-red)',
+                            backgroundColor: app.avgScore == null
+                              ? 'var(--border-medium)'
+                              : app.avgScore >= FOCUS_GOOD
+                              ? 'var(--accent-green)'
+                              : app.avgScore >= FOCUS_OK
+                              ? 'var(--accent-amber)'
+                              : 'var(--accent-red)',
                             borderRadius: 99,
                           }}
                         />

@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import type { ReactNode } from 'react';
 import { LogEntry, ProductivityStats, AppConfig, WorkSession } from '../types';
-import { apiFetch } from '../api';
+import { apiFetch, readJsonSafe } from '../api';
 import { format } from 'date-fns';
 import { CategoryBadge } from '../components/CategoryBadge';
 import { ScreenshotThumb, ImageModal } from '../components/Screenshot';
@@ -13,12 +12,36 @@ import { Alert } from '../components/Alert';
 import { canonicalAppName } from '../lib/appNames';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from 'recharts';
 import { localISODate, isPendingLog, buildLocalWorkSessions, FOCUS_GOOD, FOCUS_OK } from '../utils';
-import { isDesktopApp } from '../services/wailsBridge';
+import { isDesktopApp, callGo } from '../services/wailsBridge';
 
 const prefersReducedMotion =
   typeof window !== 'undefined' &&
   typeof window.matchMedia === 'function' &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const SENSITIVE_PATTERNS = [
+  /\b(password|vault|bitwarden|1password|keepass|lastpass)\b/i,
+  /\b(bank|banking|chase|paypal|fidelity|schwab|stripe)\b/i,
+  /\b(incognito|private browsing|inprivate)\b/i,
+  /\b(token=|bearer |auth=|session_id=)/i,
+];
+
+function redactSensitiveTitle(title?: string | null): string {
+  if (!title) return '';
+  for (const pattern of SENSITIVE_PATTERNS) {
+    if (pattern.test(title)) {
+      return '🔒 [Protected Window]';
+    }
+  }
+  return title;
+}
+
+function safeFormatTime(timestamp?: string | null, formatStr = 'HH:mm'): string {
+  if (!timestamp) return '--:--';
+  const clean = timestamp.includes(' ') && !timestamp.includes('T') ? timestamp.replace(' ', 'T') : timestamp;
+  const d = new Date(clean);
+  return !Number.isNaN(d.getTime()) ? format(d, formatStr) : '--:--';
+}
 
 function focusColor(score: number): string {
   return score >= FOCUS_GOOD
@@ -36,10 +59,6 @@ function focusBarColor(score: number): string {
     : 'var(--accent-red)';
 }
 
-// Rating for one capture. The server always serializes productive_score as a
-// number (0 for captures that still await AI analysis), so treat the boolean
-// fallback strictly as a safety net for older/local shapes — and only count
-// analyzed captures toward score averages (see derived-data blocks below).
 function captureScore(log: LogEntry): number {
   return typeof log.productive_score === 'number'
     ? log.productive_score
@@ -48,18 +67,6 @@ function captureScore(log: LogEntry): number {
     : 0;
 }
 
-declare const window: Window & {
-  go?: {
-    main: {
-      App: {
-        UpdateGeminiAPIKey: (key: string) => Promise<boolean>;
-        ProcessPendingLogs: () => Promise<number>;
-        GetLogsByDate: (date: string) => Promise<LogEntry[] | null>;
-      };
-    };
-  };
-};
-
 interface Props {
   logs: LogEntry[];
   stats: ProductivityStats | null;
@@ -67,144 +74,186 @@ interface Props {
   loading: boolean;
   today: string;
   onRefresh?: () => void;
+  onDateChange?: (date: string) => void;
   onOpenSettings?: () => void;
   loadError?: string | null;
   onRetry?: () => void;
 }
 
-export default function Dashboard({ logs, stats, config, loading, today, onRefresh, onOpenSettings, loadError, onRetry }: Props) {
+export default function Dashboard({
+  logs,
+  stats,
+  config,
+  loading,
+  today,
+  onRefresh,
+  onDateChange,
+  onOpenSettings: _onOpenSettings,
+  loadError,
+  onRetry,
+}: Props) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [processingPending, setProcessingPending] = useState(false);
   const [workSessions, setWorkSessions] = useState<WorkSession[]>([]);
 
+  // Timezone-safe day scoping: Never fall back to prior days when today has 0 captures
+  const activeLogs = useMemo(() => {
+    if (!today || !Array.isArray(logs)) return [];
+    return logs.filter((l: LogEntry) => {
+      if (!l || !l.timestamp) return false;
+      try {
+        const clean = l.timestamp.includes(' ') && !l.timestamp.includes('T') ? l.timestamp.replace(' ', 'T') : l.timestamp;
+        return localISODate(new Date(clean)) === today;
+      } catch {
+        return typeof l.timestamp === 'string' && l.timestamp.startsWith(today);
+      }
+    });
+  }, [logs, today]);
+
+  // Derive Work Sessions scoped strictly to activeLogs
   useEffect(() => {
     if (!today) return;
 
-    // Desktop runs fully local (no server required): derive the Work Sessions
-    // card from the captures we already have in the local database.
-    if (window.go?.main?.App?.GetLogsByDate) {
-      setWorkSessions(buildLocalWorkSessions(logs));
+    if (isDesktopApp()) {
+      setWorkSessions(buildLocalWorkSessions(activeLogs));
       return;
     }
 
-    // Web mode hits the HTTP server. This effect re-fires whenever `logs`
-    // change (AI merges, 30s background refresh), so guard against out-of-order
-    // responses overwriting newer state and against state updates from an
-    // unmounted page during fast navigation.
     const controller = new AbortController();
     let requestValid = true;
 
     apiFetch(`/api/work-sessions?date=${today}`, { signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('work sessions unavailable'))))
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`work sessions status ${res.status}`);
+        return readJsonSafe<WorkSession[]>(res);
+      })
       .then((data) => {
         if (!requestValid) return;
         if (Array.isArray(data) && data.length > 0) {
           setWorkSessions(data);
         } else {
-          setWorkSessions(buildLocalWorkSessions(logs));
+          setWorkSessions(buildLocalWorkSessions(activeLogs));
         }
       })
       .catch(() => {
-        if (requestValid) setWorkSessions(buildLocalWorkSessions(logs));
+        if (requestValid) setWorkSessions(buildLocalWorkSessions(activeLogs));
       });
 
     return () => {
       requestValid = false;
       controller.abort();
     };
-  }, [today, logs]);
+  }, [today, activeLogs]);
 
-  const dayLogs = useMemo(() => {
-    if (!today || !Array.isArray(logs)) return [];
-    return logs.filter((l: LogEntry) => l && typeof l.timestamp === 'string' && l.timestamp.startsWith(today));
-  }, [logs, today]);
+  const pendingCount = useMemo(() => activeLogs.filter(isPendingLog).length, [activeLogs]);
+  const analyzedLogs = useMemo(() => activeLogs.filter((l: LogEntry) => !isPendingLog(l)), [activeLogs]);
 
-  const activeLogs: LogEntry[] = dayLogs.length > 0 || logs.length === 0 ? dayLogs : logs;
+  const avgProductivityScore = useMemo(() => {
+    return analyzedLogs.length > 0
+      ? Math.round(analyzedLogs.reduce((acc, l) => acc + captureScore(l), 0) / analyzedLogs.length)
+      : 0;
+  }, [analyzedLogs]);
 
-  const pendingCount = activeLogs.filter(isPendingLog).length;
+  const totalKeys = useMemo(() => {
+    return activeLogs.reduce((acc, l) => acc + (typeof l.total_keys === 'number' ? l.total_keys : 0), 0);
+  }, [activeLogs]);
 
-  const analyzedLogs = activeLogs.filter((l: LogEntry) => !isPendingLog(l));
+  const avgEntropy = useMemo(() => {
+    return activeLogs.length
+      ? activeLogs.reduce((acc, l) => acc + (typeof l.entropy_score === 'number' ? l.entropy_score : 0), 0) / activeLogs.length
+      : 0;
+  }, [activeLogs]);
 
-  // Calculate Average AI-Returned Productivity Score
-  const avgProductivityScore = analyzedLogs.length > 0
-    ? Math.round(
-        analyzedLogs.reduce((acc: number, l: LogEntry) => acc + captureScore(l), 0) / analyzedLogs.length
-      )
-    : 0;
-
-  const totalKeys = activeLogs.reduce((acc: number, l: LogEntry) => acc + (typeof l.total_keys === 'number' ? l.total_keys : 0), 0);
-  const avgEntropy = activeLogs.length
-    ? activeLogs.reduce((acc: number, l: LogEntry) => acc + (typeof l.entropy_score === 'number' ? l.entropy_score : 0), 0) / activeLogs.length
-    : 0;
-
-  // App usage breakdown: use Map to prevent prototype collision (e.g. process named "toString")
-  const appCounts = new Map<string, { count: number; category: string; scoreTotal: number; scoreCount: number }>();
-  activeLogs.forEach((l: LogEntry) => {
-    const app = canonicalAppName(l.app_name) || 'Other';
-    let entry = appCounts.get(app);
-    if (!entry) {
-      entry = { count: 0, category: l.app_category || 'Application', scoreTotal: 0, scoreCount: 0 };
-      appCounts.set(app, entry);
-    }
-    if (!isPendingLog(l)) {
-      entry.scoreTotal += captureScore(l);
-      entry.scoreCount++;
-    }
-    entry.count++;
-  });
-
-  const totalLogCount = activeLogs.length || 1;
-  const topApps = Array.from(appCounts.entries())
-    .map(([appName, data]) => ({
-      appName,
-      category: data.category,
-      count: data.count,
-      percent: Math.round((data.count / totalLogCount) * 100),
-      avgScore: data.scoreCount > 0 ? Math.round(data.scoreTotal / data.scoreCount) : 0,
-    }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 5);
-
-  // Hourly productivity trend: per-hour capture counts cover every log, while
-  // the average focus score only considers analyzed captures (pending rows
-  // would otherwise report 0% for hours that simply await AI analysis).
-  const hourKeys: string[] = [];
-  const hourlyCounts: Record<string, number> = {};
-  for (let i = 8; i <= 20; i++) {
-    const key = `${i.toString().padStart(2, '0')}:00`;
-    hourKeys.push(key);
-    hourlyCounts[key] = 0;
-  }
-
-  const hourlyScores: Record<string, { total: number; count: number }> = {};
-
-  activeLogs.forEach((l: LogEntry) => {
-    try {
-      const date = new Date(l.timestamp);
-      const h = date.getHours();
-      if (h >= 8 && h <= 20) {
-        const key = `${h.toString().padStart(2, '0')}:00`;
-        hourlyCounts[key]++;
-        if (!isPendingLog(l)) {
-          if (!hourlyScores[key]) hourlyScores[key] = { total: 0, count: 0 };
-          hourlyScores[key].total += captureScore(l);
-          hourlyScores[key].count++;
-        }
+  // Memoized App Usage Breakdown
+  const topApps = useMemo(() => {
+    const appCounts = new Map<string, { count: number; category: string; scoreTotal: number; scoreCount: number }>();
+    activeLogs.forEach((l: LogEntry) => {
+      const app = canonicalAppName(l.app_name) || 'Other';
+      let entry = appCounts.get(app);
+      if (!entry) {
+        entry = { count: 0, category: l.app_category || 'Application', scoreTotal: 0, scoreCount: 0 };
+        appCounts.set(app, entry);
       }
-    } catch {}
-  });
+      if (!isPendingLog(l)) {
+        entry.scoreTotal += captureScore(l);
+        entry.scoreCount++;
+      }
+      entry.count++;
+    });
 
-  const hourlyChartData = hourKeys.map((key) => {
-    const scoreData = hourlyScores[key];
-    return {
-      hour: key,
-      score: scoreData && scoreData.count > 0 ? Math.round(scoreData.total / scoreData.count) : 0,
-      count: hourlyCounts[key],
-    };
-  });
+    const totalLogCount = activeLogs.length || 1;
+    return Array.from(appCounts.entries())
+      .map(([appName, data]) => ({
+        appName,
+        category: data.category,
+        count: data.count,
+        percent: Math.round((data.count / totalLogCount) * 100),
+        avgScore: data.scoreCount > 0 ? Math.round(data.scoreTotal / data.scoreCount) : 0,
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  }, [activeLogs]);
 
-  // Latest 10 entries for Activity Feed (slice without copying entire array)
-  const recent = logs.slice(-10).reverse();
+  // Hourly Productivity Trend (dynamic span covering night work if present)
+  const hourlyChartData = useMemo(() => {
+    let minHour = 8;
+    let maxHour = 20;
+
+    activeLogs.forEach((l) => {
+      try {
+        const clean = l.timestamp.includes(' ') && !l.timestamp.includes('T') ? l.timestamp.replace(' ', 'T') : l.timestamp;
+        const d = new Date(clean);
+        if (!Number.isNaN(d.getTime())) {
+          const h = d.getHours();
+          if (h < minHour) minHour = Math.max(0, h);
+          if (h > maxHour) maxHour = Math.min(23, h);
+        }
+      } catch {}
+    });
+
+    const hourKeys: string[] = [];
+    const hourlyCounts: Record<string, number> = {};
+    const hourlyScores: Record<string, { total: number; count: number }> = {};
+
+    for (let i = minHour; i <= maxHour; i++) {
+      const key = `${i.toString().padStart(2, '0')}:00`;
+      hourKeys.push(key);
+      hourlyCounts[key] = 0;
+    }
+
+    activeLogs.forEach((l: LogEntry) => {
+      try {
+        const clean = l.timestamp.includes(' ') && !l.timestamp.includes('T') ? l.timestamp.replace(' ', 'T') : l.timestamp;
+        const date = new Date(clean);
+        if (!Number.isNaN(date.getTime())) {
+          const h = date.getHours();
+          const key = `${h.toString().padStart(2, '0')}:00`;
+          if (hourlyCounts[key] !== undefined) {
+            hourlyCounts[key]++;
+            if (!isPendingLog(l)) {
+              if (!hourlyScores[key]) hourlyScores[key] = { total: 0, count: 0 };
+              hourlyScores[key].total += captureScore(l);
+              hourlyScores[key].count++;
+            }
+          }
+        }
+      } catch {}
+    });
+
+    return hourKeys.map((key) => {
+      const scoreData = hourlyScores[key];
+      const hasAnalyzed = scoreData && scoreData.count > 0;
+      return {
+        hour: key,
+        score: hasAnalyzed ? Math.round(scoreData.total / scoreData.count) : 0,
+        count: hourlyCounts[key] || 0,
+        hasAnalyzed: !!hasAnalyzed,
+      };
+    });
+  }, [activeLogs]);
+
+  // Latest 10 entries strictly from activeLogs (today's activity)
+  const recent = useMemo(() => activeLogs.slice(-10).reverse(), [activeLogs]);
 
   let dateLabel = today === localISODate() ? 'Today' : today;
   try {
@@ -212,15 +261,22 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
     dateLabel = today === localISODate() ? 'Today' : format(new Date(`${cleanDate}T00:00:00`), 'MMMM d, yyyy');
   } catch {}
 
-  const headerMeta = `${dateLabel} · ${activeLogs.length} captures${config ? ` · every ${config.screenshot_interval_seconds}s` : ''}`;
+  const headerMeta = `${dateLabel} · ${activeLogs.length} capture${activeLogs.length === 1 ? '' : 's'}${config ? ` · every ${config.screenshot_interval_seconds}s` : ''}`;
 
   const handleProcessPending = async () => {
     setProcessingPending(true);
     try {
-      if (window.go?.main?.App?.ProcessPendingLogs) {
-        await window.go.main.App.ProcessPendingLogs();
+      if (isDesktopApp()) {
+        const w = window as any;
+        if (w.go?.main?.App?.ProcessPendingLogs) {
+          await callGo(() => w.go.main.App.ProcessPendingLogs());
+        }
       } else {
-        await apiFetch('/api/process-pending', { method: 'POST' });
+        const res = await apiFetch('/api/process-pending', { method: 'POST' });
+        if (!res.ok) {
+          throw new Error(`Failed to queue analysis (${res.status})`);
+        }
+        await new Promise((r) => setTimeout(r, 600));
       }
       if (onRefresh) onRefresh();
     } catch (err) {
@@ -232,7 +288,7 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
 
   if (loading && logs.length === 0) {
     return (
-      <div className="dash-page">
+      <div className="dash-page" aria-busy="true">
         <div className="page-header">
           <div>
             <div className="skeleton" style={{ width: 160, height: 28, marginBottom: 8 }} />
@@ -278,8 +334,22 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          {today !== localISODate() && onDateChange && (
+            <button
+              type="button"
+              onClick={() => onDateChange(localISODate())}
+              className="btn btn-secondary"
+              title="Jump to today"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '10px 16px', fontSize: 13, fontWeight: 600 }}
+            >
+              <Icon name="calendar" size={14} />
+              <span>Back to Today</span>
+            </button>
+          )}
+
           {onRefresh && (
             <button
+              type="button"
               onClick={onRefresh}
               disabled={loading}
               className="btn btn-secondary"
@@ -298,8 +368,10 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
               <span>{loading ? 'Refreshing…' : 'Refresh'}</span>
             </button>
           )}
+
           {pendingCount > 0 && (
             <button
+              type="button"
               onClick={handleProcessPending}
               disabled={processingPending}
               className="btn btn-primary"
@@ -347,14 +419,14 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
           label="Top Application"
           value={topApps[0]?.appName || stats?.top_category || '—'}
           valueTitle={topApps[0]?.appName || stats?.top_category || undefined}
-          sub={topApps[0] ? `${topApps[0].percent}% of captures` : `${logs.length} snapshots recorded`}
+          sub={topApps[0] ? `${topApps[0].percent}% of captures` : `${activeLogs.length} snapshots recorded`}
           valueClass="text-teal"
           leading={topApps[0] ? <AppIcon name={topApps[0].appName} size={22} /> : undefined}
         />
       </div>
 
       {/* Hourly Trend & App Breakdown Grid */}
-      <div className="dash-charts" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16, marginBottom: 16 }}>
+      <div className="dash-charts" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))', gap: 16, marginBottom: 16 }}>
 
         {/* Hourly Focus Score Chart */}
         <div className="card">
@@ -383,10 +455,12 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
                     itemStyle={{ color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}
                     formatter={(val: any, _name: any, item: any) => {
                       const captures = item?.payload?.count ?? 0;
-                      return [
-                        captures === 0 ? 'No captures' : `${val}% AI Focus Rating`,
-                        captures === 0 ? 'Focus rating' : `Focus · ${captures} capture${captures === 1 ? '' : 's'}`,
-                      ];
+                      const hasAnalyzed = item?.payload?.hasAnalyzed ?? false;
+                      if (captures === 0) {
+                        return ['No captures', 'Focus rating'];
+                      }
+                      const label = hasAnalyzed ? `${val}% AI Focus Rating` : 'Awaiting AI review';
+                      return [label, `Focus · ${captures} capture${captures === 1 ? '' : 's'}`];
                     }}
                   />
                   <Bar dataKey="score" radius={[4, 4, 0, 0]} isAnimationActive={!prefersReducedMotion}>
@@ -394,13 +468,15 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
                       <Cell
                         key={`cell-${index}`}
                         fill={
-                          entry.score >= 75
-                            ? 'var(--accent-green)'
-                            : entry.score >= 50
-                            ? 'var(--accent-indigo)'
-                            : entry.score > 0
-                            ? 'var(--accent-amber)'
-                            : 'var(--border-medium)'
+                          entry.hasAnalyzed
+                            ? entry.score >= FOCUS_GOOD
+                              ? 'var(--accent-green)'
+                              : entry.score >= FOCUS_OK
+                              ? 'var(--accent-indigo)'
+                              : 'var(--accent-amber)'
+                            : entry.count > 0
+                            ? 'var(--accent-muted, var(--border-medium))'
+                            : 'var(--border-subtle)'
                         }
                       />
                     ))}
@@ -435,7 +511,7 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
                         <span title={app.category} style={{ fontSize: 11, color: 'var(--text-muted)', maxWidth: 120, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>({app.category})</span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-                        <span style={{ fontSize: 12, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: app.avgScore >= 60 ? 'var(--badge-productive-text)' : 'var(--badge-unproductive-text)' }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: app.avgScore >= FOCUS_OK ? 'var(--badge-productive-text)' : 'var(--badge-unproductive-text)' }}>
                           {app.avgScore}% Focus
                         </span>
                         <span style={{ fontSize: 12, color: 'var(--text-muted)', width: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
@@ -443,7 +519,14 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
                         </span>
                       </div>
                     </div>
-                    <div style={{ width: '100%', height: 6, background: 'var(--bg-elevated)', borderRadius: 99, overflow: 'hidden' }}>
+                    <div
+                      style={{ width: '100%', height: 6, background: 'var(--bg-elevated)', borderRadius: 99, overflow: 'hidden' }}
+                      role="progressbar"
+                      aria-valuenow={app.percent}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={`${app.appName} share of captures`}
+                    >
                       <div
                         style={{
                           width: `${app.percent}%`,
@@ -503,7 +586,7 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
                   <span
-                    className={`badge ${session.productive_pct >= 60 ? 'badge-productive' : 'badge-unproductive'}`}
+                    className={`badge ${session.productive_pct >= FOCUS_OK ? 'badge-productive' : 'badge-unproductive'}`}
                     style={{ fontVariantNumeric: 'tabular-nums' }}
                   >
                     {Math.round(session.productive_pct)}% Focus
@@ -565,13 +648,14 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
               {recent.map((log) => {
                 const scoreVal = Math.round(captureScore(log));
                 const isPending = isPendingLog(log);
+                const safeTitle = redactSensitiveTitle(log.window_title);
                 return (
                   <div
                     key={`${log.id}-${log.timestamp}-${log.image_path}`}
                     className="timeline-item dash-log-row"
                   >
                     <span className="timeline-time">
-                      {format(new Date(log.timestamp), 'HH:mm')}
+                      {safeFormatTime(log.timestamp)}
                     </span>
 
                     <ScreenshotThumb
@@ -600,16 +684,13 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
                         )}
                       </div>
 
-                      {log.window_title && (
-                        <div title={log.window_title} className="dash-window-title">
-                          🪟 {log.window_title}
+                      {safeTitle && (
+                        <div title={safeTitle} className="dash-window-title">
+                          🪟 {safeTitle}
                         </div>
                       )}
 
                       {isPending ? (
-                        // Pending capture: soft shimmer placeholders instead of a
-                        // dead "—" placeholder; a neutral pulse (never error-red)
-                        // signals that analysis is queued or running.
                         <div
                           className="dash-reason-skeleton"
                           title="AI analysis is queued or running for this capture"

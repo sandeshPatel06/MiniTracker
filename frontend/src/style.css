@@ -2890,7 +2890,7 @@ img.app-icon {
 }
 
 .tl-stat-value[data-ok='true'] { color: var(--badge-productive-text); }
-.tl-stat-value[data-ok='false'] { color: var(--accent-primary-text); }
+.tl-stat-value[data-ok='false'] { color: var(--danger-text, var(--badge-unproductive-text)); }
 
 .tl-chips {
   display: flex;

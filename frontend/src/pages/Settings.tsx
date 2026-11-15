@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { apiFetch } from '../api';
-import { isDesktopApp } from '../services/wailsBridge';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { apiFetch, readJsonSafe } from '../api';
+import { isDesktopApp, callGo } from '../services/wailsBridge';
 import { getTodayUsageCount, bumpUsageCount, resetUsageCount } from '../utils';
 import { CustomSelect } from '../components/CustomSelect';
 import type { SelectOption } from '../components/CustomSelect';
@@ -16,11 +16,7 @@ interface AIModel {
   outputTokenLimit: number;
 }
 
-// Backend routes /api/ai/models & /api/ai/test return names with the "models/"
-// prefix stripped (internal/ai FetchAvailableModels trims it), while the direct
-// Google API used in desktop mode returns "models/...". Normalize to the
-// prefixed form so the stored selection and selectedModelInfo matching stay
-// consistent across both modes.
+// Normalize model name so stored selection and comparisons stay consistent
 const normalizeModelName = (raw: string) => (raw.startsWith('models/') ? raw : `models/${raw}`);
 
 interface SettingsPageProps {
@@ -29,9 +25,19 @@ interface SettingsPageProps {
   syncIntervalSeconds?: number;
 }
 
+const DEFAULT_INTERVAL_OPTIONS: SelectOption[] = [
+  { value: '15', label: '15s — High frequency', leading: <Icon name="clock" size={14} /> },
+  { value: '30', label: '30s — Active tracking', leading: <Icon name="clock" size={14} /> },
+  { value: '60', label: '60s — Standard (default)', leading: <Icon name="clock" size={14} /> },
+  { value: '120', label: '2m — Low resource', leading: <Icon name="clock" size={14} /> },
+  { value: '300', label: '5m — Minimal', leading: <Icon name="clock" size={14} /> },
+];
+
 export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSeconds = 30 }: SettingsPageProps) {
+  const isDesktop = isDesktopApp();
+
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('mini_gemini_api_key') || '');
-  const [model, setModel] = useState(() => localStorage.getItem('mini_ai_model') || 'models/gemini-3.5-flash-lite');
+  const [model, setModel] = useState(() => normalizeModelName(localStorage.getItem('mini_ai_model') || 'gemini-3.5-flash-lite'));
   const [availableModels, setAvailableModels] = useState<AIModel[]>([]);
   const [fetchingModels, setFetchingModels] = useState<boolean>(false);
   const [usageSummary, setUsageSummary] = useState<{ total_requests: number; prompt_tokens: number; candidate_tokens: number; total_tokens: number } | null>(null);
@@ -39,13 +45,33 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  // App version is read from the desktop binding ("version" field of
-  // GetDevDiagnostics, backed by app.go's appVersion()) so the UI always shows
-  // the real build version instead of a hardcoded string that drifts.
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [backendConfiguredKey, setBackendConfiguredKey] = useState<boolean>(false);
+  const [maskedKeyHint, setMaskedKeyHint] = useState<string>('');
 
-  // Central status-message helper so status-clearing timers are tracked and
-  // cancelled on unmount instead of firing setStatusMessage on a dead page.
+  // Persisted baseline state for dirty tracking
+  const [savedBaseline, setSavedBaseline] = useState({
+    apiKey: localStorage.getItem('mini_gemini_api_key') || '',
+    model: normalizeModelName(localStorage.getItem('mini_ai_model') || 'gemini-3.5-flash-lite'),
+    screenshotInterval: parseInt(localStorage.getItem('mini_screenshot_interval') || '60', 10) || 60,
+  });
+
+  const [screenshotInterval, setScreenshotInterval] = useState<number>(() => {
+    const parsed = parseInt(localStorage.getItem('mini_screenshot_interval') || '60', 10);
+    if (!Number.isFinite(parsed)) return 60;
+    return Math.min(Math.max(parsed, 5), 3600);
+  });
+
+  // Track unsaved modifications
+  const isDirty = useMemo(() => {
+    return (
+      apiKey !== savedBaseline.apiKey ||
+      model !== savedBaseline.model ||
+      screenshotInterval !== savedBaseline.screenshotInterval
+    );
+  }, [apiKey, model, screenshotInterval, savedBaseline]);
+
+  // Central status helper with timer cleanup
   const statusTimerRef = useRef<number | null>(null);
   const showStatus = useCallback((msg: string | null, ttlMs?: number) => {
     if (statusTimerRef.current) {
@@ -57,46 +83,77 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
       statusTimerRef.current = window.setTimeout(() => setStatusMessage(null), ttlMs);
     }
   }, []);
+
   useEffect(() => () => {
     if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
   }, []);
 
+  // Sync screenshot interval prop if unset
   useEffect(() => {
-    const goApp = (window as any).go?.main?.App;
-    if (!goApp?.GetDevDiagnostics) return;
+    if (syncIntervalSeconds && !localStorage.getItem('mini_screenshot_interval')) {
+      const clamped = Math.min(Math.max(syncIntervalSeconds, 5), 3600);
+      setScreenshotInterval(clamped);
+      setSavedBaseline((prev) => ({ ...prev, screenshotInterval: clamped }));
+    }
+  }, [syncIntervalSeconds]);
+
+  // Initial runtime diagnostics & active config loading
+  useEffect(() => {
     let mounted = true;
-    goApp
-      .GetDevDiagnostics()
-      .then((diag: any) => {
-        if (mounted && typeof diag?.version === 'string' && diag.version) {
-          setAppVersion(diag.version);
-        }
-      })
-      .catch(() => {});
+    if (isDesktop) {
+      const goApp = (window as any).go?.main?.App;
+      if (goApp?.GetDevDiagnostics) {
+        callGo(() => goApp.GetDevDiagnostics()).then((diag: any) => {
+          if (!mounted || !diag) return;
+          if (typeof diag.version === 'string' && diag.version) setAppVersion(diag.version);
+          if (diag.ai_configured) setBackendConfiguredKey(true);
+          if (typeof diag.ai_key_masked === 'string' && diag.ai_key_masked !== 'not set') {
+            setMaskedKeyHint(diag.ai_key_masked);
+          }
+          if (typeof diag.ai_model === 'string' && diag.ai_model && !localStorage.getItem('mini_ai_model')) {
+            const normalized = normalizeModelName(diag.ai_model);
+            setModel(normalized);
+            setSavedBaseline((prev) => ({ ...prev, model: normalized }));
+          }
+        });
+      }
+    } else {
+      // In web mode, fetch backend config
+      apiFetch('/api/config')
+        .then((r) => (r.ok ? readJsonSafe<any>(r) : null))
+        .then((cfg) => {
+          if (!mounted || !cfg) return;
+          if (cfg.ai_configured) setBackendConfiguredKey(true);
+          if (cfg.screenshot_interval_seconds && !localStorage.getItem('mini_screenshot_interval')) {
+            const interval = Math.min(Math.max(Math.round(cfg.screenshot_interval_seconds), 5), 3600);
+            setScreenshotInterval(interval);
+            setSavedBaseline((prev) => ({ ...prev, screenshotInterval: interval }));
+          }
+        })
+        .catch(() => {});
+    }
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [isDesktop]);
 
   const fetchUsageSummary = useCallback(async () => {
-    // Desktop runs standalone (no backend): read today's usage from the local DB.
-    if ((window as any).go?.main?.App?.GetAIUsageSummary) {
-      try {
-        const data = await (window as any).go.main.App.GetAIUsageSummary();
+    if (isDesktop) {
+      const goApp = (window as any).go?.main?.App;
+      if (goApp?.GetAIUsageSummary) {
+        const data = await callGo(() => goApp.GetAIUsageSummary()) as any;
         setUsageSummary(data);
-      } catch {
-        setUsageSummary(null);
+        return;
       }
-      return;
     }
     try {
       const res = await apiFetch('/api/user/usage');
       if (res.ok) {
-        const data = await res.json();
-        setUsageSummary(data);
+        const data = await readJsonSafe<any>(res);
+        if (data) setUsageSummary(data);
       }
     } catch {}
-  }, []);
+  }, [isDesktop]);
 
   // Periodic usage refresh + cross-tab/local event sync
   useEffect(() => {
@@ -126,16 +183,22 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
     };
   }, [fetchUsageSummary]);
 
-  const fetchAvailableModels = useCallback(async (key: string) => {
+  // Dynamic model fetcher
+  const fetchAvailableModels = useCallback(async (key: string, showSuccessBanner = false) => {
     setFetchingModels(true);
+    const trimmedKey = key.trim();
     try {
-      if ((window as any).go?.main?.App) {
-        // In desktop mode, if key is empty we don't fetch
-        if (!key.trim()) return;
-        const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
-          headers: { 'x-goog-api-key': key.trim() },
-        });
-        if (res.ok) {
+      if (isDesktop) {
+        const goApp = (window as any).go?.main?.App;
+        // If key is provided, query Google API directly with key header
+        if (trimmedKey) {
+          const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+            headers: { 'x-goog-api-key': trimmedKey },
+          });
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData?.error?.message || `Google returned status ${res.status}`);
+          }
           const data = await res.json();
           if (data.models && Array.isArray(data.models)) {
             const generateModels = data.models
@@ -148,16 +211,38 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 outputTokenLimit: m.outputTokenLimit || 0,
               }));
             setAvailableModels(generateModels);
-            showStatus('✓ Dynamically loaded models from Google Gemini API', 3000);
+            if (showSuccessBanner) showStatus('✓ Loaded models from Google Gemini API', 3000);
+          }
+        } else if (goApp?.ListAvailableModels) {
+          // No key typed: read models using desktop backend's configured key
+          const models: string[] | null = await callGo(() => goApp.ListAvailableModels());
+          if (models && Array.isArray(models) && models.length > 0) {
+            setAvailableModels(
+              models.map((m: string) => {
+                const name = normalizeModelName(m);
+                return {
+                  name,
+                  displayName: name.replace('models/', ''),
+                  description: '',
+                  inputTokenLimit: 0,
+                  outputTokenLimit: 0,
+                };
+              })
+            );
+            if (showSuccessBanner) showStatus('✓ Loaded models from desktop backend', 3000);
           }
         }
       } else {
-        // In web mode, proxy through backend to prevent API key exposure
+        // Web mode: proxy through backend
         const res = await apiFetch('/api/ai/models');
-        if (res.ok) {
-          const data = await res.json();
-          if (data.models && Array.isArray(data.models)) {
-            setAvailableModels(data.models.map((m: any) => {
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData?.error || `Server returned ${res.status}`);
+        }
+        const data = await res.json();
+        if (data.models && Array.isArray(data.models)) {
+          setAvailableModels(
+            data.models.map((m: any) => {
               const name = normalizeModelName(m.name);
               return {
                 name,
@@ -166,57 +251,49 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 inputTokenLimit: 0,
                 outputTokenLimit: 0,
               };
-            }));
-          }
+            })
+          );
+          if (showSuccessBanner) showStatus('✓ Loaded models from server', 3000);
         }
       }
-    } catch {
-      // Ignore network errors on auto-fetch
+    } catch (err: any) {
+      if (showSuccessBanner) {
+        showStatus(`✕ Failed to load models: ${err?.message || 'Network error'}`, 5000);
+      }
     } finally {
       setFetchingModels(false);
     }
-  }, []);
+  }, [isDesktop, showStatus]);
 
   useEffect(() => {
-    fetchAvailableModels(apiKey);
+    fetchAvailableModels(apiKey, false);
   }, [fetchAvailableModels]);
-
-  const [screenshotInterval, setScreenshotInterval] = useState<number>(() => {
-    const parsed = parseInt(localStorage.getItem('mini_screenshot_interval') || '60', 10);
-    // Guard against NaN/garbage stored values: parseInt returns NaN on non-numeric
-    // input, which would break the readout below and serialize as null over the
-    // desktop JSON binding / web body payload.
-    if (!Number.isFinite(parsed)) return 60;
-    return Math.min(Math.max(parsed, 5), 3600); // sane range, backend web rule accepts >= 5
-  });
-
-  useEffect(() => {
-    if (syncIntervalSeconds && !localStorage.getItem('mini_screenshot_interval')) {
-      setScreenshotInterval(syncIntervalSeconds);
-    }
-  }, [syncIntervalSeconds]);
 
   const handleSave = async () => {
     setSaving(true);
     let backendError: string | null = null;
     const cleanModel = model.replace(/^models\//, '').trim();
     const trimmedKey = apiKey.trim();
+
     try {
-      if ((window as any).go?.main?.App) {
-        // ONLY update key if user explicitly entered one, preventing accidental wipeout of existing backend key
-        if (trimmedKey && (window as any).go.main.App.UpdateGeminiAPIKey) {
-          await (window as any).go.main.App.UpdateGeminiAPIKey(trimmedKey);
-        }
-        if ((window as any).go.main.App.UpdateAIModel) {
-          await (window as any).go.main.App.UpdateAIModel(cleanModel);
-        }
-        if ((window as any).go.main.App.UpdateScreenshotInterval) {
-          await (window as any).go.main.App.UpdateScreenshotInterval(screenshotInterval);
+      if (isDesktop) {
+        const goApp = (window as any).go?.main?.App;
+        if (goApp) {
+          if (trimmedKey && goApp.UpdateGeminiAPIKey) {
+            await callGo(() => goApp.UpdateGeminiAPIKey(trimmedKey));
+            setBackendConfiguredKey(true);
+          }
+          if (goApp.UpdateAIModel) {
+            await callGo(() => goApp.UpdateAIModel(cleanModel));
+          }
+          if (goApp.UpdateScreenshotInterval) {
+            await callGo(() => goApp.UpdateScreenshotInterval(screenshotInterval));
+          }
         }
       } else {
         const payload: Record<string, any> = {
           ai_model: model,
-          screenshot_interval_seconds: screenshotInterval
+          screenshot_interval_seconds: screenshotInterval,
         };
         if (trimmedKey) {
           payload.gemini_api_key = trimmedKey;
@@ -230,150 +307,203 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
           const errData = await res.json().catch(() => ({}));
           throw new Error(errData?.error || `Server returned ${res.status}`);
         }
+        if (trimmedKey) setBackendConfiguredKey(true);
       }
     } catch (err: any) {
-      backendError = err?.message || 'unknown error';
+      backendError = err?.message || 'Unknown error';
     }
 
     if (backendError) {
-      showStatus(`✕ Backend update failed: ${backendError}`, 5000);
+      showStatus(`✕ Update failed: ${backendError}`, 5000);
     } else {
-      if (trimmedKey) localStorage.setItem('mini_gemini_api_key', trimmedKey);
+      if (trimmedKey) {
+        localStorage.setItem('mini_gemini_api_key', trimmedKey);
+      }
       localStorage.setItem('mini_ai_model', model);
       localStorage.setItem('mini_screenshot_interval', screenshotInterval.toString());
-      showStatus('✓ Settings & Selected Model saved successfully!', 4000);
+
+      setSavedBaseline({
+        apiKey: trimmedKey,
+        model,
+        screenshotInterval,
+      });
+
+      showStatus('✓ Settings saved successfully!', 4000);
       window.dispatchEvent(new CustomEvent('mini_settings_updated'));
     }
     setSaving(false);
   };
 
+  const handleClearApiKey = async () => {
+    if (!window.confirm('Clear stored Gemini API Key?')) return;
+    setApiKey('');
+    localStorage.removeItem('mini_gemini_api_key');
+    if (isDesktop) {
+      const goApp = (window as any).go?.main?.App;
+      if (goApp?.UpdateGeminiAPIKey) {
+        await callGo(() => goApp.UpdateGeminiAPIKey(''));
+      }
+    }
+    setBackendConfiguredKey(false);
+    setMaskedKeyHint('');
+    setSavedBaseline((prev) => ({ ...prev, apiKey: '' }));
+    showStatus('✓ API key cleared', 3000);
+  };
+
   const handleTestAPI = async () => {
     if (testing) return;
     setTesting(true);
-    showStatus('Testing connection and verifying models…');
+    showStatus('Testing AI connection…');
+
     try {
-      if ((window as any).go?.main?.App) {
-        if (!apiKey.trim()) {
-          setStatusMessage('Please enter an API Key first.');
+      const trimmedKey = apiKey.trim();
+      if (isDesktop) {
+        if (!trimmedKey && !backendConfiguredKey) {
+          showStatus('Please enter an API Key to test.', 4000);
           setTesting(false);
           return;
         }
-        await fetchAvailableModels(apiKey);
+        const activeKey = trimmedKey;
         const cleanModel = encodeURIComponent(model.replace(/^models\//, '').trim());
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey.trim(),
+            'x-goog-api-key': activeKey,
           },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: 'Hello, respond with OK if working.' }] }]
-          })
+            contents: [{ parts: [{ text: 'Hello, respond with OK if working.' }] }],
+          }),
         });
+
         if (res.ok) {
-          const newUsage = bumpUsageCount(1);
-          setUsageCount(newUsage);
-          setStatusMessage(`✓ Connected successfully to ${cleanModel}!`);
+          bumpUsageCount(1);
+          setUsageCount(getTodayUsageCount());
+          fetchUsageSummary();
+          showStatus(`✓ Connected successfully to ${cleanModel}!`, 4000);
         } else {
           const err = await res.json().catch(() => ({}));
           const msg = err.error?.message ? String(err.error.message).slice(0, 100) : `Status ${res.status}`;
-          setStatusMessage(`✕ API Error: ${msg}`);
+          showStatus(`✕ API Error: ${msg}`, 5000);
         }
       } else {
-        // Proxy through backend test route
         const res = await apiFetch('/api/ai/test', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            api_key: apiKey.trim(),
-            model: model,
+            api_key: trimmedKey,
+            model,
           }),
         });
         if (res.ok) {
           const data = await res.json();
           if (data.models && Array.isArray(data.models)) {
-            setAvailableModels(data.models.map((m: any) => {
-              const name = normalizeModelName(m.name);
-              return {
-                name,
-                displayName: m.displayName || name.replace('models/', ''),
-                description: '',
-                inputTokenLimit: 0,
-                outputTokenLimit: 0,
-              };
-            }));
+            setAvailableModels(
+              data.models.map((m: any) => {
+                const name = normalizeModelName(m.name);
+                return {
+                  name,
+                  displayName: m.displayName || name.replace('models/', ''),
+                  description: '',
+                  inputTokenLimit: 0,
+                  outputTokenLimit: 0,
+                };
+              })
+            );
           }
-          setStatusMessage(`✓ Server verified Gemini connection successfully!`);
+          fetchUsageSummary();
+          showStatus('✓ Server verified Gemini connection successfully!', 4000);
         } else {
           const err = await res.json().catch(() => ({}));
-          setStatusMessage(`✕ API Error: ${err.error || 'Server failed to verify Gemini key.'}`);
+          showStatus(`✕ API Error: ${err.error || 'Server failed to verify Gemini key.'}`, 5000);
         }
       }
     } catch {
-      setStatusMessage('✕ Connection failed. Check network or API key.');
+      showStatus('✕ Connection failed. Check network or API key.', 5000);
     } finally {
       setTesting(false);
     }
   };
 
   const handleClearData = async () => {
-    if (!(window as any).go?.main?.App) {
-      setStatusMessage('✕ Clearing stored data is only available in the desktop app.');
+    if (!isDesktop) {
+      showStatus('✕ Clearing stored data is only available in the desktop app.', 4000);
       return;
     }
     if (!window.confirm('Are you sure you want to delete all stored screenshots, logs, and activity records? This action cannot be undone.')) {
       return;
     }
     try {
-      await (window as any).go.main.App.ClearAllLocalData();
+      const goApp = (window as any).go?.main?.App;
+      if (goApp?.ClearAllLocalData) {
+        await callGo(() => goApp.ClearAllLocalData());
+      }
       resetUsageCount();
       setUsageCount(0);
-      setStatusMessage('✓ Successfully deleted all local screenshots and reset database!');
+      showStatus('✓ Deleted local screenshots and reset database!', 2000);
       setTimeout(() => window.location.reload(), 1500);
     } catch {
-      setStatusMessage('✕ Failed to clear local data.');
+      showStatus('✕ Failed to clear local data.', 5000);
     }
   };
 
   const fmtTokens = (n: number) => (n ? n.toLocaleString() : 'N/A');
-  const selectedModelInfo = availableModels.find(m => m.name === model || m.name === `models/${model}`);
-  const modelOptions: SelectOption[] = availableModels.length > 0
-    ? availableModels.map((m) => ({
+  const selectedModelInfo = availableModels.find((m) => m.name === model || m.name === `models/${model}`);
+
+  const modelOptions: SelectOption[] = useMemo(() => {
+    if (availableModels.length > 0) {
+      return availableModels.map((m) => ({
         value: m.name,
         label: m.displayName,
-        meta: `${fmtTokens(m.inputTokenLimit)} in`,
+        meta: m.inputTokenLimit ? `${fmtTokens(m.inputTokenLimit)} in` : undefined,
         leading: <Icon name="sparkles" size={14} />,
-      }))
-    : [
-        {
-          value: 'models/gemini-3.5-flash-lite',
-          label: 'Gemini 3.5 Flash Lite',
-          triggerLabel: 'Gemini 3.5 Flash Lite (Fast & Recommended)',
-          meta: 'Fast & Recommended',
-          leading: <Icon name="sparkles" size={14} />,
-        },
-        {
-          value: 'models/gemini-3.8-flash',
-          label: 'Gemini 3.8 Flash',
-          triggerLabel: 'Gemini 3.8 Flash (Balanced)',
-          meta: 'Balanced',
-          leading: <Icon name="sparkles" size={14} />,
-        },
-        {
-          value: 'models/gemini-2.5-pro',
-          label: 'Gemini 2.5 Pro',
-          triggerLabel: 'Gemini 2.5 Pro (Deep Reasoning)',
-          meta: 'Deep Reasoning',
-          leading: <Icon name="sparkles" size={14} />,
-        },
-        {
-          value: 'models/gemma-4-31b-it',
-          label: 'Gemma 4 31B IT',
-          triggerLabel: 'Gemma 4 31B IT (Schema-free Fallback)',
-          meta: 'Schema-free',
-          leading: <Icon name="sparkles" size={14} />,
-        },
+      }));
+    }
+    return [
+      {
+        value: 'models/gemini-3.5-flash-lite',
+        label: 'Gemini 3.5 Flash Lite',
+        triggerLabel: 'Gemini 3.5 Flash Lite (Fast & Recommended)',
+        meta: 'Fast & Recommended',
+        leading: <Icon name="sparkles" size={14} />,
+      },
+      {
+        value: 'models/gemini-3.8-flash',
+        label: 'Gemini 3.8 Flash',
+        triggerLabel: 'Gemini 3.8 Flash (Balanced)',
+        meta: 'Balanced',
+        leading: <Icon name="sparkles" size={14} />,
+      },
+      {
+        value: 'models/gemini-2.5-pro',
+        label: 'Gemini 2.5 Pro',
+        triggerLabel: 'Gemini 2.5 Pro (Deep Reasoning)',
+        meta: 'Deep Reasoning',
+        leading: <Icon name="sparkles" size={14} />,
+      },
+      {
+        value: 'models/gemma-4-31b-it',
+        label: 'Gemma 4 31B IT',
+        triggerLabel: 'Gemma 4 31B IT (Schema-free Fallback)',
+        meta: 'Schema-free',
+        leading: <Icon name="sparkles" size={14} />,
+      },
+    ];
+  }, [availableModels]);
+
+  // Ensure non-standard screenshot interval is visible in CustomSelect options
+  const intervalOptions: SelectOption[] = useMemo(() => {
+    const stringVal = String(screenshotInterval);
+    const hasMatch = DEFAULT_INTERVAL_OPTIONS.some((opt) => opt.value === stringVal);
+    if (!hasMatch) {
+      return [
+        { value: stringVal, label: `${screenshotInterval}s — Custom interval`, leading: <Icon name="clock" size={14} /> },
+        ...DEFAULT_INTERVAL_OPTIONS,
       ];
+    }
+    return DEFAULT_INTERVAL_OPTIONS;
+  }, [screenshotInterval]);
+
   const modelFamily = (() => {
     const lower = model.toLowerCase();
     if (lower.includes('gemma')) return 'Gemma family';
@@ -383,10 +513,22 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
 
   return (
     <div className="fade-in-up">
-      <form onSubmit={(e) => { e.preventDefault(); handleSave(); }}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleSave();
+        }}
+      >
         <div className="page-header" style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
           <div>
-            <h1 className="page-title">AI Engine & Model Settings</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <h1 className="page-title" style={{ margin: 0 }}>AI Engine & Model Settings</h1>
+              {isDirty && (
+                <span className="badge badge-warning" style={{ fontSize: 11, padding: '2px 8px' }}>
+                  Unsaved changes
+                </span>
+              )}
+            </div>
             <p className="page-subtitle">API key, model, capture preferences, and live usage.</p>
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -403,7 +545,14 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
               type="submit"
               disabled={saving}
               className="btn btn-primary"
-              style={{ padding: '10px 22px', fontSize: 14, fontWeight: 700, opacity: saving ? 0.6 : undefined, cursor: saving ? 'not-allowed' : undefined }}
+              style={{
+                padding: '10px 22px',
+                fontSize: 14,
+                fontWeight: 700,
+                opacity: saving ? 0.6 : undefined,
+                cursor: saving ? 'not-allowed' : undefined,
+                boxShadow: isDirty ? '0 0 0 2px var(--primary-accent)' : undefined,
+              }}
             >
               {saving ? 'Saving…' : '💾 Save Settings'}
             </button>
@@ -411,23 +560,42 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
         </div>
 
         {statusMessage && (
-          <div className={`alert ${statusMessage.startsWith('✓') ? 'alert-success' : statusMessage.startsWith('✕') ? 'alert-error' : 'alert-info'}`} style={{ marginBottom: 16 }}>
-            {statusMessage}
-          </div>
+          <Alert
+            type={statusMessage.startsWith('✓') ? 'success' : statusMessage.startsWith('✕') ? 'error' : 'info'}
+            message={statusMessage}
+            style={{ marginBottom: 16 }}
+          />
         )}
 
-        {/* API Key & Model — primary configuration card */}
+        {/* API Key & Model Card */}
         <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-header">
+          <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span className="card-title">🔑 API Key & Model</span>
+            {backendConfiguredKey && (
+              <span className="badge badge-productive" style={{ fontSize: 11 }}>
+                ✓ {isDesktop ? 'Active in Desktop Config' : 'Active on Server'}
+                {maskedKeyHint ? ` (${maskedKeyHint})` : ''}
+              </span>
+            )}
           </div>
           <div className="card-body">
             <div className="form-group">
-              <label className="form-label">Google Gemini API Key</label>
+              <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Google Gemini API Key</span>
+                {apiKey && (
+                  <button
+                    type="button"
+                    onClick={handleClearApiKey}
+                    style={{ background: 'none', border: 'none', color: 'var(--danger-text)', fontSize: 12, cursor: 'pointer', padding: 0 }}
+                  >
+                    Clear key
+                  </button>
+                )}
+              </label>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
                   type="password"
-                  placeholder="AIzaSy..."
+                  placeholder={backendConfiguredKey ? '●●●●●●●● (Configured - enter new key to replace)' : 'AIzaSy...'}
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   className="form-input"
@@ -435,15 +603,15 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 />
                 <button
                   type="button"
-                  onClick={() => fetchAvailableModels(apiKey)}
-                  disabled={fetchingModels || !apiKey.trim()}
+                  onClick={() => fetchAvailableModels(apiKey, true)}
+                  disabled={fetchingModels || (isDesktop && !apiKey.trim() && !backendConfiguredKey)}
                   className="btn btn-secondary"
-                  title="Refresh model list from Google"
+                  title="Refresh model list from Google Gemini API"
                   style={{
                     padding: '8px 12px',
                     minWidth: 42,
-                    opacity: fetchingModels || !apiKey.trim() ? 0.6 : undefined,
-                    cursor: fetchingModels || !apiKey.trim() ? 'not-allowed' : undefined,
+                    opacity: fetchingModels || (isDesktop && !apiKey.trim() && !backendConfiguredKey) ? 0.6 : undefined,
+                    cursor: fetchingModels || (isDesktop && !apiKey.trim() && !backendConfiguredKey) ? 'not-allowed' : undefined,
                   }}
                 >
                   {fetchingModels ? '…' : '↻'}
@@ -477,7 +645,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
           </div>
         </div>
 
-        {/* Capture & Appearance — compact two-column card */}
+        {/* Capture & Appearance Card */}
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-header">
             <span className="card-title">🎨 Capture & Appearance</span>
@@ -490,8 +658,8 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                   {[
                     { id: 'dark', label: '🌙 Dark', desc: 'Dark contrast for low light' },
                     { id: 'light', label: '☀️ Light', desc: 'Bright palette for daytime' },
-                    { id: 'auto', label: '💻 Auto', desc: 'Match OS system preference' }
-                  ].map(t => (
+                    { id: 'auto', label: '💻 Auto', desc: 'Match OS system preference' },
+                  ].map((t) => (
                     <button
                       key={t.id}
                       type="button"
@@ -516,27 +684,21 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                     const parsed = parseInt(value, 10);
                     setScreenshotInterval(Number.isFinite(parsed) ? Math.min(Math.max(parsed, 5), 3600) : 60);
                   }}
-                  options={[
-                    { value: '15', label: '15s — High frequency', leading: <Icon name="clock" size={14} /> },
-                    { value: '30', label: '30s — Active tracking', leading: <Icon name="clock" size={14} /> },
-                    { value: '60', label: '60s — Standard (default)', leading: <Icon name="clock" size={14} /> },
-                    { value: '120', label: '2m — Low resource', leading: <Icon name="clock" size={14} /> },
-                    { value: '300', label: '5m — Minimal', leading: <Icon name="clock" size={14} /> },
-                  ]}
+                  options={intervalOptions}
                   triggerStyle={{ height: 38 }}
                 />
               </div>
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 12 }}>
-              {isDesktopApp()
-                ? `Captures every ${screenshotInterval}s (backend: ${syncIntervalSeconds}s). Pending logs are batched (up to 10 per request) to keep AI usage low.`
+              {isDesktop
+                ? `Captures every ${screenshotInterval}s (backend: ${syncIntervalSeconds}s). Pending captures are batched to keep AI usage low.`
                 : `Organization capture interval: every ${screenshotInterval}s. This policy is synced to all connected desktop trackers.`}
             </div>
           </div>
         </div>
       </form>
 
-      {/* Live usage */}
+      {/* Live AI Usage */}
       <div className="card">
         <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <span className="card-title">📊 AI Usage</span>
@@ -547,7 +709,9 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
             >
               {selectedModelInfo?.displayName || model.replace('models/', '')}
             </span>
-            <span className="badge badge-productive" style={{ flexShrink: 0 }}>{modelFamily}</span>
+            <span className="badge badge-productive" style={{ flexShrink: 0 }}>
+              {modelFamily}
+            </span>
           </span>
         </div>
         <div className="card-body">
@@ -579,13 +743,13 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
           </div>
 
           <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-            Free-tier RPM/RPD/TPM limits are enforced by Google per model (check <strong>Google AI Studio → Rate limits</strong>); the numbers above are live app usage. Each completed 5-minute window is analyzed as one session bundle with automatic retry and model fallback. Tokens are kept low: screenshots are downscaled, unchanged idle windows reuse the last screenshot, and stable instructions use Gemini context caching when the model supports it.
+            Free-tier RPM/RPD/TPM limits are enforced by Google per model (check <strong>Google AI Studio → Rate limits</strong>); the numbers above are live app usage. Each completed 5-minute window is analyzed as one session bundle with automatic retry and model fallback.
           </div>
         </div>
       </div>
 
-      {/* Danger zone - Desktop only */}
-      {isDesktopApp() && (
+      {/* Danger Zone - Desktop Only */}
+      {isDesktop && (
         <div className="card" style={{ marginTop: 16, border: '1px solid color-mix(in srgb, var(--accent-red) 30%, transparent)' }}>
           <div className="card-header" style={{ borderBottom: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
             <span className="card-title" style={{ color: 'var(--danger-text)' }}>⚠️ Danger Zone</span>
@@ -595,6 +759,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
               Permanently purge local screenshot caches and reset the activity database. Settings and API keys are preserved.
             </p>
             <button
+              type="button"
               onClick={handleClearData}
               className="btn"
               style={{
@@ -603,7 +768,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 color: 'var(--danger-text)',
                 fontWeight: 600,
                 cursor: 'pointer',
-                whiteSpace: 'nowrap'
+                whiteSpace: 'nowrap',
               }}
             >
               🗑️ Clear All Data & Reset
@@ -612,7 +777,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
         </div>
       )}
 
-      {isDesktopApp() && appVersion && (
+      {isDesktop && appVersion && (
         <div style={{ marginTop: 14, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
           get-Hike desktop · version {appVersion}
         </div>

@@ -41,122 +41,208 @@ function redactSensitiveTitle(title?: string | null): string {
   return title;
 }
 
+/**
+ * Normalizes space-separated SQLite/Go timestamps ("YYYY-MM-DD HH:mm:ss") into ISO-8601
+ * so WebKitGTK (Linux desktop) and Safari do not produce Invalid Date (NaN).
+ */
+export function parseTimestampSafe(timestamp?: string | null): Date | null {
+  if (!timestamp) return null;
+  const normalized = timestamp.includes(' ') && !timestamp.includes('T')
+    ? timestamp.replace(' ', 'T')
+    : timestamp;
+  const d = new Date(normalized);
+  return !Number.isNaN(d.getTime()) ? d : null;
+}
+
 function safeFormatTime(timestamp?: string | null, formatStr = 'HH:mm:ss', fallback = '—'): string {
-  if (!timestamp) return fallback;
-  const d = new Date(timestamp);
-  return !Number.isNaN(d.getTime()) ? format(d, formatStr) : fallback;
+  const d = parseTimestampSafe(timestamp);
+  return d ? format(d, formatStr) : fallback;
 }
 
 function safeFormatDateHeader(dateStr: string): string {
   if (!dateStr) return '—';
-  const cleanDate = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+  const cleanDate = dateStr.split(/[T ]/)[0].trim();
   const d = new Date(`${cleanDate}T00:00:00`);
   return !Number.isNaN(d.getTime()) ? format(d, 'MMMM d, yyyy') : dateStr;
 }
+
+// Interval filter definitions
+type TimeInterval = 'ALL' | 'morning' | 'afternoon' | 'evening' | 'night';
+type FocusFilter = 'ALL' | 'productive' | 'unproductive' | 'pending';
+
+const TIME_INTERVAL_OPTIONS = [
+  { value: 'ALL', label: 'All Day (24 hrs)', leading: <Icon name="clock" size={14} /> },
+  { value: 'morning', label: 'Morning (06:00–12:00)' },
+  { value: 'afternoon', label: 'Afternoon (12:00–18:00)' },
+  { value: 'evening', label: 'Evening (18:00–24:00)' },
+  { value: 'night', label: 'Night (00:00–06:00)' },
+];
+
+const FOCUS_FILTER_OPTIONS = [
+  { value: 'ALL', label: 'All Focus Ratings', leading: <Icon name="filter" size={14} /> },
+  { value: 'productive', label: 'Productive (≥50%)' },
+  { value: 'unproductive', label: 'Unproductive (<50%)' },
+  { value: 'pending', label: 'Pending AI Analysis' },
+];
 
 export default function Timeline({ logs = [], loading, today, onDateChange, loadError, onRetry }: Props) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedApp, setSelectedApp] = useState('ALL');
   const [selectedCategory, setSelectedCategory] = useState('ALL');
+  const [selectedInterval, setSelectedInterval] = useState<TimeInterval>('ALL');
+  const [selectedFocus, setSelectedFocus] = useState<FocusFilter>('ALL');
   const [maskSensitive, setMaskSensitive] = useState(true);
 
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
 
-  // Defer search query processing so input typing stays 60fps
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
-  // Extract unique app names & categories for dropdown filters
+  // Scope logs strictly to the selected day (prevents bleed from Analytics multi-day fetches)
+  const dayLogs = useMemo(() => {
+    if (!Array.isArray(logs) || !today) return [];
+    return logs.filter((log) => {
+      if (!log?.timestamp) return false;
+      const d = parseTimestampSafe(log.timestamp);
+      return d ? localISODate(d) === today : log.timestamp.startsWith(today);
+    });
+  }, [logs, today]);
+
+  // Unique apps scoped to the active day
   const uniqueApps = useMemo(() => {
     const apps = new Set<string>();
-    (logs || []).forEach((l) => {
+    dayLogs.forEach((l) => {
       const app = canonicalAppName(l.app_name);
       if (app) apps.add(app);
     });
     return Array.from(apps).sort();
-  }, [logs]);
+  }, [dayLogs]);
 
+  // Unique categories scoped to the active day
   const uniqueCategories = useMemo(() => {
     const cats = new Set<string>();
-    (logs || []).forEach((l) => {
+    dayLogs.forEach((l) => {
       if (l.ai_category && l.ai_category !== 'Unknown') cats.add(l.ai_category);
     });
     return Array.from(cats).sort();
-  }, [logs]);
+  }, [dayLogs]);
 
-  // Filter & sort logs with fast Date.parse and tie-breaking
+  // Filter & sort logs with single-pass timestamp caching and privacy-aware window search
   const filteredLogs = useMemo(() => {
     const q = deferredSearchQuery.trim().toLowerCase();
-    return (logs || [])
-      .filter((log) => {
-        if (selectedApp !== 'ALL' && canonicalAppName(log.app_name) !== selectedApp) return false;
-        if (selectedCategory !== 'ALL' && log.ai_category !== selectedCategory) return false;
+
+    // Precompute metadata to avoid repeated regex and canonicalAppName execution
+    type PreparedLog = {
+      raw: LogEntry;
+      parsedTime: number;
+      hour: number;
+      canonicalApp: string;
+      score: number;
+      isPending: boolean;
+      windowTitle: string;
+    };
+
+    const prepared: PreparedLog[] = [];
+
+    for (let i = 0; i < dayLogs.length; i++) {
+      const log = dayLogs[i];
+      const parsedDate = parseTimestampSafe(log.timestamp);
+      const parsedTime = parsedDate ? parsedDate.getTime() : 0;
+      const hour = parsedDate ? parsedDate.getHours() : 0;
+      const canonicalApp = canonicalAppName(log.app_name);
+      const isNum = typeof log.productive_score === 'number' && Number.isFinite(log.productive_score);
+      const rawScore = isNum ? log.productive_score! : log.is_productive ? 100 : 0;
+      const score = Math.min(100, Math.max(0, Math.round(rawScore)));
+      const isPending = isPendingLog(log);
+      const windowTitle = maskSensitive ? redactSensitiveTitle(log.window_title) : (log.window_title || '');
+
+      prepared.push({
+        raw: log,
+        parsedTime,
+        hour,
+        canonicalApp,
+        score,
+        isPending,
+        windowTitle,
+      });
+    }
+
+    return prepared
+      .filter((item) => {
+        if (selectedApp !== 'ALL' && item.canonicalApp !== selectedApp) return false;
+        if (selectedCategory !== 'ALL' && item.raw.ai_category !== selectedCategory) return false;
+
+        // Focus status filter
+        if (selectedFocus === 'pending' && !item.isPending) return false;
+        if (selectedFocus === 'productive' && (item.isPending || item.score < 50)) return false;
+        if (selectedFocus === 'unproductive' && (item.isPending || item.score >= 50)) return false;
+
+        // Time-of-day interval filter
+        if (selectedInterval === 'morning' && (item.hour < 6 || item.hour >= 12)) return false;
+        if (selectedInterval === 'afternoon' && (item.hour < 12 || item.hour >= 18)) return false;
+        if (selectedInterval === 'evening' && (item.hour < 18 || item.hour >= 24)) return false;
+        if (selectedInterval === 'night' && (item.hour < 0 || item.hour >= 6)) return false;
+
+        // Search filter matching against masked window titles when privacy mode is ON
         if (q) {
-          const matchApp = log.app_name?.toLowerCase().includes(q) ||
-                           canonicalAppName(log.app_name).toLowerCase().includes(q);
-          const matchReason = log.ai_reason?.toLowerCase().includes(q);
-          const matchCat = log.ai_category?.toLowerCase().includes(q);
-          const matchAppCat = log.app_category?.toLowerCase().includes(q);
-          const matchWindow = log.window_title?.toLowerCase().includes(q);
+          const matchApp = item.raw.app_name?.toLowerCase().includes(q) ||
+                           item.canonicalApp.toLowerCase().includes(q);
+          const matchReason = item.raw.ai_reason?.toLowerCase().includes(q);
+          const matchCat = item.raw.ai_category?.toLowerCase().includes(q);
+          const matchAppCat = item.raw.app_category?.toLowerCase().includes(q);
+          const matchWindow = item.windowTitle.toLowerCase().includes(q);
           return Boolean(matchApp || matchReason || matchCat || matchAppCat || matchWindow);
         }
         return true;
       })
       .sort((a, b) => {
-        const timeB = Date.parse(b.timestamp) || 0;
-        const timeA = Date.parse(a.timestamp) || 0;
-        if (timeB !== timeA) return timeB - timeA;
-        return (b.id || 0) - (a.id || 0);
-      });
-  }, [logs, selectedApp, selectedCategory, deferredSearchQuery]);
+        if (b.parsedTime !== a.parsedTime) return b.parsedTime - a.parsedTime;
+        return (b.raw.id || 0) - (a.raw.id || 0);
+      })
+      .map((item) => item.raw);
+  }, [dayLogs, selectedApp, selectedCategory, selectedInterval, selectedFocus, deferredSearchQuery, maskSensitive]);
 
   // Safe pagination calculations avoiding NaN, 0, or negative pages
   const safePageSize = Math.max(1, pageSize);
   const totalPages = Math.max(1, Math.ceil(filteredLogs.length / safePageSize));
   const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
 
-  // Reset to page 1 and clear filters when the selected day changes
+  // Reset to page 1 when the selected day changes without destroying active search/filters
   useEffect(() => {
     setCurrentPage(1);
-    setSearchQuery('');
-    setSelectedApp('ALL');
-    setSelectedCategory('ALL');
   }, [today]);
-
-  // Never leave paginator state on a page that no longer exists
-  useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
-    } else if (currentPage < 1) {
-      setCurrentPage(1);
-    }
-  }, [currentPage, totalPages]);
 
   const paginatedLogs = useMemo(() => {
     const start = (safeCurrentPage - 1) * safePageSize;
     return filteredLogs.slice(start, start + safePageSize);
   }, [filteredLogs, safeCurrentPage, safePageSize]);
 
-  // Calculate day summary metrics from analyzed captures only
-  const analyzedLogs = useMemo(() => (logs || []).filter((l) => !isPendingLog(l)), [logs]);
+  // Day summary metrics computed on the active day's analyzed captures
+  const analyzedDayLogs = useMemo(() => dayLogs.filter((l) => !isPendingLog(l)), [dayLogs]);
 
   const avgDayScore = useMemo(() => {
-    if (analyzedLogs.length === 0) return 0;
-    const sum = analyzedLogs.reduce((acc, l) => {
+    if (analyzedDayLogs.length === 0) return 0;
+    const sum = analyzedDayLogs.reduce((acc, l) => {
       const isNum = typeof l.productive_score === 'number' && Number.isFinite(l.productive_score);
       const score = isNum ? l.productive_score! : l.is_productive ? 100 : 0;
       return acc + score;
     }, 0);
-    return Math.round(sum / analyzedLogs.length);
-  }, [analyzedLogs]);
+    return Math.round(sum / analyzedDayLogs.length);
+  }, [analyzedDayLogs]);
 
-  const hasActiveFilters = Boolean(searchQuery.trim()) || selectedApp !== 'ALL' || selectedCategory !== 'ALL';
+  const hasActiveFilters = Boolean(searchQuery.trim()) ||
+    selectedApp !== 'ALL' ||
+    selectedCategory !== 'ALL' ||
+    selectedInterval !== 'ALL' ||
+    selectedFocus !== 'ALL';
 
   const clearFilters = () => {
     setSearchQuery('');
     setSelectedApp('ALL');
     setSelectedCategory('ALL');
+    setSelectedInterval('ALL');
+    setSelectedFocus('ALL');
     setCurrentPage(1);
   };
 
@@ -175,6 +261,16 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
     setCurrentPage(1);
   };
 
+  const updateSelectedInterval = (value: string) => {
+    setSelectedInterval(value as TimeInterval);
+    setCurrentPage(1);
+  };
+
+  const updateSelectedFocus = (value: string) => {
+    setSelectedFocus(value as FocusFilter);
+    setCurrentPage(1);
+  };
+
   const activeFilters = useMemo(() => {
     const chips: Array<{ key: string; label: string; value: string; onRemove: () => void }> = [];
     if (searchQuery.trim()) {
@@ -187,11 +283,30 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
     if (selectedCategory !== 'ALL') {
       chips.push({ key: 'category', label: 'Category', value: selectedCategory, onRemove: () => updateSelectedCategory('ALL') });
     }
+    if (selectedInterval !== 'ALL') {
+      const opt = TIME_INTERVAL_OPTIONS.find((o) => o.value === selectedInterval);
+      chips.push({
+        key: 'interval',
+        label: 'Interval',
+        value: opt ? opt.label : selectedInterval,
+        onRemove: () => updateSelectedInterval('ALL'),
+      });
+    }
+    if (selectedFocus !== 'ALL') {
+      const opt = FOCUS_FILTER_OPTIONS.find((o) => o.value === selectedFocus);
+      chips.push({
+        key: 'focus',
+        label: 'Focus',
+        value: opt ? opt.label : selectedFocus,
+        onRemove: () => updateSelectedFocus('ALL'),
+      });
+    }
     return chips;
-  }, [searchQuery, selectedApp, selectedCategory]);
+  }, [searchQuery, selectedApp, selectedCategory, selectedInterval, selectedFocus]);
 
-  const pageFirstRow = filteredLogs.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
-  const pageLastRow = Math.min(currentPage * pageSize, filteredLogs.length);
+  // Safe row range numbers using safeCurrentPage and safePageSize
+  const pageFirstRow = filteredLogs.length === 0 ? 0 : (safeCurrentPage - 1) * safePageSize + 1;
+  const pageLastRow = Math.min(safeCurrentPage * safePageSize, filteredLogs.length);
 
   return (
     <div aria-busy={loading} className="tl-page fade-in-up">
@@ -205,7 +320,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
         </div>
       </div>
 
-      {/* Compact filter toolbar */}
+      {/* Filter toolbar */}
       <div className="card tl-filter-card" style={{ marginBottom: 16 }}>
         <div className="card-body tl-filter-body">
           <div className="tl-filter-bar">
@@ -224,10 +339,26 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                 aria-label="Search captures"
                 value={searchQuery}
                 onChange={(e) => updateSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape' && searchQuery) {
+                    e.stopPropagation();
+                    updateSearchQuery('');
+                  }
+                }}
               />
               <span className="tl-search-icon" aria-hidden="true">
                 <Icon name="search" size={14} />
               </span>
+              {searchQuery && (
+                <button
+                  type="button"
+                  className="tl-search-clear"
+                  onClick={() => updateSearchQuery('')}
+                  aria-label="Clear search input"
+                >
+                  <Icon name="x" size={12} />
+                </button>
+              )}
             </div>
 
             <AppFilterSelect
@@ -250,6 +381,22 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                 ...uniqueCategories.map((cat) => ({ value: cat, label: cat })),
               ]}
             />
+
+            <CustomSelect
+              className="tl-interval-select"
+              value={selectedInterval}
+              onChange={updateSelectedInterval}
+              ariaLabel="Filter by time interval"
+              options={TIME_INTERVAL_OPTIONS}
+            />
+
+            <CustomSelect
+              className="tl-focus-select"
+              value={selectedFocus}
+              onChange={updateSelectedFocus}
+              ariaLabel="Filter by focus score"
+              options={FOCUS_FILTER_OPTIONS}
+            />
           </div>
 
           {/* Meta summary + active filter chips */}
@@ -263,7 +410,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
               </div>
               <div className="tl-stat">
                 <span className="tl-stat-label">Avg Day Focus</span>
-                {analyzedLogs.length === 0 ? (
+                {analyzedDayLogs.length === 0 ? (
                   <span className="tl-stat-value">—</span>
                 ) : (
                   <span
@@ -307,6 +454,9 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
           <span className="card-title tl-card-title">
             <Icon name="calendar" size={14} color="var(--accent-primary)" />
             {today === localISODate() ? "Today's Log Feed" : safeFormatDateHeader(today)}
+            {loading && dayLogs.length > 0 && (
+              <span className="spinner-sm" style={{ marginLeft: 6 }} title="Refreshing activity feed..." />
+            )}
           </span>
           <div>
             <button
@@ -323,7 +473,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
         </div>
 
         <div className="card-body tl-list-body">
-          {loadError && logs.length > 0 && (
+          {loadError && dayLogs.length > 0 && (
             <Alert
               type="error"
               message={loadError}
@@ -331,7 +481,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
               className="tl-error-alert"
             />
           )}
-          {loading && logs.length === 0 ? (
+          {loading && dayLogs.length === 0 ? (
             <ul className="timeline-list tl-rows" aria-label="Loading captures">
               {SKELETON_ROWS.map((i) => (
                 <li key={i} className="timeline-item tl-row tl-skeleton-row">
@@ -353,7 +503,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                 </li>
               ))}
             </ul>
-          ) : loadError && logs.length === 0 ? (
+          ) : loadError && dayLogs.length === 0 ? (
             <Alert
               type="error"
               message={loadError}
@@ -367,21 +517,32 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
               description={
                 hasActiveFilters
                   ? 'Try adjusting or clearing your filters.'
-                  : 'The tracker may not have been running, or the backend is unreachable.'
+                  : 'The tracker may not have been running, or no activity was recorded on this day.'
               }
               action={
                 hasActiveFilters ? (
                   <button className="btn btn-secondary btn-sm" onClick={clearFilters}>
                     Clear filters
                   </button>
-                ) : today !== localISODate() ? (
-                  <button className="btn btn-secondary btn-sm" onClick={() => onDateChange(localISODate())}>Go to today</button>
-                ) : undefined
+                ) : (
+                  <div style={{ display: 'inline-flex', gap: 8 }}>
+                    {onRetry && (
+                      <button className="btn btn-primary btn-sm" onClick={onRetry}>
+                        <Icon name="refresh" size={14} /> Refresh Feed
+                      </button>
+                    )}
+                    {today !== localISODate() && (
+                      <button className="btn btn-secondary btn-sm" onClick={() => onDateChange(localISODate())}>
+                        Go to today
+                      </button>
+                    )}
+                  </div>
+                )
               }
             />
           ) : (
             <ul className="timeline-list tl-rows">
-              {paginatedLogs.map((log) => {
+              {paginatedLogs.map((log, index) => {
                 const isNum = typeof log.productive_score === 'number' && Number.isFinite(log.productive_score);
                 const rawScore = isNum ? log.productive_score! : log.is_productive ? 100 : 0;
                 const scoreVal = Math.min(100, Math.max(0, Math.round(rawScore)));
@@ -389,10 +550,13 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                 const time = safeFormatTime(log.timestamp);
                 const stateLabel = isPendingLog(log) ? 'pending' : scoreVal >= 50 ? 'productive' : 'unproductive';
                 const windowTitle = maskSensitive ? redactSensitiveTitle(log.window_title) : (log.window_title || '');
+                const entropySafe = typeof log.entropy_score === 'number' && Number.isFinite(log.entropy_score)
+                  ? log.entropy_score.toFixed(1)
+                  : '0.0';
 
                 return (
                   <li
-                    key={log.id}
+                    key={log.id ?? `log-${log.timestamp}-${index}`}
                     className="timeline-item tl-row"
                     aria-label={`${time} — ${appName || 'Unknown app'} — ${stateLabel}`}
                   >
@@ -433,9 +597,15 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                         <span className="tl-keys-icon" aria-hidden="true">
                           <Icon name="keyboard" size={12} />
                         </span>
-                        <span>{(log.total_keys ?? 0)} keys · {(log.unique_keys ?? 0)} unique</span>
+                        <span>{(log.total_keys ?? 0).toLocaleString()} keys · {(log.unique_keys ?? 0).toLocaleString()} unique</span>
+                        {(log.total_clicks ?? 0) > 0 && (
+                          <>
+                            <span className="tl-dot" aria-hidden="true">•</span>
+                            <span>{log.total_clicks} clicks</span>
+                          </>
+                        )}
                         <span className="tl-dot" aria-hidden="true">•</span>
-                        <span>Entropy: {(log.entropy_score ?? 0).toFixed(1)}</span>
+                        <span>Entropy: {entropySafe}</span>
                       </div>
                     </div>
 
@@ -489,7 +659,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
               <button
                 type="button"
                 disabled={safeCurrentPage <= 1}
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                onClick={() => setCurrentPage(safeCurrentPage - 1)}
                 className="btn btn-secondary btn-sm tl-page-btn"
               >
                 <Icon name="chevron-left" size={14} />
@@ -501,7 +671,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
               <button
                 type="button"
                 disabled={safeCurrentPage >= totalPages}
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                onClick={() => setCurrentPage(safeCurrentPage + 1)}
                 className="btn btn-secondary btn-sm tl-page-btn"
               >
                 Next

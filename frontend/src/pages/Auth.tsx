@@ -231,7 +231,7 @@ export function AuthPage({ onAuthSuccess, onSkip, backendUnavailable = false, on
 
     // If relative in desktop mode, build absolute URL against configured host or localhost
     if (isDesktopApp() && targetUrl.startsWith('/')) {
-      const base = getApiBaseUrl() || (typeof window !== 'undefined' && window.location.origin.startsWith('http') ? window.location.origin : 'http://localhost:8080');
+      const base = getApiBaseUrl() || (typeof window !== 'undefined' && window.location.origin.startsWith('http') ? window.location.origin : 'https://minitracker-api.fly.dev');
       targetUrl = `${base.replace(/\/$/, '')}${targetUrl}`;
     }
 

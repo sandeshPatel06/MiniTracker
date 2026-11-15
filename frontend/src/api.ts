@@ -45,6 +45,10 @@ export function getApiBaseUrl(): string {
   if ((window as any).__BACKEND_URL__) {
     return (window as any).__BACKEND_URL__.replace(/\/$/, '');
   }
+  // Production default fallback pointing directly to deployed Fly.io backend
+  if (typeof window !== 'undefined' && window.location.hostname.includes('pages.dev')) {
+    return 'https://minitracker-api.fly.dev';
+  }
   // Empty base → relative paths, i.e. served from the app's own origin.
   // This is the correct default for a packaged/same-origin deployment.
   return '';

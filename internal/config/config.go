@@ -42,7 +42,7 @@ func Load() (*Config, error) {
 	v.SetDefault("screenshot_interval_seconds", 30*time.Second)
 	v.SetDefault("ai_analysis_interval_seconds", 3*time.Hour)
 	v.SetDefault("backend_port", 8080)
-	v.SetDefault("backend_endpoint", "http://localhost:8080")
+	v.SetDefault("backend_endpoint", "https://minitracker-api.fly.dev")
 	v.SetDefault("data_dir", filepath.Join(home, ".local", "share", "get-hike"))
 	v.SetDefault("azure_tenant_id", "common")
 

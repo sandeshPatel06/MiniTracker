@@ -63,7 +63,7 @@ const buildInvitationLink = (token: string) => {
     if (typeof window !== 'undefined' && window.location.protocol.startsWith('http') && !window.location.hostname.includes('wails')) {
       origin = window.location.origin;
     } else {
-      origin = 'http://localhost:8080';
+      origin = 'https://minitracker-api.fly.dev';
     }
   }
   return `${origin}/#/accept-invite?token=${encodeURIComponent(token)}`;

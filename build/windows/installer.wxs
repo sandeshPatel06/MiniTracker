@@ -1,0 +1,65 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="get-Hike"
+           Manufacturer="REAK INFOTECH"
+           Version="$(var.Version)"
+           UpgradeCode="4a14f44c-cb16-4d57-9d62-793db5f86c8d"
+           Scope="perMachine">
+
+    <SummaryInformation Description="get-Hike Desktop Work Tracker"
+                        Manufacturer="REAK INFOTECH" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of get-Hike is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon" SourceFile="build/windows/icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/sandeshPatel06/MiniTracker" />
+    <Property Id="ARPURLINFOABOUT" Value="https://get-hike.pages.dev" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="get-Hike" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="get-Hike" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder" />
+
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="MainExecutable" Guid="b5a38a7c-4d32-45e1-8889-119106093d3b">
+        <File Id="GetHikeExe"
+              Source="$(var.SourceExe)"
+              KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut"
+                    Directory="ApplicationProgramsFolder"
+                    Name="get-Hike"
+                    Description="get-Hike Desktop Work Tracker"
+                    WorkingDirectory="INSTALLFOLDER"
+                    Icon="AppIcon"
+                    Advertise="no" />
+          <Shortcut Id="DesktopShortcut"
+                    Directory="DesktopFolder"
+                    Name="get-Hike"
+                    Description="get-Hike Desktop Work Tracker"
+                    WorkingDirectory="INSTALLFOLDER"
+                    Icon="AppIcon"
+                    Advertise="no" />
+        </File>
+        <RemoveFolder Id="CleanUpStartMenu"
+                      Directory="ApplicationProgramsFolder"
+                      On="uninstall" />
+        <RegistryValue Root="HKLM"
+                       Key="Software\REAK INFOTECH\get-Hike"
+                       Name="Installed"
+                       Type="integer"
+                       Value="1" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="MainApplication" Title="get-Hike" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+    </Feature>
+  </Package>
+</Wix>

@@ -73,6 +73,7 @@ jobs:
             platform: windows/amd64
             tags: desktop,production
             desktop_asset: get-hike-windows-amd64.exe
+            installer_asset: get-hike-windows-amd64.msi
             server_asset: get-hike-server-windows-amd64.exe
             legacy_aliases: false
           - name: macOS Intel
@@ -153,6 +154,29 @@ jobs:
         shell: bash
         run: |
           cp -f build/bin/get-hike.exe "dist/${{ matrix.desktop_asset }}"
+          
+          # Build Windows MSI installer using WiX Toolset
+          dotnet tool install --global wix || true
+          
+          # Derive valid 4-part Windows FileVersion (e.g. 1.0.0.0) from ref or commit timestamp
+          RAW_VER="${{ github.ref_name }}"
+          CLEAN_VER=$(echo "$RAW_VER" | sed 's/^v//' | grep -E '^[0-9]+(\.[0-9]+){1,3}$' || echo "")
+          if [ -z "$CLEAN_VER" ]; then
+            CLEAN_VER="1.0.0.0"
+          fi
+          # Ensure exactly 4 version segments (e.g. 1.0.0 -> 1.0.0.0)
+          DOT_COUNT=$(echo "$CLEAN_VER" | tr -cd '.' | wc -c)
+          while [ "$DOT_COUNT" -lt 3 ]; do
+            CLEAN_VER="${CLEAN_VER}.0"
+            DOT_COUNT=$((DOT_COUNT + 1))
+          done
+          
+          echo "Building MSI installer version $CLEAN_VER for ${{ matrix.installer_asset }}..."
+          wix build build/windows/installer.wxs \
+            -arch x64 \
+            -d Version="$CLEAN_VER" \
+            -d SourceExe="dist/${{ matrix.desktop_asset }}" \
+            -o "dist/${{ matrix.installer_asset }}"
 
       - name: Package macOS Desktop
         if: runner.os == 'macOS'
@@ -263,7 +287,8 @@ jobs:
           | :--- | :--- | :--- |
           | Linux x64 | [\`get-hike-linux-amd64\`](${RELEASE_URL}/get-hike-linux-amd64) | [\`get-hike-server-linux-amd64\`](${RELEASE_URL}/get-hike-server-linux-amd64) |
           | Linux ARM64 | [\`get-hike-linux-arm64\`](${RELEASE_URL}/get-hike-linux-arm64) | [\`get-hike-server-linux-arm64\`](${RELEASE_URL}/get-hike-server-linux-arm64) |
-          | Windows x64 | [\`get-hike-windows-amd64.exe\`](${RELEASE_URL}/get-hike-windows-amd64.exe) | [\`get-hike-server-windows-amd64.exe\`](${RELEASE_URL}/get-hike-server-windows-amd64.exe) |
+          | Windows x64 (Installer) | [\`get-hike-windows-amd64.msi\`](${RELEASE_URL}/get-hike-windows-amd64.msi) | [\`get-hike-server-windows-amd64.exe\`](${RELEASE_URL}/get-hike-server-windows-amd64.exe) |
+          | Windows x64 (Portable) | [\`get-hike-windows-amd64.exe\`](${RELEASE_URL}/get-hike-windows-amd64.exe) | [\`get-hike-server-windows-amd64.exe\`](${RELEASE_URL}/get-hike-server-windows-amd64.exe) |
           | macOS Intel | [\`get-hike-macos-amd64.app.zip\`](${RELEASE_URL}/get-hike-macos-amd64.app.zip) | [\`get-hike-server-macos-amd64\`](${RELEASE_URL}/get-hike-server-macos-amd64) |
           | macOS Apple Silicon | [\`get-hike-macos-arm64.app.zip\`](${RELEASE_URL}/get-hike-macos-arm64.app.zip) | [\`get-hike-server-macos-arm64\`](${RELEASE_URL}/get-hike-server-macos-arm64) |
 
@@ -281,7 +306,7 @@ jobs:
 
           - Desktop apps include the complete UI. Server binaries are for advanced self-hosted setups and serve \`frontend/dist\` when run from a source checkout.
           - macOS builds are ad-hoc signed. If Gatekeeper blocks the first launch, right-click the app and choose **Open**, or run \`xattr -dr com.apple.quarantine get-hike.app\`.
-          - Windows builds are portable \`.exe\` files; no installer is required.
+          - Windows builds include both a standard Windows Installer (\`.msi\`) with Desktop and Start Menu shortcuts, and a standalone portable \`.exe\` executable.
           - Verify downloads against \`checksums.txt\` (SHA-256).
 
           ## Included Files

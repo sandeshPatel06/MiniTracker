@@ -26,7 +26,15 @@ const downloads = [
     desc: 'Optimized build for ARM64 Linux laptops, Raspberry Pi 5, and server boards.',
   },
   {
-    platform: 'Windows x64',
+    platform: 'Windows x64 (MSI Installer)',
+    type: 'Windows Installer (.msi)',
+    filename: 'get-hike-windows-amd64.msi',
+    extUrl: `${latestReleaseUrl}/download/get-hike-windows-amd64.msi`,
+    badge: 'Recommended',
+    desc: 'Standard Windows Installer (.msi) with Desktop shortcut, Start Menu entry, and clean uninstaller.',
+  },
+  {
+    platform: 'Windows x64 (Portable)',
     type: 'Portable Desktop App (.exe)',
     filename: 'get-hike-windows-amd64.exe',
     extUrl: `${latestReleaseUrl}/download/get-hike-windows-amd64.exe`,

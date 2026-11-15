@@ -1,6 +1,7 @@
 import React from 'react';
 import { Icon, IconName } from './Icon';
 import { Page, User } from '../types';
+import { isDesktopApp } from '../services/wailsBridge';
 import logoAsset from '../assets/logo.png';
 
 interface SidebarProps {
@@ -65,9 +66,11 @@ export function Sidebar({
           <span className="sidebar-logo-text" style={{ fontSize: 14 }}>get-Hike</span>
         </div>
         <div className="mobile-header-actions">
-          <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: 'var(--teal-text)', fontVariantNumeric: 'tabular-nums' }}>
-            {formatTimer(elapsedSeconds)}
-          </div>
+          {isDesktopApp() && (
+            <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: 'var(--teal-text)', fontVariantNumeric: 'tabular-nums' }}>
+              {formatTimer(elapsedSeconds)}
+            </div>
+          )}
           <button
             className="mobile-menu-toggle"
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -95,77 +98,79 @@ export function Sidebar({
           </div>
         </div>
 
-        {/* Work Clock & Tracking Control Widget */}
-        <div className="sidebar-widget">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-            <span className="sidebar-widget-label">Work Session</span>
-            <span
-              style={{
-                fontSize: 11,
-                padding: '2px 6px',
-                borderRadius: 4,
-                fontWeight: 600,
-                background: isGuestMode ? 'color-mix(in srgb, var(--accent-purple) 15%, transparent)' : 'color-mix(in srgb, var(--accent-green) 15%, transparent)',
-                color: isGuestMode ? 'var(--accent-purple)' : 'var(--accent-primary-text)',
-                border: isGuestMode ? '1px solid color-mix(in srgb, var(--accent-purple) 30%, transparent)' : '1px solid color-mix(in srgb, var(--accent-green) 30%, transparent)',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {isGuestMode ? 'Offline Guest' : 'Synced'}
-            </span>
-          </div>
-          <div className="sidebar-widget-timer" style={{ fontVariantNumeric: 'tabular-nums' }}>
-            {formatTimer(elapsedSeconds)}
-          </div>
-          <button
-            onClick={handleToggleTracking}
-            className={`btn-tracker-toggle ${isTrackingActive ? 'active' : 'paused'}`}
-            style={{ marginBottom: 8 }}
-          >
-            <Icon name={isTrackingActive ? 'pause' : 'play'} size={14} />
-            <span>{isTrackingActive ? 'Pause Tracker' : 'Start Tracker'}</span>
-          </button>
-          {trackerError && (
-            <div
-              role="alert"
-              style={{
-                fontSize: 11,
-                padding: '6px 8px',
-                borderRadius: 'var(--radius-sm)',
-                background: 'color-mix(in srgb, var(--accent-red) 15%, transparent)',
-                border: '1px solid color-mix(in srgb, var(--accent-red) 35%, transparent)',
-                color: 'var(--danger-text)',
-                marginBottom: 8,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-              }}
-            >
-              <Icon name="x" size={12} />
-              <span style={{ flex: 1 }}>{trackerError}</span>
+        {/* Work Clock & Tracking Control Widget - Desktop Only */}
+        {isDesktopApp() && (
+          <div className="sidebar-widget">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <span className="sidebar-widget-label">Work Session</span>
+              <span
+                style={{
+                  fontSize: 11,
+                  padding: '2px 6px',
+                  borderRadius: 4,
+                  fontWeight: 600,
+                  background: isGuestMode ? 'color-mix(in srgb, var(--accent-purple) 15%, transparent)' : 'color-mix(in srgb, var(--accent-green) 15%, transparent)',
+                  color: isGuestMode ? 'var(--accent-purple)' : 'var(--accent-primary-text)',
+                  border: isGuestMode ? '1px solid color-mix(in srgb, var(--accent-purple) 30%, transparent)' : '1px solid color-mix(in srgb, var(--accent-green) 30%, transparent)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {isGuestMode ? 'Offline Guest' : 'Synced'}
+              </span>
             </div>
-          )}
-          <button
-            onClick={onOpenTaskModal}
-            className={`btn-task-goal ${userTask ? 'active' : ''}`}
-            title={userTask || 'Set target task goal (max 20 words)'}
-          >
-            <Icon name="target" size={12} />
-            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {userTask ? `Task: ${userTask}` : 'Set Target Task Goal'}
-            </span>
-          </button>
-          {!isGuestMode && (
+            <div className="sidebar-widget-timer" style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {formatTimer(elapsedSeconds)}
+            </div>
             <button
-              onClick={handleSyncNow}
-              disabled={isSyncing}
-              className={`btn-sync-now ${isSyncing ? 'syncing' : ''}`}
+              onClick={handleToggleTracking}
+              className={`btn-tracker-toggle ${isTrackingActive ? 'active' : 'paused'}`}
+              style={{ marginBottom: 8 }}
             >
-              <Icon name="refresh" size={12} className={isSyncing ? 'spin' : ''} />
-              <span>{isSyncing ? 'Syncing...' : (syncMessage || 'Sync Now')}</span>
+              <Icon name={isTrackingActive ? 'pause' : 'play'} size={14} />
+              <span>{isTrackingActive ? 'Pause Tracker' : 'Start Tracker'}</span>
             </button>
-          )}
-        </div>
+            {trackerError && (
+              <div
+                role="alert"
+                style={{
+                  fontSize: 11,
+                  padding: '6px 8px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'color-mix(in srgb, var(--accent-red) 15%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--accent-red) 35%, transparent)',
+                  color: 'var(--danger-text)',
+                  marginBottom: 8,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <Icon name="x" size={12} />
+                <span style={{ flex: 1 }}>{trackerError}</span>
+              </div>
+            )}
+            <button
+              onClick={onOpenTaskModal}
+              className={`btn-task-goal ${userTask ? 'active' : ''}`}
+              title={userTask || 'Set target task goal (max 20 words)'}
+            >
+              <Icon name="target" size={12} />
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {userTask ? `Task: ${userTask}` : 'Set Target Task Goal'}
+              </span>
+            </button>
+            {!isGuestMode && (
+              <button
+                onClick={handleSyncNow}
+                disabled={isSyncing}
+                className={`btn-sync-now ${isSyncing ? 'syncing' : ''}`}
+              >
+                <Icon name="refresh" size={12} className={isSyncing ? 'spin' : ''} />
+                <span>{isSyncing ? 'Syncing...' : (syncMessage || 'Sync Now')}</span>
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="sidebar-section-label">Navigation</div>
         {navItems.map((item) => {
@@ -246,7 +251,7 @@ export function Sidebar({
             </div>
           )}
 
-          {dev.enabled && (
+          {dev.enabled && isDesktopApp() && (
             <button
               type="button"
               className="dev-badge dev-badge-btn"

@@ -13,6 +13,7 @@ import { Alert } from '../components/Alert';
 import { canonicalAppName } from '../lib/appNames';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from 'recharts';
 import { localISODate, isPendingLog, buildLocalWorkSessions, FOCUS_GOOD, FOCUS_OK } from '../utils';
+import { isDesktopApp } from '../services/wailsBridge';
 
 const prefersReducedMotion =
   typeof window !== 'undefined' &&
@@ -546,7 +547,11 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
             <EmptyState
               icon={<Icon name="inbox" size={32} />}
               title="No Activity Captured Yet"
-              description="The tracking daemon will automatically log desktop screenshots and keystroke activity."
+              description={
+                isDesktopApp()
+                  ? "The tracking daemon will automatically log desktop screenshots and keystroke activity."
+                  : "No activity recorded yet. Run the get-Hike desktop tracker on your computer to log work sessions and sync to this dashboard."
+              }
               action={
                 onRefresh ? (
                   <button type="button" className="btn btn-secondary" onClick={onRefresh}>

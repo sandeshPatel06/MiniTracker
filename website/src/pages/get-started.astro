@@ -3,12 +3,72 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 import Button from '../components/Button.astro';
 import CodeBlock from '../components/CodeBlock.astro';
 
-const githubUrl = 'https://github.com/sandeshPatel06/';
+const githubUrl = 'https://github.com/sandeshPatel06/MiniTracker';
+
+const getStartedJsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        {
+          '@type': 'ListItem',
+          position: 1,
+          name: 'Home',
+          item: 'https://get-hike.pages.dev/',
+        },
+        {
+          '@type': 'ListItem',
+          position: 2,
+          name: 'Setup Guide',
+          item: 'https://get-hike.pages.dev/get-started',
+        },
+      ],
+    },
+    {
+      '@type': 'HowTo',
+      name: 'How to Install and Set Up get-Hike on Linux',
+      description: 'Step-by-step guide to installing the get-Hike productivity tracker on Linux via one-line script or GitHub binary.',
+      totalTime: 'PT3M',
+      step: [
+        {
+          '@type': 'HowToStep',
+          position: 1,
+          name: 'Check System Prerequisites',
+          text: 'Verify your Linux distribution (Ubuntu 22.04+, Debian 12+, Fedora 38+, Arch) runs X11 or Wayland with standard user permissions.',
+          url: 'https://get-hike.pages.dev/get-started#prerequisites',
+        },
+        {
+          '@type': 'HowToStep',
+          position: 2,
+          name: 'Run the One-Line Installer',
+          text: 'Execute curl -sSL https://raw.githubusercontent.com/sandeshPatel06/MiniTracker/main/install.sh | bash in your terminal.',
+          url: 'https://get-hike.pages.dev/get-started#quick-install',
+        },
+        {
+          '@type': 'HowToStep',
+          position: 3,
+          name: 'Launch in Guest Mode',
+          text: 'Start get-Hike from your desktop launcher or terminal. Guest mode begins local tracking immediately with zero sign-up.',
+          url: 'https://get-hike.pages.dev/get-started#guest-mode',
+        },
+        {
+          '@type': 'HowToStep',
+          position: 4,
+          name: 'Enable systemd User Service',
+          text: 'Run systemctl --user enable --now get-hike.service for persistent background session tracking.',
+          url: 'https://get-hike.pages.dev/get-started#systemd',
+        },
+      ],
+    },
+  ],
+};
 ---
 
 <BaseLayout
   title="Quick Start with get-Hike: Installation & Setup Guide"
   description="Step-by-step install guide for get-Hike on Linux. Prerequisites, one-line installer, manual build, systemd service, and troubleshooting."
+  jsonLd={getStartedJsonLd}
 >
   <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-16">
     

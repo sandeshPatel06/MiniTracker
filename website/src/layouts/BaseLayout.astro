@@ -8,11 +8,15 @@ interface Props {
   title: string;
   description: string;
   image?: string;
+  imageAlt?: string;
   canonicalURL?: string | URL;
-  jsonLd?: Record<string, any>;
+  jsonLd?: Record<string, any> | Array<Record<string, any>>;
+  noindex?: boolean;
+  ogType?: 'website' | 'article';
+  publishedTime?: string;
 }
 
-const { title, description, image, canonicalURL, jsonLd } = Astro.props;
+const { title, description, image, imageAlt, canonicalURL, jsonLd, noindex, ogType, publishedTime } = Astro.props;
 ---
 
 <!doctype html>
@@ -22,8 +26,12 @@ const { title, description, image, canonicalURL, jsonLd } = Astro.props;
       title={title}
       description={description}
       image={image}
+      imageAlt={imageAlt}
       canonicalURL={canonicalURL}
       jsonLd={jsonLd}
+      noindex={noindex}
+      ogType={ogType}
+      publishedTime={publishedTime}
     />
   </head>
   <body class="bg-surface-bg text-slate-100 min-h-screen flex flex-col antialiased selection:bg-emerald-500/30 selection:text-white overflow-x-hidden w-full">

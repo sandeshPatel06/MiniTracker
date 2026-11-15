@@ -1,10 +1,11 @@
 import { useEffect } from 'react';
 import { apiFetch } from '../api';
-import { callGo } from '../services/wailsBridge';
+import { callGo, isDesktopApp } from '../services/wailsBridge';
 
 export function useInputTracker(isTrackingActive: boolean) {
   useEffect(() => {
-    if (!isTrackingActive) return;
+    // Never track keyboard/mouse activity in browser mode
+    if (!isTrackingActive || !isDesktopApp()) return;
 
     let totalCount = 0;
     const uniqueKeys = new Set<string>();

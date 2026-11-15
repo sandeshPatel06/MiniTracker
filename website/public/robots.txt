@@ -1,4 +1,13 @@
 User-agent: *
 Allow: /
+Disallow: /404
+Disallow: /404.html
+
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+Crawl-delay: 1
 
 Sitemap: https://get-hike.pages.dev/sitemap-index.xml

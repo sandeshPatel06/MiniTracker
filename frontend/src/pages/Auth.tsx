@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { User, Organization } from '../types';
 import { apiFetch, buildApiUrl } from '../api';
 import { Alert } from '../components/Alert';
+import { isDesktopApp } from '../services/wailsBridge';
 import logoAsset from '../assets/logo.png';
 
 interface AuthProps {
@@ -207,11 +208,19 @@ export function AuthPage({ onAuthSuccess, onSkip, backendUnavailable = false, on
           <div className="card-body" style={{ textAlign: 'center' }}>
             <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>Server unavailable</div>
             <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55, marginBottom: 16 }}>
-              We couldn't connect to the get-Hike server. You can continue in <strong>Guest Mode</strong> — tracking and
-              AI analysis run locally on this device and your data stays private.
+              {isDesktopApp() ? (
+                <>
+                  We couldn't connect to the get-Hike server. You can continue in <strong>Guest Mode</strong> — tracking and
+                  AI analysis run locally on this device and your data stays private.
+                </>
+              ) : (
+                <>
+                  We couldn't connect to the get-Hike server. Please verify your internet connection or check back shortly.
+                </>
+              )}
             </p>
 
-            {onSkip && (
+            {onSkip && isDesktopApp() && (
               <button
                 type="button"
                 className="btn btn-primary w-full"
@@ -470,8 +479,8 @@ export function AuthPage({ onAuthSuccess, onSkip, backendUnavailable = false, on
           </form>
         </div>
 
-        {/* Guest Local Desktop Mode Fallback */}
-        {onSkip && (
+        {/* Guest Local Desktop Mode Fallback - Desktop only */}
+        {onSkip && isDesktopApp() && (
           <div style={{ padding: '0 18px 16px', textAlign: 'center' }}>
             <button
               type="button"

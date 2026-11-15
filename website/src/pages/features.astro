@@ -84,11 +84,40 @@ const features = [
     ],
   },
 ];
+const featuresJsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        {
+          '@type': 'ListItem',
+          position: 1,
+          name: 'Home',
+          item: 'https://get-hike.pages.dev/',
+        },
+        {
+          '@type': 'ListItem',
+          position: 2,
+          name: 'Features',
+          item: 'https://get-hike.pages.dev/features',
+        },
+      ],
+    },
+    {
+      '@type': 'WebPage',
+      name: 'get-Hike Features: Architecture & Privacy Telemetry',
+      url: 'https://get-hike.pages.dev/features',
+      description: 'Explore get-Hike features: floating session widget, optional Gemini AI analysis, capture timeline, entropy telemetry, and systemd integration.',
+    },
+  ],
+};
 ---
 
 <BaseLayout
   title="Features: get-Hike Linux Productivity Tracker"
   description="Explore get-Hike features: floating session widget, optional Gemini AI analysis, capture timeline, entropy telemetry, and systemd integration."
+  jsonLd={featuresJsonLd}
 >
   <!-- Page Header -->
   <section class="relative pt-8 pb-12 sm:pt-20 sm:pb-24 border-b border-emerald-500/15 overflow-hidden">

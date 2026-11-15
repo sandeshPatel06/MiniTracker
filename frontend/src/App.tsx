@@ -20,7 +20,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { useDevMode } from './hooks/useDevMode';
 import { useInputTracker } from './hooks/useInputTracker';
 import { runClientVisionAnalysis } from './services/aiVision';
-import { callGo, syncBackendAuthSession } from './services/wailsBridge';
+import { callGo, syncBackendAuthSession, isDesktopApp } from './services/wailsBridge';
 import { localISODate, isPendingLog, bumpUsageCount } from './utils';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import './style.css';
@@ -55,7 +55,7 @@ export default function App() {
   });
   const [authChecked, setAuthChecked] = useState<boolean>(false);
   const [isGuestMode, setIsGuestMode] = useState<boolean>(() => {
-    return localStorage.getItem('mini_guest_mode') === 'true';
+    return isDesktopApp() && localStorage.getItem('mini_guest_mode') === 'true';
   });
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [backendUnavailable, setBackendUnavailable] = useState<boolean>(false);
@@ -104,8 +104,8 @@ export default function App() {
     setShowTaskModal(false);
   };
 
-  // Zero-sudo mode: auto-track keypresses and mouse clicks via extracted hook
-  useInputTracker(isTrackingActive);
+  // Zero-sudo mode: auto-track keypresses and mouse clicks on desktop only
+  useInputTracker(isDesktopApp() && isTrackingActive);
 
   // Verify active user session on startup
   useEffect(() => {
@@ -130,15 +130,17 @@ export default function App() {
         } else {
           localStorage.removeItem('mini_auth_user');
           setCurrentUser(null);
-          if (localStorage.getItem('mini_guest_mode') === 'true') {
+          if (isDesktopApp() && localStorage.getItem('mini_guest_mode') === 'true') {
             setIsGuestMode(true);
+          } else {
+            localStorage.removeItem('mini_guest_mode');
           }
         }
       } catch {
         if ((window as any).go?.main?.App) {
           setBackendUnavailable(true);
         }
-        if (localStorage.getItem('mini_guest_mode') === 'true') {
+        if (isDesktopApp() && localStorage.getItem('mini_guest_mode') === 'true') {
           setIsGuestMode(true);
           return;
         }
@@ -246,9 +248,9 @@ export default function App() {
 
   // Fetch initial tracker status — re-runs when the session changes so the
   // elapsed/active state is refreshed after sign-in instead of racing the
-  // auth check on mount.
+  // auth check on mount. Desktop only.
   useEffect(() => {
-    if (!hasSession) return;
+    if (!hasSession || !isDesktopApp()) return;
     const app = (window as any).go?.main?.App;
     if (app?.GetTrackingStatus) {
       callGo(() => app.GetTrackingStatus())
@@ -277,9 +279,9 @@ export default function App() {
       .catch(() => {});
   }, [hasSession]);
 
-  // Timer ticker
+  // Timer ticker - desktop only
   useEffect(() => {
-    if (!isTrackingActive) return;
+    if (!isDesktopApp() || !isTrackingActive) return;
     const interval = setInterval(() => {
       setElapsedSeconds(prev => prev + 1);
     }, 1000);
@@ -739,7 +741,7 @@ export default function App() {
     ...(currentUser?.role === 'admin' || currentUser?.role === 'owner' ? [
       { id: 'organization' as Page, iconName: 'building' as IconName, label: 'Team / Org' },
       { id: 'settings' as Page, iconName: 'settings' as IconName, label: 'AI Settings' },
-    ] : isGuestMode ? [
+    ] : (isDesktopApp() && isGuestMode) ? [
       { id: 'settings' as Page, iconName: 'settings' as IconName, label: 'Preferences' },
     ] : []),
   ];
@@ -834,12 +836,12 @@ export default function App() {
             setAuthNotice(null);
             setCurrentUser(user);
           }}
-          onSkip={() => {
+          onSkip={isDesktopApp() ? () => {
             localStorage.setItem('mini_guest_mode', 'true');
             syncBackendAuthSession('', true);
             setAuthNotice(null);
             setIsGuestMode(true);
-          }}
+          } : undefined}
         />
       </>
     );
@@ -958,7 +960,7 @@ export default function App() {
               }
             />
           ) : null}
-          {page === 'settings' && (currentUser?.role === 'admin' || currentUser?.role === 'owner' || isGuestMode) ? (
+          {page === 'settings' && (currentUser?.role === 'admin' || currentUser?.role === 'owner' || (isDesktopApp() && isGuestMode)) ? (
             <SettingsPage
               theme={theme}
               onThemeChange={(newTheme) => setTheme(newTheme)}

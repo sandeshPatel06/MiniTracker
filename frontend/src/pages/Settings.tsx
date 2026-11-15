@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch } from '../api';
+import { isDesktopApp } from '../services/wailsBridge';
 import { getTodayUsageCount, bumpUsageCount, resetUsageCount } from '../utils';
 import { CustomSelect } from '../components/CustomSelect';
 import type { SelectOption } from '../components/CustomSelect';
@@ -527,7 +528,9 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
               </div>
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 12 }}>
-              Captures every {screenshotInterval}s (backend: {syncIntervalSeconds}s). Pending logs are batched (up to 10 per request) to keep AI usage low.
+              {isDesktopApp()
+                ? `Captures every ${screenshotInterval}s (backend: ${syncIntervalSeconds}s). Pending logs are batched (up to 10 per request) to keep AI usage low.`
+                : `Organization capture interval: every ${screenshotInterval}s. This policy is synced to all connected desktop trackers.`}
             </div>
           </div>
         </div>
@@ -581,33 +584,35 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
         </div>
       </div>
 
-      {/* Danger zone */}
-      <div className="card" style={{ marginTop: 16, border: '1px solid color-mix(in srgb, var(--accent-red) 30%, transparent)' }}>
-        <div className="card-header" style={{ borderBottom: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
-          <span className="card-title" style={{ color: 'var(--danger-text)' }}>⚠️ Danger Zone</span>
+      {/* Danger zone - Desktop only */}
+      {isDesktopApp() && (
+        <div className="card" style={{ marginTop: 16, border: '1px solid color-mix(in srgb, var(--accent-red) 30%, transparent)' }}>
+          <div className="card-header" style={{ borderBottom: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
+            <span className="card-title" style={{ color: 'var(--danger-text)' }}>⚠️ Danger Zone</span>
+          </div>
+          <div className="card-body" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 220 }}>
+              Permanently purge local screenshot caches and reset the activity database. Settings and API keys are preserved.
+            </p>
+            <button
+              onClick={handleClearData}
+              className="btn"
+              style={{
+                background: 'color-mix(in srgb, var(--accent-red) 15%, transparent)',
+                border: '1px solid var(--accent-red)',
+                color: 'var(--danger-text)',
+                fontWeight: 600,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              🗑️ Clear All Data & Reset
+            </button>
+          </div>
         </div>
-        <div className="card-body" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 220 }}>
-            Permanently purge local screenshot caches and reset the activity database. Settings and API keys are preserved.
-          </p>
-          <button
-            onClick={handleClearData}
-            className="btn"
-            style={{
-              background: 'color-mix(in srgb, var(--accent-red) 15%, transparent)',
-              border: '1px solid var(--accent-red)',
-              color: 'var(--danger-text)',
-              fontWeight: 600,
-              cursor: 'pointer',
-              whiteSpace: 'nowrap'
-            }}
-          >
-            🗑️ Clear All Data & Reset
-          </button>
-        </div>
-      </div>
+      )}
 
-      {appVersion && (
+      {isDesktopApp() && appVersion && (
         <div style={{ marginTop: 14, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
           get-Hike desktop · version {appVersion}
         </div>

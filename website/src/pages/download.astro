@@ -3,7 +3,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 import Button from '../components/Button.astro';
 import CodeBlock from '../components/CodeBlock.astro';
 
-const repoUrl = 'https://github.com/sandeshPatel06/';
+const repoUrl = 'https://github.com/sandeshPatel06/MiniTracker';
 const releasesUrl = `${repoUrl}/releases`;
 const actionsUrl = `${repoUrl}/actions`;
 const latestReleaseUrl = `${releasesUrl}/latest`;
@@ -61,19 +61,40 @@ const downloads = [
 
 const downloadJsonLd = {
   '@context': 'https://schema.org',
-  '@type': 'SoftwareApplication',
-  name: 'get-Hike',
-  description: 'Download official get-Hike desktop binaries for Linux, Windows, and macOS.',
-  operatingSystem: ['Linux', 'Windows', 'macOS'],
-  applicationCategory: 'ProductivityApplication',
-  license: 'https://opensource.org/licenses/MIT',
-  url: 'https://get-hike.reakinfotech.com/download',
-  downloadUrl: 'https://github.com/sandeshPatel06/releases',
-  offers: {
-    '@type': 'Offer',
-    price: '0',
-    priceCurrency: 'USD',
-  },
+  '@graph': [
+    {
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        {
+          '@type': 'ListItem',
+          position: 1,
+          name: 'Home',
+          item: 'https://get-hike.pages.dev/',
+        },
+        {
+          '@type': 'ListItem',
+          position: 2,
+          name: 'Download',
+          item: 'https://get-hike.pages.dev/download',
+        },
+      ],
+    },
+    {
+      '@type': 'SoftwareApplication',
+      name: 'get-Hike',
+      description: 'Download official get-Hike desktop binaries for Linux, Windows, and macOS.',
+      operatingSystem: ['Linux', 'Windows', 'macOS'],
+      applicationCategory: 'ProductivityApplication',
+      license: 'https://opensource.org/licenses/MIT',
+      url: 'https://get-hike.pages.dev/download',
+      downloadUrl: 'https://github.com/sandeshPatel06/MiniTracker/releases',
+      offers: {
+        '@type': 'Offer',
+        price: '0',
+        priceCurrency: 'USD',
+      },
+    },
+  ],
 };
 ---
 

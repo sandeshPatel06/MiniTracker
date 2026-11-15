@@ -15,12 +15,12 @@ const {
   title,
   description,
   image = '/og.png',
-  canonicalURL = new URL(Astro.url.pathname, Astro.site || `https://sandeshpatel06.github.io${base}`),
+  canonicalURL = new URL(Astro.url.pathname, Astro.site || 'https://get-hike.pages.dev'),
   jsonLd,
   keywords = 'productivity tracker, linux time tracker, privacy-first tracker, gemini ai productivity, entropy keystroke tracker, local-first tracker, open source tracker',
 } = Astro.props;
 
-const siteUrl = Astro.site?.toString().replace(/\/$/, '') || 'https://sandeshpatel06.github.io';
+const siteUrl = Astro.site?.toString().replace(/\/$/, '') || 'https://get-hike.pages.dev';
 const resolvedImage = image.startsWith('http') ? image : new URL(`${base}${image.replace(/^\//, '')}`, siteUrl).toString();
 const formattedTitle = title.includes('get-Hike') ? title : `${title} | get-Hike`;
 ---

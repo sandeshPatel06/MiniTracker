@@ -4,7 +4,7 @@ Persistent notes of decisions, state and pitfalls. Read this first when resuming
 
 ## Identity
 - Repo `sandeshPatel06/MiniTracker` (public, SSH remote). Repo root is the whole app; this folder is only the marketing site.
-- Live URL: `https://sandeshpatel06.github.io/MiniTracker/` (7 pages: index, features, download, get-started, privacy, changelog, 404).
+- Live URL: `https://get-hike.pages.dev/` (7 pages: index, features, download, get-started, privacy, changelog, 404).
 - User language: Hinglish. Brand: emerald-on-dark, "Privacy-first productivity for Linux".
 
 ## Locked-in decisions (do not revisit silently)

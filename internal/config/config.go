@@ -24,6 +24,8 @@ type Config struct {
 	AzureClientID      string        `mapstructure:"azure_client_id" json:"azure_client_id"`
 	AzureClientSecret  string        `mapstructure:"azure_client_secret" json:"azure_client_secret"`
 	AzureTenantID      string        `mapstructure:"azure_tenant_id" json:"azure_tenant_id"`
+	TelegramBotToken   string        `mapstructure:"telegram_bot_token" json:"telegram_bot_token"`
+	TelegramChatID     string        `mapstructure:"telegram_chat_id" json:"telegram_chat_id"`
 }
 
 // Load loads configuration using Viper from config.yaml, .env files, and environment variables.
@@ -93,6 +95,8 @@ func Load() (*Config, error) {
 	if cfg.AzureTenantID == "" {
 		cfg.AzureTenantID = "common"
 	}
+	cfg.TelegramBotToken = v.GetString("telegram_bot_token")
+	cfg.TelegramChatID = v.GetString("telegram_chat_id")
 
 	// Helper duration getters with fallback
 	dur := v.GetDuration("screenshot_interval_seconds")

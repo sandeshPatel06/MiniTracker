@@ -29,6 +29,7 @@ import (
 	"github.com/reak/get-hike/internal/config"
 	"github.com/reak/get-hike/internal/db"
 	"github.com/reak/get-hike/internal/email"
+	"github.com/reak/get-hike/internal/storage"
 	"github.com/reak/get-hike/internal/tracker"
 )
 
@@ -71,6 +72,13 @@ func main() {
 	gemini := ai.NewGeminiClient(cfg.GeminiAPIKey, cfg.GeminiModel)
 	if gemini.HasKey() {
 		go processPendingLogs(database, gemini)
+	}
+
+	// Initialize Telegram Storage if configured
+	var tgStorage *storage.TelegramStorage
+	if cfg.TelegramBotToken != "" && cfg.TelegramChatID != "" {
+		tgStorage = storage.NewTelegramStorage(cfg.TelegramBotToken, cfg.TelegramChatID)
+		log.Printf("[server] telegram unlimited storage enabled for chat %s", cfg.TelegramChatID)
 	}
 
 	// Schedule periodic background AI batch analysis (configurable via config / env, defaults to 3 hours)
@@ -707,6 +715,26 @@ func main() {
 			http.Error(w, "unauthorized", 401)
 			return
 		}
+
+		// Support Telegram-stored images (tg://<file_id>)
+		if strings.HasPrefix(imgPath, "tg://") {
+			fileID := strings.TrimPrefix(imgPath, "tg://")
+			if tgStorage == nil {
+				http.Error(w, "telegram storage not configured", 503)
+				return
+			}
+			imgBytes, err := tgStorage.GetPhotoBytes(r.Context(), fileID)
+			if err != nil {
+				log.Printf("[server] telegram image fetch error: %v", err)
+				http.Error(w, "image fetch failed", 502)
+				return
+			}
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.Header().Set("Cache-Control", "public, max-age=604800") // 7 days cache
+			w.Write(imgBytes)
+			return
+		}
+
 		cleanPath := filepath.Clean(imgPath)
 		if !filepath.IsAbs(cleanPath) {
 			http.Error(w, "invalid path", 400)
@@ -882,20 +910,37 @@ func main() {
 			return
 		}
 
-		// Save screenshot image to disk
-		screensDir := filepath.Join(cfg.DataDir, "screenshots")
-		_ = os.MkdirAll(screensDir, 0755)
-		filePath := filepath.Join(screensDir, fmt.Sprintf("ss_%d.jpg", time.Now().UnixNano()))
-
-		rawImg, err := base64.StdEncoding.DecodeString(payload.ImageBase64)
-		if err != nil {
-			jsonError(w, "Invalid base64 encoding", http.StatusBadRequest)
-			return
+		var rawImg []byte
+		if payload.ImageBase64 != "" {
+			var err error
+			rawImg, err = base64.StdEncoding.DecodeString(payload.ImageBase64)
+			if err != nil {
+				jsonError(w, "Invalid base64 encoding", http.StatusBadRequest)
+				return
+			}
 		}
 
-		if err := os.WriteFile(filePath, rawImg, 0644); err != nil {
-			jsonError(w, "Failed to save screenshot file", http.StatusInternalServerError)
-			return
+		filePath := ""
+		if len(rawImg) > 0 {
+			if tgStorage != nil {
+				tgPath, err := tgStorage.UploadPhoto(r.Context(), rawImg, fmt.Sprintf("MiniTracker screenshot %s", time.Now().Format("2006-01-02 15:04:05")))
+				if err != nil {
+					log.Printf("[server] telegram upload failed, falling back to disk: %v", err)
+				} else {
+					filePath = tgPath
+				}
+			}
+
+			// Fallback to disk if telegram storage is not configured or failed
+			if filePath == "" {
+				screensDir := filepath.Join(cfg.DataDir, "screenshots")
+				_ = os.MkdirAll(screensDir, 0755)
+				filePath = filepath.Join(screensDir, fmt.Sprintf("ss_%d.jpg", time.Now().UnixNano()))
+				if err := os.WriteFile(filePath, rawImg, 0644); err != nil {
+					jsonError(w, "Failed to save screenshot file", http.StatusInternalServerError)
+					return
+				}
+			}
 		}
 
 		entropy := payload.EntropyScore
@@ -1004,11 +1049,23 @@ func main() {
 
 		filePath := ""
 		if payload.ImageBase64 != "" {
-			todayDir := filepath.Join(cfg.DataDir, "images", ts.Format("2006-01-02"))
-			_ = os.MkdirAll(todayDir, 0755)
-			filePath = filepath.Join(todayDir, fmt.Sprintf("ss_%d.jpg", time.Now().UnixNano()))
-			if rawImg, err := base64.StdEncoding.DecodeString(payload.ImageBase64); err == nil {
-				_ = os.WriteFile(filePath, rawImg, 0644)
+			if rawImg, err := base64.StdEncoding.DecodeString(payload.ImageBase64); err == nil && len(rawImg) > 0 {
+				if tgStorage != nil {
+					tgPath, err := tgStorage.UploadPhoto(r.Context(), rawImg, fmt.Sprintf("MiniTracker screenshot %s - user %d", ts.Format("2006-01-02 15:04:05"), userID))
+					if err != nil {
+						log.Printf("[server] telegram upload failed, falling back to disk: %v", err)
+					} else {
+						filePath = tgPath
+					}
+				}
+
+				// Fallback to local disk if telegram storage not configured or failed
+				if filePath == "" {
+					todayDir := filepath.Join(cfg.DataDir, "images", ts.Format("2006-01-02"))
+					_ = os.MkdirAll(todayDir, 0755)
+					filePath = filepath.Join(todayDir, fmt.Sprintf("ss_%d.jpg", time.Now().UnixNano()))
+					_ = os.WriteFile(filePath, rawImg, 0644)
+				}
 			}
 		}
 

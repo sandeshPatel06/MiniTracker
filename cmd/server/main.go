@@ -50,9 +50,13 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Printf("[server] config load error: %v", err)
+		dataDir := os.Getenv("DATA_DIR")
+		if dataDir == "" {
+			dataDir = filepath.Join(os.Getenv("HOME"), ".local/share/get-hike")
+		}
 		cfg = &config.Config{
 			ScreenshotInterval: 30 * time.Second,
-			DataDir:            filepath.Join(os.Getenv("HOME"), ".local/share/get-hike"),
+			DataDir:            dataDir,
 			BackendPort:        8080,
 		}
 	}
@@ -2100,6 +2104,9 @@ func main() {
 	}
 
 	port := os.Getenv("PORT")
+	if port == "" {
+		port = os.Getenv("BACKEND_PORT")
+	}
 	if port == "" {
 		port = "8080"
 	}

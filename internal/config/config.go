@@ -65,6 +65,11 @@ func Load() (*Config, error) {
 	_ = v.BindEnv("azure_client_id", "AZURE_CLIENT_ID")
 	_ = v.BindEnv("azure_client_secret", "AZURE_CLIENT_SECRET")
 	_ = v.BindEnv("azure_tenant_id", "AZURE_TENANT_ID")
+	_ = v.BindEnv("data_dir", "DATA_DIR")
+	_ = v.BindEnv("screenshot_interval_seconds", "SCREENSHOT_INTERVAL_SECONDS")
+	_ = v.BindEnv("ai_analysis_interval_seconds", "AI_ANALYSIS_INTERVAL_SECONDS")
+	_ = v.BindEnv("telegram_bot_token", "TELEGRAM_BOT_TOKEN")
+	_ = v.BindEnv("telegram_chat_id", "TELEGRAM_CHAT_ID")
 
 	// 4. Config file locations for config.yaml / config.json
 	v.SetConfigName("config")
@@ -85,7 +90,25 @@ func Load() (*Config, error) {
 	cfg.GeminiModel = v.GetString("gemini_model")
 	cfg.DataDir = v.GetString("data_dir")
 	cfg.BackendPort = v.GetInt("backend_port")
+	if cfg.BackendPort == 0 || cfg.BackendPort == 8080 {
+		if p := os.Getenv("BACKEND_PORT"); p != "" {
+			if portVal := v.GetInt("backend_port"); portVal == 8080 {
+				var parsed int
+				for _, c := range p {
+					if c >= '0' && c <= '9' {
+						parsed = parsed*10 + int(c-'0')
+					}
+				}
+				if parsed > 0 {
+					cfg.BackendPort = parsed
+				}
+			}
+		}
+	}
 	cfg.BackendEndpoint = v.GetString("backend_endpoint")
+	if ep := os.Getenv("BACKEND_ENDPOINT"); ep != "" && os.Getenv("BACKEND_URL") == "" && !v.IsSet("backend_endpoint") {
+		cfg.BackendEndpoint = ep
+	}
 	cfg.DatabaseURL = v.GetString("database_url")
 	cfg.GoogleClientID = v.GetString("google_client_id")
 	cfg.GoogleClientSecret = v.GetString("google_client_secret")
@@ -110,7 +133,13 @@ func Load() (*Config, error) {
 	cfg.ScreenshotInterval = dur
 
 	aiDur := v.GetDuration("ai_analysis_interval_seconds")
-	if aiDur < time.Second {
+	if legacy := os.Getenv("AI_ANALYSIS_INTERVAL"); legacy != "" && os.Getenv("AI_ANALYSIS_INTERVAL_SECONDS") == "" {
+		if parsed, err := time.ParseDuration(legacy); err == nil && parsed >= time.Second {
+			aiDur = parsed
+		} else if sec := v.GetInt("ai_analysis_interval"); sec > 0 {
+			aiDur = time.Duration(sec) * time.Second
+		}
+	} else if aiDur < time.Second {
 		if sec := v.GetInt("ai_analysis_interval_seconds"); sec > 0 {
 			aiDur = time.Duration(sec) * time.Second
 		} else {

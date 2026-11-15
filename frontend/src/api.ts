@@ -27,6 +27,7 @@ export function getApiBaseUrl(): string {
   if (runtimeBackendUrl) {
     return runtimeBackendUrl;
   }
+  // Canonical environment variable is VITE_BACKEND_URL; legacy fallbacks are supported
   const envUrl =
     (import.meta as any).env?.VITE_BACKEND_URL ||
     (import.meta as any).env?.VITE_API_URL ||

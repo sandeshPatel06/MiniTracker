@@ -48,6 +48,16 @@ function safeFormatDate(dateStr?: string | null, formatStr = 'MMMM d, yyyy', fal
   }
 }
 
+function formatDuration(minutes: number): string {
+  if (minutes < 1) return '< 1m';
+  if (minutes >= 60) {
+    const h = Math.floor(minutes / 60);
+    const m = Math.round(minutes % 60);
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  }
+  return `${Math.round(minutes)}m`;
+}
+
 const AXIS_TICK = { fontSize: 11, fill: 'var(--text-muted)' } as const;
 const GRID_STROKE = 'var(--border-subtle)';
 
@@ -69,12 +79,82 @@ function captureScore(log: LogEntry): number {
 const FOCUS_PRIMARY = 'var(--accent-primary)';
 const SERIES_MUTED = 'var(--text-muted)';
 
+// Circular progress ring for productivity score
+function ScoreRing({
+  score,
+  size = 62,
+  strokeWidth = 6,
+}: {
+  score: number;
+  size?: number;
+  strokeWidth?: number;
+}) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const clampedScore = Math.max(0, Math.min(100, score));
+  const offset = circumference - (clampedScore / 100) * circumference;
+
+  const color =
+    clampedScore >= FOCUS_GOOD
+      ? 'var(--accent-green)'
+      : clampedScore >= FOCUS_OK
+      ? 'var(--accent-amber)'
+      : 'var(--accent-red)';
+
+  return (
+    <div
+      className="an-score-ring"
+      style={{ width: size, height: size }}
+      aria-hidden="true"
+    >
+      <svg width={size} height={size}>
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke="var(--bg-elevated)"
+          strokeWidth={strokeWidth}
+          fill="none"
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={color}
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          fill="none"
+          style={{ transition: 'stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1)' }}
+        />
+      </svg>
+      <div className="an-score-ring-label">
+        <span className="an-score-ring-val" style={{ color }}>
+          {clampedScore}%
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // Custom Tooltip Component. Fixed chrome (min-width + tabular-nums) so
 // swapping values never shifts the tooltip frame; null values surface
 // as "Pending analysis" instead of a fake 0%.
-const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: any[]; label?: string }) => {
+const CustomTooltip = ({
+  active,
+  payload,
+  label,
+  isDonut = false,
+}: {
+  active?: boolean;
+  payload?: any[];
+  label?: string;
+  isDonut?: boolean;
+}) => {
   if (!active || !payload?.length) return null;
   const header = label != null && label !== '' ? label : null;
+
   return (
     <div className="an-tooltip">
       {header && <div className="an-tooltip-label">{header}</div>}
@@ -87,15 +167,36 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
               ? '—'
               : `${Number.isInteger(p.value) ? p.value : p.value.toFixed(1)}${p.unit || ''}`
             : String(p.value);
+
         return (
           <div key={i} className="an-tooltip-row">
-            <div className="an-tooltip-dot" style={{ background: p.color || p.fill }} />
-            <span>
-              {p.name}: <strong>{display}</strong>
+            <div className="an-tooltip-key">
+              <div
+                className="an-tooltip-dot"
+                style={{ background: p.color || p.fill }}
+              />
+              <span>{p.name || p.dataKey}</span>
+            </div>
+            <span className="an-tooltip-val">
+              {display}
+              {isDonut && p.payload?.value != null ? ' captures' : ''}
             </span>
           </div>
         );
       })}
+      {payload[0]?.payload?.Captures != null && !isDonut && (
+        <div
+          className="an-tooltip-row"
+          style={{
+            borderTop: '1px solid var(--border-subtle)',
+            paddingTop: 4,
+            marginTop: 4,
+          }}
+        >
+          <span style={{ color: 'var(--text-muted)' }}>Captures in hour:</span>
+          <span className="an-tooltip-val">{payload[0].payload.Captures}</span>
+        </div>
+      )}
     </div>
   );
 };
@@ -205,6 +306,8 @@ export default function Analytics({
     return best;
   }, [hourlyData]);
 
+  const intervalSec = config?.screenshot_interval_seconds ?? 30;
+
   // App usage breakdown: time-share counts span every capture, focus-rating
   // averages only analyzed ones (pending rows serialize with score 0).
   const appData = useMemo(() => {
@@ -228,11 +331,12 @@ export default function Analytics({
         category: d.category,
         count: d.count,
         percent: Math.round((d.count / total) * 100),
+        durationMinutes: (d.count * intervalSec) / 60,
         avgScore: d.scoreCount > 0 ? Math.round(d.scoreTotal / d.scoreCount) : null,
       }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 6);
-  }, [logs]);
+  }, [logs, intervalSec]);
 
   // Entropy & Typing Line Chart Data. Entropy is guarded against non-numeric
   // rows (one bad row would otherwise throw inside render and blank the page):
@@ -301,7 +405,6 @@ export default function Analytics({
     ? 'Today'
     : format(new Date((startDate || today) + 'T00:00:00'), 'MMMM d, yyyy');
 
-  const intervalSec = config?.screenshot_interval_seconds ?? 30;
   const activeMinutes = logs.length > 0 ? (logs.length * intervalSec) / 60 : 0;
 
   // Quick date-range presets. The selected preset is derived from the active
@@ -420,23 +523,53 @@ export default function Analytics({
             />
           )}
 
-          <div className={`an-preset${rangePreset !== 'custom' ? ' an-preset-active' : ''}`}>
-            <CustomSelect
-              ariaLabel="Date range preset"
-              value={rangePreset}
-              onChange={applyRangePreset}
-              options={[
-                { value: 'today', label: 'Today', leading: <Icon name="calendar" size={14} /> },
-                { value: 'yesterday', label: 'Yesterday', leading: <Icon name="calendar" size={14} /> },
-                { value: 'last7', label: 'Last 7 days', leading: <Icon name="calendar" size={14} /> },
-                { value: 'last30', label: 'Last 30 days', leading: <Icon name="calendar" size={14} /> },
-                { value: 'custom', label: 'Custom range', leading: <Icon name="calendar" size={14} /> },
-              ]}
-            />
+          <div className="an-period-group" role="group" aria-label="Time period selector">
+            <button
+              type="button"
+              className={`an-period-btn${rangePreset === 'today' ? ' active' : ''}`}
+              onClick={() => applyRangePreset('today')}
+              aria-pressed={rangePreset === 'today'}
+            >
+              <Icon name="calendar" size={13} />
+              <span>Today</span>
+            </button>
+            <button
+              type="button"
+              className={`an-period-btn${rangePreset === 'last7' ? ' active' : ''}`}
+              onClick={() => applyRangePreset('last7')}
+              aria-pressed={rangePreset === 'last7'}
+            >
+              <span>7 Days</span>
+            </button>
+            <button
+              type="button"
+              className={`an-period-btn${rangePreset === 'last30' ? ' active' : ''}`}
+              onClick={() => applyRangePreset('last30')}
+              aria-pressed={rangePreset === 'last30'}
+            >
+              <span>30 Days</span>
+            </button>
+            <button
+              type="button"
+              className={`an-period-btn${rangePreset === 'custom' ? ' active' : ''}`}
+              onClick={() => {
+                const startEl = document.getElementById('an-start-date');
+                startEl?.focus();
+              }}
+              aria-pressed={rangePreset === 'custom'}
+            >
+              <span>Custom</span>
+            </button>
           </div>
 
-          <div className="an-dates">
+          <div className={`an-dates-wrapper${rangePreset === 'custom' ? ' active' : ''}`}>
+            <Icon
+              name="calendar"
+              size={13}
+              color={rangePreset === 'custom' ? 'var(--accent-primary)' : 'var(--text-muted)'}
+            />
             <input
+              id="an-start-date"
               type="date"
               className="date-input"
               aria-label="Range start date"
@@ -479,11 +612,11 @@ export default function Analytics({
         />
       )}
       {loading && logs.length === 0 ? (
-        /* Skeleton mirrors the real layout geometry (stat row + three chart
+        /* Skeleton mirrors the real layout geometry (4-stat row + chart
            cards at their final heights) so swapping in data causes no CLS. */
         <div className="an-stack" aria-hidden="true">
           <div className="stats-grid">
-            {[0, 1, 2].map((i) => (
+            {[0, 1, 2, 3].map((i) => (
               <div key={i} className="stat-card">
                 <div className="skeleton an-sk-label" />
                 <div className="skeleton an-sk-value" />
@@ -495,7 +628,7 @@ export default function Analytics({
             <div className="card-header"><div className="skeleton an-sk-title" /></div>
             <div className="card-body">
               <div className="skeleton an-sk-note" />
-              <div className="skeleton an-sk-chart" style={{ height: 200 }} />
+              <div className="skeleton an-sk-chart" style={{ height: 220 }} />
             </div>
           </div>
           <div className="an-grid">
@@ -507,7 +640,7 @@ export default function Analytics({
                   {[0, 1, 2, 3, 4, 5].map((i) => (
                     <div key={i} className="an-sk-approw">
                       <div className="an-sk-appsize">
-                        <div className="skeleton" style={{ width: 16, height: 16, borderRadius: 4 }} />
+                        <div className="skeleton" style={{ width: 28, height: 28, borderRadius: 6 }} />
                         <div className="skeleton an-sk-appname" />
                         <div className="skeleton an-sk-appnum" />
                       </div>
@@ -521,7 +654,7 @@ export default function Analytics({
               <div className="card-header"><div className="skeleton an-sk-title" /></div>
               <div className="card-body">
                 <div className="skeleton an-sk-note" />
-                <div className="skeleton an-sk-chart" style={{ height: 220 }} />
+                <div className="skeleton an-sk-chart" style={{ height: 200 }} />
               </div>
             </div>
           </div>
@@ -529,7 +662,7 @@ export default function Analytics({
             <div className="card-header"><div className="skeleton an-sk-title" /></div>
             <div className="card-body">
               <div className="skeleton an-sk-note" />
-              <div className="skeleton an-sk-chart" style={{ height: 180 }} />
+              <div className="skeleton an-sk-chart" style={{ height: 210 }} />
             </div>
           </div>
         </div>
@@ -545,42 +678,127 @@ export default function Analytics({
       ) : logs.length === 0 ? (
         <div className="card">
           <EmptyState
-            icon={<Icon name="activity" size={34} />}
-            title="No analytics data recorded yet"
-            description="Analytics will populate automatically as background captures are analyzed."
+            icon={<Icon name="activity" size={38} color="var(--accent-primary)" />}
+            title={
+              rangePreset !== 'today'
+                ? `No activity recorded for ${dateLabel}`
+                : 'No analytics telemetry for today'
+            }
+            description={
+              rangePreset !== 'today'
+                ? 'No background telemetry points were captured during this timeframe. Try switching back to Today or selecting a wider date range.'
+                : 'MiniTracker tracks your active applications and focus in the background. Once captures begin, your focus score, hourly productivity, and app breakdown will populate automatically.'
+            }
+            action={
+              rangePreset !== 'today' ? (
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => applyRangePreset('today')}
+                  >
+                    <Icon name="calendar" size={14} />
+                    <span>Switch to Today</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => applyRangePreset('last7')}
+                  >
+                    <Icon name="clock" size={14} />
+                    <span>View Last 7 Days</span>
+                  </button>
+                </div>
+              ) : undefined
+            }
           />
         </div>
       ) : (
         <div className="an-stack">
 
-          {/* Top Summary Banner */}
+          {/* Top Summary Banner: Hero Score Ring & Companion Metric Cards */}
           <div className="stats-grid">
-            <StatCard
-              label="AI Focus Rating"
-              value={analyzedLogs.length === 0 ? '—' : `${avgFocusScore}%`}
-              valueColor={focusBandColor}
-              sub={`${analyzedLogs.length} of ${logs.length} captures evaluated`}
-            />
+            <div className="stat-card an-hero-card">
+              <div className="an-hero-body">
+                <div className="an-score-info">
+                  <span className="stat-label">AI Productivity Score</span>
+                  <div className="an-score-row">
+                    <span className="an-score-num" style={{ color: focusBandColor }}>
+                      {analyzedLogs.length === 0 ? '—' : `${avgFocusScore}%`}
+                    </span>
+                    {analyzedLogs.length > 0 ? (
+                      <span
+                        className={`an-score-badge ${
+                          avgFocusScore >= FOCUS_GOOD
+                            ? 'good'
+                            : avgFocusScore >= FOCUS_OK
+                            ? 'ok'
+                            : 'poor'
+                        }`}
+                      >
+                        {avgFocusScore >= FOCUS_GOOD
+                          ? 'Productive'
+                          : avgFocusScore >= FOCUS_OK
+                          ? 'Balanced'
+                          : 'Distracted'}
+                      </span>
+                    ) : (
+                      <span className="an-score-badge neutral">Awaiting AI</span>
+                    )}
+                  </div>
+                  <div className="stat-sub">
+                    {analyzedLogs.length} of {logs.length} captures evaluated
+                  </div>
+                </div>
+                {analyzedLogs.length > 0 ? (
+                  <ScoreRing score={avgFocusScore} size={62} strokeWidth={6} />
+                ) : (
+                  <div className="an-score-ring-placeholder">
+                    <Icon name="target" size={24} color="var(--text-muted)" />
+                  </div>
+                )}
+              </div>
+            </div>
 
             <StatCard
               label="Active Work Duration"
               value={activeMinutes >= 60 ? `${(activeMinutes / 60).toFixed(1)} hrs` : `${Math.round(activeMinutes)} mins`}
-              sub={`Based on ${logs.length} background telemetry points`}
+              leading={<Icon name="clock" size={16} color="var(--accent-teal)" />}
+              sub={`Across ${logs.length.toLocaleString()} telemetry captures`}
             />
 
             <StatCard
-              label="Avg Input Telemetry"
-              value={logs.length > 0 ? `${Math.round(logs.reduce((acc, l) => acc + l.total_keys, 0) / logs.length)} keys / cap` : '0 keys / cap'}
-              sub={`Average keystrokes per ${intervalSec}s capture interval`}
+              label="Avg Keystroke Activity"
+              value={
+                logs.length > 0
+                  ? `${Math.round(
+                      logs.reduce((acc, l) => acc + (l.total_keys || 0), 0) / logs.length
+                    ).toLocaleString()} keys / cap`
+                  : '0 keys / cap'
+              }
+              leading={<Icon name="keyboard" size={16} color="var(--accent-indigo)" />}
+              sub={`Keystrokes per ${intervalSec}s capture interval`}
+            />
+
+            <StatCard
+              label="Peak Focus Window"
+              value={peakHour ? peakHour.hour : '—'}
+              leading={<Icon name="award" size={16} color="var(--accent-amber)" />}
+              sub={
+                peakHour
+                  ? `Peak rating ${peakHour.score}% productivity`
+                  : 'Requires active analyzed captures'
+              }
             />
           </div>
 
           {/* Hourly Focus Score Chart */}
           <div className="card">
             <div className="card-header">
-              <span className="card-title">
-                <span aria-hidden="true">📊</span> Hourly AI Focus Rating
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Icon name="activity" size={16} color="var(--accent-primary)" />
+                <span className="card-title">Hourly AI Focus Rating</span>
+              </div>
               <span style={{ fontSize: 12, fontWeight: 600, color: focusBandColor, fontVariantNumeric: 'tabular-nums' }}>
                 Overall Focus: {analyzedLogs.length === 0 ? '—' : `${avgFocusScore}%`}
               </span>
@@ -593,17 +811,44 @@ export default function Analytics({
                 Average AI productivity percentage score (0–100%) for each active hour
               </div>
 
-              <div className="an-chart" style={{ height: 200 }} role="img" aria-label={hourlyAria}>
+              <div className="an-chart" style={{ height: 220 }} role="img" aria-label={hourlyAria}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={hourlyData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }} accessibilityLayer>
+                  <BarChart
+                    data={hourlyData}
+                    margin={{ top: 12, right: 12, left: -4, bottom: 4 }}
+                    accessibilityLayer
+                  >
+                    <defs>
+                      <linearGradient id="anBarGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--accent-primary)" stopOpacity={1} />
+                        <stop offset="100%" stopColor="var(--accent-primary)" stopOpacity={0.65} />
+                      </linearGradient>
+                    </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
-                    <XAxis dataKey="hour" tick={AXIS_TICK} axisLine={false} tickLine={false} />
-                    <YAxis domain={[0, 100]} tick={AXIS_TICK} axisLine={false} tickLine={false} />
-                    <Tooltip content={<CustomTooltip />} cursor={{ fill: 'color-mix(in srgb, var(--accent-primary) 8%, transparent)' }} />
+                    <XAxis
+                      dataKey="hour"
+                      tick={AXIS_TICK}
+                      axisLine={{ stroke: 'var(--border-subtle)' }}
+                      tickLine={false}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis
+                      domain={[0, 100]}
+                      ticks={[0, 25, 50, 75, 100]}
+                      tickFormatter={(v) => `${v}%`}
+                      tick={AXIS_TICK}
+                      axisLine={false}
+                      tickLine={false}
+                      width={38}
+                    />
+                    <Tooltip
+                      content={<CustomTooltip />}
+                      cursor={{ fill: 'color-mix(in srgb, var(--accent-primary) 8%, transparent)' }}
+                    />
                     <Bar
                       dataKey="Focus Rating"
                       name="Focus Rating"
-                      fill={FOCUS_PRIMARY}
+                      fill="url(#anBarGradient)"
                       radius={[4, 4, 0, 0]}
                       unit="%"
                     />
@@ -613,15 +858,16 @@ export default function Analytics({
             </div>
           </div>
 
-          {/* Grid: App Breakdown & Category Pie */}
+          {/* Grid: App Breakdown & Category Donut Chart */}
           <div className="an-grid">
 
             {/* Top Applications Share */}
             <div className="card">
               <div className="card-header">
-                <span className="card-title">
-                  <span aria-hidden="true">💻</span> Desktop App Time &amp; Focus
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Icon name="desktop" size={16} color="var(--accent-teal)" />
+                  <span className="card-title">Desktop App Time &amp; Focus</span>
+                </div>
               </div>
               <div className="card-body">
                 <div
@@ -631,63 +877,86 @@ export default function Analytics({
                   Time share &amp; AI evaluation per application
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {appData.map((app) => (
-                    <div key={app.name} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-                          <AppIcon name={app.name} size={16} />
-                          <span title={app.name} style={{ fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{app.name}</span>
-                          <span title={app.category} className="an-app-category">({app.category})</span>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
-                          <span style={{
-                            fontSize: 12,
-                            fontWeight: 600,
-                            fontVariantNumeric: 'tabular-nums',
-                            color: app.avgScore == null
-                              ? 'var(--text-muted)'
-                              : app.avgScore >= FOCUS_GOOD
-                              ? 'var(--badge-productive-text)'
-                              : app.avgScore >= FOCUS_OK
-                              ? 'var(--badge-amber-text)'
-                              : 'var(--badge-unproductive-text)',
-                          }}>
-                            {app.avgScore == null ? 'Pending AI' : `${app.avgScore}% Focus`}
-                          </span>
-                          <span style={{ fontSize: 12, color: 'var(--text-muted)', width: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                            {app.percent}%
-                          </span>
-                        </div>
-                      </div>
-                      <div style={{ width: '100%', height: 6, background: 'var(--bg-elevated)', borderRadius: 99, overflow: 'hidden' }}>
-                        <div
-                          style={{
-                            width: `${app.percent}%`,
-                            height: '100%',
-                            backgroundColor: app.avgScore == null
-                              ? 'var(--border-medium)'
-                              : app.avgScore >= FOCUS_GOOD
-                              ? 'var(--accent-green)'
-                              : app.avgScore >= FOCUS_OK
-                              ? 'var(--accent-amber)'
-                              : 'var(--accent-red)',
-                            borderRadius: 99,
-                          }}
-                        />
-                      </div>
+                {appData.length === 0 ? (
+                  <div className="an-panel-empty">
+                    <div className="an-panel-empty-icon">
+                      <Icon name="desktop" size={20} />
                     </div>
-                  ))}
-                </div>
+                    <div className="an-panel-empty-title">No applications logged</div>
+                    <div className="an-panel-empty-desc">
+                      Application usage will appear here once background window activity is tracked.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="an-app-list">
+                    {appData.map((app) => (
+                      <div key={app.name} className="an-app-item">
+                        <div className="an-app-row-top">
+                          <div className="an-app-identity">
+                            <div className="an-app-icon-box">
+                              <AppIcon name={app.name} size={16} />
+                            </div>
+                            <div className="an-app-meta">
+                              <span className="an-app-title" title={app.name}>
+                                {app.name}
+                              </span>
+                              <span className="an-app-pill" title={app.category}>
+                                {app.category}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="an-app-metrics">
+                            <span className="an-app-duration" title="Estimated active duration">
+                              {formatDuration(app.durationMinutes)}
+                            </span>
+                            <span
+                              className={`an-app-score-tag ${
+                                app.avgScore == null
+                                  ? 'pending'
+                                  : app.avgScore >= FOCUS_GOOD
+                                  ? 'good'
+                                  : app.avgScore >= FOCUS_OK
+                                  ? 'ok'
+                                  : 'poor'
+                              }`}
+                            >
+                              {app.avgScore == null ? 'Pending AI' : `${app.avgScore}% Focus`}
+                            </span>
+                            <span className="an-app-pct">{app.percent}%</span>
+                          </div>
+                        </div>
+
+                        <div className="an-progress-track">
+                          <div
+                            className="an-progress-fill"
+                            style={{
+                              width: `${Math.max(app.percent, 3)}%`,
+                              backgroundColor:
+                                app.avgScore == null
+                                  ? 'var(--border-medium)'
+                                  : app.avgScore >= FOCUS_GOOD
+                                  ? 'var(--accent-green)'
+                                  : app.avgScore >= FOCUS_OK
+                                  ? 'var(--accent-amber)'
+                                  : 'var(--accent-red)',
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Category Pie Chart */}
+            {/* Category Donut Chart */}
             <div className="card">
               <div className="card-header">
-                <span className="card-title">
-                  <span aria-hidden="true">🧩</span> Work Categories Breakdown
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Icon name="sparkles" size={16} color="var(--accent-purple)" />
+                  <span className="card-title">Work Categories Breakdown</span>
+                </div>
               </div>
               <div className="card-body">
                 <div
@@ -697,108 +966,154 @@ export default function Analytics({
                   Distribution across AI categories
                 </div>
 
-                <div className="an-chart" style={{ height: 220 }}>
-                  {categoryData.length > 0 ? (
-                    <div className="an-chart" style={{ height: '100%' }} role="img" aria-label={pieAria}>
-                      <ResponsiveContainer width="100%" height="100%">
+                {categoryData.length > 0 ? (
+                  <>
+                    <div className="an-donut-wrap" role="img" aria-label={pieAria}>
+                      <ResponsiveContainer width="100%" height={200}>
                         <PieChart accessibilityLayer>
                           <Pie
                             data={categoryData}
                             cx="50%"
                             cy="50%"
-                            outerRadius={70}
+                            innerRadius={54}
+                            outerRadius={76}
                             paddingAngle={3}
                             dataKey="value"
-                            label={false}
-                            labelLine={false}
+                            cornerRadius={3}
+                            stroke="var(--bg-card)"
+                            strokeWidth={2}
                           >
                             {categoryData.map((_, i) => (
-                              <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} stroke="var(--bg-card)" strokeWidth={2} />
+                              <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
                             ))}
                           </Pie>
-                          <Tooltip content={<CustomTooltip />} />
-                          <Legend
-                            verticalAlign="bottom"
-                            iconType="circle"
-                            iconSize={9}
-                            wrapperStyle={{ fontSize: 12, paddingTop: 6 }}
-                          />
+                          <Tooltip content={<CustomTooltip isDonut />} />
                         </PieChart>
                       </ResponsiveContainer>
+                      <div className="an-donut-center" aria-hidden="true">
+                        <span className="an-donut-total">{categoryTotal}</span>
+                        <span className="an-donut-sub">Captures</span>
+                      </div>
                     </div>
-                  ) : (
-                    <div style={{ fontSize: 13, color: 'var(--text-muted)', textAlign: 'center', padding: '40px 0' }}>
-                      No categories logged yet
+
+                    <div className="an-category-legend">
+                      {categoryData.map((c, i) => (
+                        <div key={c.name} className="an-category-legend-item">
+                          <span
+                            className="an-category-dot"
+                            style={{ background: PIE_COLORS[i % PIE_COLORS.length] }}
+                          />
+                          <span className="an-category-name">{c.name}</span>
+                          <span className="an-category-val">
+                            {Math.round((c.value / (categoryTotal || 1)) * 100)}%
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                  )}
-                </div>
+                  </>
+                ) : (
+                  <div className="an-panel-empty">
+                    <div className="an-panel-empty-icon">
+                      <Icon name="sparkles" size={20} />
+                    </div>
+                    <div className="an-panel-empty-title">No categories classified yet</div>
+                    <div className="an-panel-empty-desc">
+                      AI classification will populate as background captures are analyzed.
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
           </div>
 
-          {/* Keystroke Entropy & Focus Trend Line Chart */}
-          {(
-            <div className="card">
-              <div className="card-header">
-                <span className="card-title">
-                  <span aria-hidden="true">📈</span> Keystroke Variety &amp; Focus Timeline
-                </span>
-              </div>
-              <div className="card-body">
-                <div
-                  title="Keystroke entropy vs AI-evaluated focus percentage over time"
-                  className="an-card-note"
-                >
-                  Keystroke entropy vs AI-evaluated focus percentage over time
-                </div>
-
-                <div className="an-chart" style={{ height: 180 }}>
-                  {entropyData.length < 2 ? (
-                    <div style={{ fontSize: 13, color: 'var(--text-muted)', textAlign: 'center', padding: '60px 0' }}>
-                      Need at least 2 captures to show a trend
-                    </div>
-                  ) : (
-                    <div className="an-chart" style={{ height: '100%' }} role="img" aria-label={lineAria}>
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={entropyData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }} accessibilityLayer>
-                          <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
-                          <XAxis dataKey="time" tick={AXIS_TICK} axisLine={false} tickLine={false} />
-                          <YAxis domain={[0, 100]} tick={AXIS_TICK} axisLine={false} tickLine={false} />
-                          <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'var(--border-medium)', strokeDasharray: '3 3' }} />
-                          <Line
-                            type="monotone"
-                            dataKey="FocusScore"
-                            name="Focus Rating (%)"
-                            stroke={FOCUS_PRIMARY}
-                            strokeWidth={2}
-                            dot={false}
-                            activeDot={{ r: 4, fill: FOCUS_PRIMARY }}
-                            connectNulls={false}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="Entropy"
-                            name="Keystroke Entropy"
-                            stroke={SERIES_MUTED}
-                            strokeWidth={1.5}
-                            strokeDasharray="4 4"
-                            dot={false}
-                            connectNulls={false}
-                          />
-                          <Legend
-                            iconType="circle"
-                            iconSize={9}
-                            wrapperStyle={{ fontSize: 12, paddingTop: 6 }}
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
-                </div>
+          {/* Keystroke Variety & Focus Trend Line Chart */}
+          <div className="card">
+            <div className="card-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Icon name="keyboard" size={16} color="var(--accent-indigo)" />
+                <span className="card-title">Keystroke Variety &amp; Focus Timeline</span>
               </div>
             </div>
-          )}
+            <div className="card-body">
+              <div
+                title="Keystroke entropy vs AI-evaluated focus percentage over time"
+                className="an-card-note"
+              >
+                Keystroke entropy vs AI-evaluated focus percentage over time
+              </div>
+
+              {entropyData.length < 2 ? (
+                <div className="an-panel-empty">
+                  <div className="an-panel-empty-icon">
+                    <Icon name="activity" size={20} />
+                  </div>
+                  <div className="an-panel-empty-title">Insufficient trend data</div>
+                  <div className="an-panel-empty-desc">
+                    Need at least 2 capture points in the selected range to display a timeline trend.
+                  </div>
+                </div>
+              ) : (
+                <div className="an-chart" style={{ height: 210 }} role="img" aria-label={lineAria}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={entropyData}
+                      margin={{ top: 12, right: 12, left: -4, bottom: 4 }}
+                      accessibilityLayer
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
+                      <XAxis
+                        dataKey="time"
+                        tick={AXIS_TICK}
+                        axisLine={{ stroke: 'var(--border-subtle)' }}
+                        tickLine={false}
+                        minTickGap={30}
+                      />
+                      <YAxis
+                        domain={[0, 100]}
+                        ticks={[0, 25, 50, 75, 100]}
+                        tickFormatter={(v) => `${v}%`}
+                        tick={AXIS_TICK}
+                        axisLine={false}
+                        tickLine={false}
+                        width={38}
+                      />
+                      <Tooltip
+                        content={<CustomTooltip />}
+                        cursor={{ stroke: 'var(--border-medium)', strokeDasharray: '3 3' }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="FocusScore"
+                        name="Focus Rating (%)"
+                        stroke={FOCUS_PRIMARY}
+                        strokeWidth={2.5}
+                        dot={false}
+                        activeDot={{ r: 5, fill: FOCUS_PRIMARY, stroke: 'var(--bg-card)', strokeWidth: 2 }}
+                        connectNulls={false}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="Entropy"
+                        name="Keystroke Entropy"
+                        stroke={SERIES_MUTED}
+                        strokeWidth={1.5}
+                        strokeDasharray="4 4"
+                        dot={false}
+                        activeDot={{ r: 4, fill: SERIES_MUTED }}
+                        connectNulls={false}
+                      />
+                      <Legend
+                        iconType="circle"
+                        iconSize={8}
+                        wrapperStyle={{ fontSize: 12, paddingTop: 10 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+          </div>
 
         </div>
       )}

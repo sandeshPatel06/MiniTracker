@@ -107,6 +107,24 @@ const friendlyError = (msg: string): string => {
   return msg;
 };
 
+const getPasswordStrength = (pwd: string) => {
+  if (!pwd) return { score: 0, text: '', color: 'transparent', width: '0%' };
+  let score = 0;
+  if (pwd.length >= 8) score++;
+  if (pwd.length >= 12) score++;
+  if (/[A-Z]/.test(pwd) && /[a-z]/.test(pwd)) score++;
+  if (/[0-9]/.test(pwd)) score++;
+  if (/[^A-Za-z0-9]/.test(pwd)) score++;
+
+  if (score <= 2) {
+    return { score: 1, text: 'Weak (min 8 chars, mix letters & numbers)', color: 'var(--accent-red)', width: '33%' };
+  }
+  if (score <= 3) {
+    return { score: 2, text: 'Medium strength', color: 'var(--accent-amber)', width: '66%' };
+  }
+  return { score: 3, text: 'Strong password', color: 'var(--accent-green)', width: '100%' };
+};
+
 export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token: propToken, onSuccess, onNavigateSignIn }) => {
   const effectiveToken = useMemo(() => resolveInvitationToken(propToken), [propToken]);
 
@@ -248,20 +266,24 @@ export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token: propToken
     }
   };
 
+  const passwordStrength = useMemo(() => getPasswordStrength(password), [password]);
+  const passwordsMatch = !confirmPassword || password === confirmPassword;
+
   // 1. Loading Skeleton Screen (mirrors actual card geometry to prevent CLS)
   if (loading) {
     return (
-      <div className="fade-in-up" style={{ width: '100%', maxWidth: 420, margin: '40px auto', padding: '0 16px' }}>
-        <div className="card" style={{ padding: '24px' }}>
-          <div style={{ textAlign: 'center', marginBottom: 20 }}>
-            <div className="skeleton" style={{ width: 44, height: 44, borderRadius: '50%', margin: '0 auto 12px' }} />
-            <div className="skeleton" style={{ width: 180, height: 18, margin: '0 auto 8px' }} />
-            <div className="skeleton" style={{ width: 140, height: 12, margin: '0 auto' }} />
+      <div className="accept-invite-page">
+        <div className="accept-invite-card">
+          <div style={{ textAlign: 'center', marginBottom: 24 }}>
+            <div className="skeleton" style={{ width: 52, height: 52, borderRadius: 14, margin: '0 auto 14px' }} />
+            <div className="skeleton" style={{ width: 200, height: 22, margin: '0 auto 8px', borderRadius: 4 }} />
+            <div className="skeleton" style={{ width: 160, height: 14, margin: '0 auto', borderRadius: 4 }} />
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div className="skeleton" style={{ width: '100%', height: 38, borderRadius: 6 }} />
-            <div className="skeleton" style={{ width: '100%', height: 38, borderRadius: 6 }} />
-            <div className="skeleton" style={{ width: '100%', height: 38, borderRadius: 6 }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div className="skeleton" style={{ width: '100%', height: 42, borderRadius: 6 }} />
+            <div className="skeleton" style={{ width: '100%', height: 42, borderRadius: 6 }} />
+            <div className="skeleton" style={{ width: '100%', height: 42, borderRadius: 6 }} />
+            <div className="skeleton" style={{ width: '100%', height: 44, borderRadius: 8, marginTop: 6 }} />
           </div>
         </div>
       </div>
@@ -271,201 +293,248 @@ export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token: propToken
   // 2. Error Screen (Token Invalid, Expired or Missing)
   if (error && !invitation) {
     return (
-      <div className="fade-in-up" style={{ width: '100%', maxWidth: 420, margin: '40px auto', padding: '0 16px' }}>
-        <div className="card">
-          <div className="card-header" style={{ justifyContent: 'center' }}>
-            <span className="card-title">⚠️ Invalid Invitation</span>
+      <div className="accept-invite-page">
+        <div className="accept-invite-card" style={{ textAlign: 'center' }}>
+          <div className="accept-invite-badge-icon error" aria-hidden="true">
+            ⚠️
           </div>
-          <div className="card-body">
-            <Alert type="error" message={error} style={{ marginBottom: 16 }} />
-            <p style={{ fontSize: 13, color: 'var(--text-secondary)', textAlign: 'center', marginBottom: 16, lineHeight: 1.5 }}>
-              If you believe this is an error, please ask your organization administrator to resend the invite.
-            </p>
-            <button
-              type="button"
-              onClick={navigateToAuth}
-              className="btn btn-primary w-full"
-            >
-              Return to Sign In
-            </button>
-          </div>
+          <h2 style={{ fontSize: 19, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>
+            Invalid or Expired Invitation
+          </h2>
+          <Alert type="error" message={error} style={{ marginBottom: 16, textAlign: 'left' }} />
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 22, lineHeight: 1.55 }}>
+            This invitation link may have expired, been revoked, or already accepted. Please request a new invitation link from your workspace administrator.
+          </p>
+          <button
+            type="button"
+            onClick={navigateToAuth}
+            className="btn btn-primary w-full"
+            style={{ padding: '11px 16px', fontWeight: 600, minHeight: 44 }}
+          >
+            Return to Sign In
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="fade-in-up" style={{ width: '100%', maxWidth: 420, margin: '40px auto', padding: '0 16px' }}>
-      <div className="card">
-        <div className="card-header" style={{ justifyContent: 'center', gap: 8 }}>
-          <span style={{ fontSize: 18 }} role="img" aria-label="Mail icon">✉️</span>
-          <span className="card-title">Team Invitation</span>
-        </div>
-        <div className="card-body">
-          {/* Header & Org Detail */}
-          <div style={{ textAlign: 'center', marginBottom: 18 }}>
-            <div
-              style={{
-                fontSize: 18,
-                fontWeight: 700,
-                color: 'var(--text-primary)',
-                wordBreak: 'break-word',
-                lineHeight: 1.3,
-              }}
-              title={invitation?.org_name}
-            >
-              Join {invitation?.org_name}
-            </div>
-            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
-              You've been invited to collaborate as{' '}
-              <span style={{ fontWeight: 600, color: 'var(--accent-purple)' }}>{invitation?.role}</span>.
-            </div>
+    <div className="accept-invite-page">
+      <div className="accept-invite-card">
+        {/* Header & Org Detail */}
+        <div style={{ textAlign: 'center', marginBottom: 22 }}>
+          <div className="accept-invite-badge-icon" aria-hidden="true">
+            ✉️
           </div>
+          <h1
+            style={{
+              fontSize: 20,
+              fontWeight: 700,
+              color: 'var(--text-primary)',
+              wordBreak: 'break-word',
+              lineHeight: 1.3,
+              letterSpacing: '-0.3px',
+              margin: '0 0 6px 0',
+            }}
+            title={invitation?.org_name}
+          >
+            Join {invitation?.org_name || 'Organization'}
+          </h1>
+          <div
+            style={{
+              fontSize: 13,
+              color: 'var(--text-muted)',
+              lineHeight: 1.45,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              flexWrap: 'wrap',
+            }}
+          >
+            <span>You've been invited to collaborate as</span>
+            {invitation?.role === 'admin' ? (
+              <span className="badge badge-role-admin">🛡️ ADMIN</span>
+            ) : (
+              <span className="badge badge-role-member">MEMBER</span>
+            )}
+          </div>
+        </div>
 
-          {/* Active session mismatch notice */}
-          {loggedInUserEmail && loggedInUserEmail.toLowerCase() !== invitation?.email.toLowerCase() && (
-            <div
-              className="alert alert-warning"
-              style={{ fontSize: 12, marginBottom: 14, lineHeight: 1.45 }}
-              role="status"
+        {/* Active session mismatch notice */}
+        {loggedInUserEmail && loggedInUserEmail.toLowerCase() !== invitation?.email.toLowerCase() && (
+          <Alert
+            type="warning"
+            message={
+              <span>
+                You are currently signed in as <strong>{loggedInUserEmail}</strong>. Completing this registration will switch your active session to <strong>{invitation?.email}</strong>.
+              </span>
+            }
+            style={{ marginBottom: 16 }}
+          />
+        )}
+
+        {error && (
+          <Alert type="error" message={error} style={{ marginBottom: 16 }} />
+        )}
+
+        {/* Existing User Notification Branch */}
+        {isAccountExisting ? (
+          <div style={{ textAlign: 'center', padding: '12px 0' }}>
+            <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.55 }}>
+              An account already exists for <strong>{invitation?.email}</strong>. Please sign in to link your account to this workspace.
+            </p>
+            <button
+              type="button"
+              onClick={navigateToAuth}
+              className="btn btn-primary w-full"
+              style={{ padding: '11px 16px', fontWeight: 600, minHeight: 44 }}
             >
-              You are currently signed in as <strong>{loggedInUserEmail}</strong>. Completing this registration will sign you into <strong>{invitation?.email}</strong>.
+              Sign In to Existing Account
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} noValidate>
+            <div className="form-group" style={{ marginBottom: 16 }}>
+              <label className="form-label" htmlFor="invite-email">Work Email</label>
+              <input
+                id="invite-email"
+                type="email"
+                disabled
+                value={invitation?.email || ''}
+                className="form-input"
+                title={invitation?.email || ''}
+                style={{ opacity: 0.8, cursor: 'not-allowed', backgroundColor: 'var(--bg-elevated)' }}
+              />
             </div>
-          )}
 
-          {error && (
-            <Alert type="error" message={error} style={{ marginBottom: 14 }} />
-          )}
-
-          {/* Existing User Notification Branch */}
-          {isAccountExisting ? (
-            <div style={{ textAlign: 'center', padding: '12px 0' }}>
-              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.5 }}>
-                An account already exists for <strong>{invitation?.email}</strong>. Please sign in to accept and link your organization membership.
-              </p>
-              <button
-                type="button"
-                onClick={navigateToAuth}
-                className="btn btn-primary w-full"
-              >
-                Sign In to Existing Account
-              </button>
+            <div className="form-group" style={{ marginBottom: 16 }}>
+              <label className="form-label" htmlFor="invite-fullname">Full Name</label>
+              <input
+                id="invite-fullname"
+                type="text"
+                required
+                autoFocus
+                disabled={submitting}
+                autoComplete="name"
+                placeholder="Jane Doe"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                className="form-input"
+              />
             </div>
-          ) : (
-            <form onSubmit={handleSubmit} noValidate>
-              <div className="form-group">
-                <label className="form-label" htmlFor="invite-email">Email Address</label>
-                <input
-                  id="invite-email"
-                  type="email"
-                  disabled
-                  value={invitation?.email || ''}
-                  className="form-input"
-                  title={invitation?.email || ''}
-                  style={{ opacity: 0.75, cursor: 'not-allowed' }}
-                />
-              </div>
 
-              <div className="form-group">
-                <label className="form-label" htmlFor="invite-fullname">Full Name</label>
+            <div className="form-group" style={{ marginBottom: 16 }}>
+              <label className="form-label" htmlFor="invite-password">Create Password</label>
+              <div style={{ position: 'relative' }}>
                 <input
-                  id="invite-fullname"
-                  type="text"
-                  required
-                  disabled={submitting}
-                  autoComplete="name"
-                  placeholder="Jane Doe"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  className="form-input"
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label" htmlFor="invite-password">Create Password</label>
-                <div style={{ position: 'relative' }}>
-                  <input
-                    id="invite-password"
-                    type={showPassword ? 'text' : 'password'}
-                    required
-                    disabled={submitting}
-                    autoComplete="new-password"
-                    placeholder="At least 8 characters"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="form-input"
-                    style={{ paddingRight: 40 }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    tabIndex={-1}
-                    style={{
-                      position: 'absolute',
-                      right: 10,
-                      top: '50%',
-                      transform: 'translateY(-50%)',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontSize: 14,
-                      opacity: 0.7,
-                    }}
-                    title={showPassword ? 'Hide password' : 'Show password'}
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    {showPassword ? '🙈' : '👁️'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label" htmlFor="invite-confirm-password">Confirm Password</label>
-                <input
-                  id="invite-confirm-password"
+                  id="invite-password"
                   type={showPassword ? 'text' : 'password'}
                   required
                   disabled={submitting}
                   autoComplete="new-password"
-                  placeholder="Repeat your password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="At least 8 characters"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
                   className="form-input"
+                  style={{ paddingRight: 44 }}
                 />
-              </div>
-
-              <button
-                type="submit"
-                disabled={submitting}
-                className="btn btn-primary w-full"
-                style={{
-                  padding: '11px 16px',
-                  fontWeight: 700,
-                  opacity: submitting ? 0.7 : undefined,
-                  cursor: submitting ? 'not-allowed' : 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                }}
-              >
-                {submitting && <span className="spinner-sm" aria-hidden="true" />}
-                {submitting ? 'Creating Account…' : 'Create Account & Join Team'}
-              </button>
-
-              <div style={{ textAlign: 'center', marginTop: 14 }}>
                 <button
                   type="button"
-                  onClick={navigateToAuth}
-                  className="btn-link-guest"
-                  style={{ fontSize: 12 }}
+                  onClick={() => setShowPassword(!showPassword)}
+                  style={{
+                    position: 'absolute',
+                    right: 4,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    width: 38,
+                    height: 38,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 16,
+                    color: 'var(--text-muted)',
+                    borderRadius: 'var(--radius-sm)',
+                  }}
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
-                  Already have an account? Sign In
+                  {showPassword ? '🙈' : '👁️'}
                 </button>
               </div>
-            </form>
-          )}
-        </div>
+
+              {password && (
+                <div className="password-strength-container">
+                  <div className="password-strength-meter">
+                    <div
+                      className="password-strength-fill"
+                      style={{
+                        width: passwordStrength.width,
+                        backgroundColor: passwordStrength.color,
+                      }}
+                    />
+                  </div>
+                  <div className="password-strength-caption" style={{ color: passwordStrength.color }}>
+                    {passwordStrength.text}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="form-group" style={{ marginBottom: 22 }}>
+              <label className="form-label" htmlFor="invite-confirm-password">Confirm Password</label>
+              <input
+                id="invite-confirm-password"
+                type={showPassword ? 'text' : 'password'}
+                required
+                disabled={submitting}
+                autoComplete="new-password"
+                placeholder="Repeat your password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="form-input"
+              />
+              {confirmPassword && !passwordsMatch && (
+                <span style={{ fontSize: 11.5, color: 'var(--accent-red)', marginTop: 4, display: 'block' }}>
+                  Passwords do not match
+                </span>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              disabled={submitting || (!passwordsMatch && Boolean(confirmPassword))}
+              className="btn btn-primary w-full"
+              style={{
+                padding: '12px 18px',
+                fontWeight: 700,
+                minHeight: 44,
+                opacity: submitting ? 0.7 : undefined,
+                cursor: submitting ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+              }}
+            >
+              {submitting ? 'Setting Up Account…' : 'Create Account & Join Team'}
+            </button>
+
+            <div style={{ textAlign: 'center', marginTop: 16 }}>
+              <button
+                type="button"
+                onClick={navigateToAuth}
+                className="btn-link-guest"
+                style={{ fontSize: 13, textDecoration: 'none' }}
+              >
+                Already have an account? <span style={{ textDecoration: 'underline' }}>Sign In</span>
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );

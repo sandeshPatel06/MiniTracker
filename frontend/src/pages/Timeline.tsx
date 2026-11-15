@@ -11,7 +11,7 @@ import { DateNavigator } from '../components/DateNavigator';
 import { EmptyState } from '../components/EmptyState';
 import { Alert } from '../components/Alert';
 import { canonicalAppName } from '../lib/appNames';
-import { localISODate, isPendingLog, FOCUS_OK } from '../utils';
+import { localISODate, isPendingLog, FOCUS_GOOD, FOCUS_OK } from '../utils';
 
 interface Props {
   logs: LogEntry[];
@@ -22,7 +22,8 @@ interface Props {
   onRetry?: () => void;
 }
 
-const SKELETON_ROWS = [1, 2, 3, 4, 5];
+const SKELETON_ROWS = [1, 2, 3, 4, 5, 6];
+const SKELETON_GRID_CARDS = [1, 2, 3, 4, 5, 6, 7, 8];
 
 const SENSITIVE_PATTERNS = [
   /\b(password|vault|bitwarden|1password|keepass|lastpass)\b/i,
@@ -66,9 +67,10 @@ function safeFormatDateHeader(dateStr: string): string {
   return !Number.isNaN(d.getTime()) ? format(d, 'MMMM d, yyyy') : dateStr;
 }
 
-// Interval filter definitions
+// Filter definitions
 type TimeInterval = 'ALL' | 'morning' | 'afternoon' | 'evening' | 'night';
-type FocusFilter = 'ALL' | 'productive' | 'unproductive' | 'pending';
+type FocusFilter = 'ALL' | 'productive' | 'neutral' | 'unproductive' | 'pending';
+type ZoomPreset = '24h' | 'active' | 'morning' | 'afternoon' | 'evening' | 'night';
 
 const TIME_INTERVAL_OPTIONS = [
   { value: 'ALL', label: 'All Day (24 hrs)', leading: <Icon name="clock" size={14} /> },
@@ -78,12 +80,26 @@ const TIME_INTERVAL_OPTIONS = [
   { value: 'night', label: 'Night (00:00–06:00)' },
 ];
 
-const FOCUS_FILTER_OPTIONS = [
-  { value: 'ALL', label: 'All Focus Ratings', leading: <Icon name="filter" size={14} /> },
-  { value: 'productive', label: 'Productive (≥50%)' },
-  { value: 'unproductive', label: 'Unproductive (<50%)' },
-  { value: 'pending', label: 'Pending AI Analysis' },
-];
+export function getLogFocusTier(log: LogEntry): 'productive' | 'neutral' | 'unproductive' | 'pending' {
+  if (isPendingLog(log)) return 'pending';
+  const isNum = typeof log.productive_score === 'number' && Number.isFinite(log.productive_score);
+  const rawScore = isNum ? log.productive_score! : log.is_productive ? 100 : 0;
+  const score = Math.min(100, Math.max(0, Math.round(rawScore)));
+  if (score >= FOCUS_GOOD) return 'productive'; // >= 70
+  if (score >= 40) return 'neutral';           // 40 - 69
+  return 'unproductive';                       // < 40
+}
+
+interface HourlyBucket {
+  hour: number;
+  label: string;
+  count: number;
+  avgScore: number;
+  productive: number;
+  neutral: number;
+  unproductive: number;
+  pending: number;
+}
 
 export default function Timeline({ logs = [], loading, today, onDateChange, loadError, onRetry }: Props) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -92,12 +108,32 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
   const [selectedCategory, setSelectedCategory] = useState('ALL');
   const [selectedInterval, setSelectedInterval] = useState<TimeInterval>('ALL');
   const [selectedFocus, setSelectedFocus] = useState<FocusFilter>('ALL');
+  const [selectedHour, setSelectedHour] = useState<number | null>(null);
   const [maskSensitive, setMaskSensitive] = useState(true);
 
+  // View mode switcher: 'list' (default) or 'grid'
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
+    try {
+      const saved = localStorage.getItem('mini_timeline_view');
+      return saved === 'grid' || saved === 'list' ? saved : 'list';
+    } catch {
+      return 'list';
+    }
+  });
+
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  const [pageSize, setPageSize] = useState(24);
 
   const deferredSearchQuery = useDeferredValue(searchQuery);
+
+  const handleViewModeChange = (mode: 'list' | 'grid') => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem('mini_timeline_view', mode);
+    } catch {
+      // Ignore storage errors
+    }
+  };
 
   // Scope logs strictly to the selected day (prevents bleed from Analytics multi-day fetches)
   const dayLogs = useMemo(() => {
@@ -108,6 +144,12 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
       return d ? localISODate(d) === today : log.timestamp.startsWith(today);
     });
   }, [logs, today]);
+
+  // Reset to page 1 and clear hour scrub when the selected day changes
+  useEffect(() => {
+    setCurrentPage(1);
+    setSelectedHour(null);
+  }, [today]);
 
   // Unique apps scoped to the active day
   const uniqueApps = useMemo(() => {
@@ -128,6 +170,82 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
     return Array.from(cats).sort();
   }, [dayLogs]);
 
+  // Focus counts for filter pills
+  const focusCounts = useMemo(() => {
+    let productive = 0;
+    let neutral = 0;
+    let unproductive = 0;
+    let pending = 0;
+
+    for (let i = 0; i < dayLogs.length; i++) {
+      const tier = getLogFocusTier(dayLogs[i]);
+      if (tier === 'productive') productive += 1;
+      else if (tier === 'neutral') neutral += 1;
+      else if (tier === 'unproductive') unproductive += 1;
+      else if (tier === 'pending') pending += 1;
+    }
+
+    return {
+      ALL: dayLogs.length,
+      productive,
+      neutral,
+      unproductive,
+      pending,
+    };
+  }, [dayLogs]);
+
+  // 24-hour buckets for time-block scrubbing
+  const hourlyBuckets = useMemo<HourlyBucket[]>(() => {
+    const buckets: HourlyBucket[] = Array.from({ length: 24 }, (_, h) => ({
+      hour: h,
+      label: `${String(h).padStart(2, '0')}:00`,
+      count: 0,
+      avgScore: 0,
+      productive: 0,
+      neutral: 0,
+      unproductive: 0,
+      pending: 0,
+    }));
+
+    const scoreSums = new Array(24).fill(0);
+    const scoreCounts = new Array(24).fill(0);
+
+    for (let i = 0; i < dayLogs.length; i++) {
+      const log = dayLogs[i];
+      const d = parseTimestampSafe(log.timestamp);
+      if (!d) continue;
+      const h = d.getHours();
+      if (h >= 0 && h < 24) {
+        const b = buckets[h];
+        b.count += 1;
+        const tier = getLogFocusTier(log);
+        if (tier === 'productive') b.productive += 1;
+        else if (tier === 'neutral') b.neutral += 1;
+        else if (tier === 'unproductive') b.unproductive += 1;
+        else if (tier === 'pending') b.pending += 1;
+
+        if (tier !== 'pending') {
+          const isNum = typeof log.productive_score === 'number' && Number.isFinite(log.productive_score);
+          const score = isNum ? log.productive_score! : log.is_productive ? 100 : 0;
+          scoreSums[h] += Math.min(100, Math.max(0, Math.round(score)));
+          scoreCounts[h] += 1;
+        }
+      }
+    }
+
+    for (let h = 0; h < 24; h++) {
+      if (scoreCounts[h] > 0) {
+        buckets[h].avgScore = Math.round(scoreSums[h] / scoreCounts[h]);
+      }
+    }
+
+    return buckets;
+  }, [dayLogs]);
+
+  const maxHourlyCaptures = useMemo(() => {
+    return Math.max(1, ...hourlyBuckets.map((b) => b.count));
+  }, [hourlyBuckets]);
+
   // Filter & sort logs with single-pass timestamp caching and privacy-aware window search
   const filteredLogs = useMemo(() => {
     const q = deferredSearchQuery.trim().toLowerCase();
@@ -139,7 +257,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
       hour: number;
       canonicalApp: string;
       score: number;
-      isPending: boolean;
+      tier: 'productive' | 'neutral' | 'unproductive' | 'pending';
       windowTitle: string;
     };
 
@@ -154,7 +272,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
       const isNum = typeof log.productive_score === 'number' && Number.isFinite(log.productive_score);
       const rawScore = isNum ? log.productive_score! : log.is_productive ? 100 : 0;
       const score = Math.min(100, Math.max(0, Math.round(rawScore)));
-      const isPending = isPendingLog(log);
+      const tier = getLogFocusTier(log);
       const windowTitle = maskSensitive ? redactSensitiveTitle(log.window_title) : (log.window_title || '');
 
       prepared.push({
@@ -163,7 +281,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
         hour,
         canonicalApp,
         score,
-        isPending,
+        tier,
         windowTitle,
       });
     }
@@ -173,10 +291,11 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
         if (selectedApp !== 'ALL' && item.canonicalApp !== selectedApp) return false;
         if (selectedCategory !== 'ALL' && item.raw.ai_category !== selectedCategory) return false;
 
-        // Focus status filter
-        if (selectedFocus === 'pending' && !item.isPending) return false;
-        if (selectedFocus === 'productive' && (item.isPending || item.score < 50)) return false;
-        if (selectedFocus === 'unproductive' && (item.isPending || item.score >= 50)) return false;
+        // Focus tier filter
+        if (selectedFocus !== 'ALL' && item.tier !== selectedFocus) return false;
+
+        // Specific hour scrubber filter
+        if (selectedHour !== null && item.hour !== selectedHour) return false;
 
         // Time-of-day interval filter
         if (selectedInterval === 'morning' && (item.hour < 6 || item.hour >= 12)) return false;
@@ -201,17 +320,12 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
         return (b.raw.id || 0) - (a.raw.id || 0);
       })
       .map((item) => item.raw);
-  }, [dayLogs, selectedApp, selectedCategory, selectedInterval, selectedFocus, deferredSearchQuery, maskSensitive]);
+  }, [dayLogs, selectedApp, selectedCategory, selectedInterval, selectedFocus, selectedHour, deferredSearchQuery, maskSensitive]);
 
   // Safe pagination calculations avoiding NaN, 0, or negative pages
   const safePageSize = Math.max(1, pageSize);
   const totalPages = Math.max(1, Math.ceil(filteredLogs.length / safePageSize));
   const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
-
-  // Reset to page 1 when the selected day changes without destroying active search/filters
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [today]);
 
   const paginatedLogs = useMemo(() => {
     const start = (safeCurrentPage - 1) * safePageSize;
@@ -235,7 +349,8 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
     selectedApp !== 'ALL' ||
     selectedCategory !== 'ALL' ||
     selectedInterval !== 'ALL' ||
-    selectedFocus !== 'ALL';
+    selectedFocus !== 'ALL' ||
+    selectedHour !== null;
 
   const clearFilters = () => {
     setSearchQuery('');
@@ -243,6 +358,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
     setSelectedCategory('ALL');
     setSelectedInterval('ALL');
     setSelectedFocus('ALL');
+    setSelectedHour(null);
     setCurrentPage(1);
   };
 
@@ -263,19 +379,65 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
 
   const updateSelectedInterval = (value: string) => {
     setSelectedInterval(value as TimeInterval);
+    setSelectedHour(null);
     setCurrentPage(1);
   };
 
-  const updateSelectedFocus = (value: string) => {
-    setSelectedFocus(value as FocusFilter);
+  const updateSelectedFocus = (focus: FocusFilter) => {
+    setSelectedFocus(focus);
+    setCurrentPage(1);
+  };
+
+  const toggleHourScrub = (hour: number) => {
+    if (selectedHour === hour) {
+      setSelectedHour(null);
+    } else {
+      setSelectedHour(hour);
+    }
+    setCurrentPage(1);
+  };
+
+  const handleZoomPreset = (preset: ZoomPreset) => {
+    if (preset === '24h') {
+      setSelectedInterval('ALL');
+      setSelectedHour(null);
+    } else if (preset === 'active') {
+      setSelectedInterval('ALL');
+      setSelectedHour(null);
+    } else {
+      setSelectedInterval(preset as TimeInterval);
+      setSelectedHour(null);
+    }
     setCurrentPage(1);
   };
 
   const activeFilters = useMemo(() => {
     const chips: Array<{ key: string; label: string; value: string; onRemove: () => void }> = [];
     if (searchQuery.trim()) {
-      const query = searchQuery.trim();
-      chips.push({ key: 'search', label: 'Search', value: query, onRemove: () => updateSearchQuery('') });
+      chips.push({ key: 'search', label: 'Search', value: searchQuery.trim(), onRemove: () => updateSearchQuery('') });
+    }
+    if (selectedFocus !== 'ALL') {
+      const labels: Record<FocusFilter, string> = {
+        ALL: 'All Focus',
+        productive: 'Productive (≥70%)',
+        neutral: 'Neutral (40–69%)',
+        unproductive: 'Unproductive (<40%)',
+        pending: 'Pending AI',
+      };
+      chips.push({
+        key: 'focus',
+        label: 'Focus',
+        value: labels[selectedFocus] || selectedFocus,
+        onRemove: () => updateSelectedFocus('ALL'),
+      });
+    }
+    if (selectedHour !== null) {
+      chips.push({
+        key: 'hour',
+        label: 'Hour',
+        value: `${String(selectedHour).padStart(2, '0')}:00–${String(selectedHour).padStart(2, '0')}:59`,
+        onRemove: () => setSelectedHour(null),
+      });
     }
     if (selectedApp !== 'ALL') {
       chips.push({ key: 'app', label: 'App', value: selectedApp, onRemove: () => updateSelectedApp('ALL') });
@@ -292,45 +454,325 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
         onRemove: () => updateSelectedInterval('ALL'),
       });
     }
-    if (selectedFocus !== 'ALL') {
-      const opt = FOCUS_FILTER_OPTIONS.find((o) => o.value === selectedFocus);
-      chips.push({
-        key: 'focus',
-        label: 'Focus',
-        value: opt ? opt.label : selectedFocus,
-        onRemove: () => updateSelectedFocus('ALL'),
-      });
-    }
     return chips;
-  }, [searchQuery, selectedApp, selectedCategory, selectedInterval, selectedFocus]);
+  }, [searchQuery, selectedFocus, selectedHour, selectedApp, selectedCategory, selectedInterval]);
 
-  // Safe row range numbers using safeCurrentPage and safePageSize
+  // Safe row range numbers
   const pageFirstRow = filteredLogs.length === 0 ? 0 : (safeCurrentPage - 1) * safePageSize + 1;
   const pageLastRow = Math.min(safeCurrentPage * safePageSize, filteredLogs.length);
+
+  // Helper for rendering 3-tier focus badges
+  const renderFocusBadge = (log: LogEntry) => {
+    if (isPendingLog(log)) {
+      return (
+        <span className="badge badge-pending">
+          <Icon name="clock" size={12} />
+          Pending AI
+        </span>
+      );
+    }
+    const isNum = typeof log.productive_score === 'number' && Number.isFinite(log.productive_score);
+    const rawScore = isNum ? log.productive_score! : log.is_productive ? 100 : 0;
+    const scoreVal = Math.min(100, Math.max(0, Math.round(rawScore)));
+
+    if (scoreVal >= FOCUS_GOOD) {
+      return (
+        <span className="badge badge-productive">
+          <Icon name="check" size={12} />
+          {scoreVal}% Focus
+        </span>
+      );
+    }
+    if (scoreVal >= 40) {
+      return (
+        <span className="badge badge-neutral">
+          <Icon name="minus" size={12} />
+          {scoreVal}% Focus
+        </span>
+      );
+    }
+    return (
+      <span className="badge badge-unproductive">
+        <Icon name="x" size={12} />
+        {scoreVal}% Focus
+      </span>
+    );
+  };
 
   return (
     <div aria-busy={loading} className="tl-page fade-in-up">
       <ImageModal imagePath={selectedImage} onClose={() => setSelectedImage(null)} />
 
-      {/* Header Bar */}
-      <div className="page-header tl-header" style={{ marginBottom: 16 }}>
-        <div>
-          <h1 className="page-title">Activity Timeline</h1>
+      {/* Header Bar with Date Navigation & View Controls */}
+      <header className="page-header tl-header">
+        <div className="tl-header-left">
+          <div className="tl-title-row">
+            <h1 className="page-title">Activity Timeline</h1>
+            {dayLogs.length > 0 && (
+              <span className="tl-header-badge" title="Total captures recorded today">
+                <Icon name="activity" size={12} color="var(--accent-primary)" />
+                {dayLogs.length} {dayLogs.length === 1 ? 'capture' : 'captures'}
+              </span>
+            )}
+          </div>
           <p className="page-subtitle">Detailed minute-by-minute activity captures &amp; AI focus ratings.</p>
         </div>
-      </div>
 
-      {/* Filter toolbar */}
-      <div className="card tl-filter-card" style={{ marginBottom: 16 }}>
+        <div className="tl-header-actions">
+          {/* Compound Date Navigator */}
+          <DateNavigator
+            className="tl-date-nav"
+            currentDate={today}
+            maxDate={localISODate()}
+            onDateChange={onDateChange}
+          />
+
+          {/* Privacy Mask Toggle Button */}
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => setMaskSensitive((prev) => !prev)}
+            title={maskSensitive ? 'Disable sensitive window masking' : 'Mask sensitive window titles'}
+            style={{ height: 36, fontSize: 12, padding: '0 10px', gap: 6 }}
+          >
+            <Icon name="lock" size={13} color={maskSensitive ? 'var(--accent-teal)' : undefined} />
+            {maskSensitive ? 'Privacy Mask ON' : 'Privacy Mask OFF'}
+          </button>
+
+          {/* Refresh Feed Button */}
+          {onRetry && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={onRetry}
+              disabled={loading}
+              title="Refresh timeline captures"
+              style={{ height: 36, padding: '0 10px' }}
+            >
+              <Icon name="refresh" size={14} className={loading ? 'spinner-sm' : ''} />
+            </button>
+          )}
+
+          {/* View Mode Switcher (List vs Grid) */}
+          <div className="tl-view-toggle" role="group" aria-label="Timeline display mode">
+            <button
+              type="button"
+              className={`tl-view-btn ${viewMode === 'list' ? 'active' : ''}`}
+              onClick={() => handleViewModeChange('list')}
+              aria-pressed={viewMode === 'list'}
+              title="Detailed list view"
+            >
+              <Icon name="activity" size={13} />
+              List
+            </button>
+            <button
+              type="button"
+              className={`tl-view-btn ${viewMode === 'grid' ? 'active' : ''}`}
+              onClick={() => handleViewModeChange('grid')}
+              aria-pressed={viewMode === 'grid'}
+              title="Visual screenshot gallery grid"
+            >
+              <Icon name="desktop" size={13} />
+              Grid
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Interactive Time-Block Scrubber & Zoom Controls */}
+      {dayLogs.length > 0 && (
+        <section className="card tl-scrubber-card" aria-label="Visual timeline scrubber">
+          <div className="card-body tl-scrubber-body">
+            <div className="tl-scrubber-top">
+              <div className="tl-scrubber-heading">
+                <Icon name="clock" size={14} color="var(--accent-primary)" />
+                <span>24-Hour Activity Scrubber</span>
+                {selectedHour !== null && (
+                  <span className="tl-scrubber-status">
+                    Filtered: {String(selectedHour).padStart(2, '0')}:00–{String(selectedHour).padStart(2, '0')}:59
+                    <button
+                      type="button"
+                      className="tl-scrubber-clear-btn"
+                      onClick={() => setSelectedHour(null)}
+                      title="Clear hour filter"
+                      aria-label="Clear hour filter"
+                    >
+                      <Icon name="x" size={12} />
+                    </button>
+                  </span>
+                )}
+              </div>
+
+              {/* Zoom & Range Presets */}
+              <div className="tl-scrubber-zoom-group" role="group" aria-label="Timeline zoom intervals">
+                <button
+                  type="button"
+                  className={`tl-scrubber-preset ${selectedInterval === 'ALL' && selectedHour === null ? 'active' : ''}`}
+                  onClick={() => handleZoomPreset('24h')}
+                  title="Show all 24 hours"
+                >
+                  24h (All)
+                </button>
+                <button
+                  type="button"
+                  className={`tl-scrubber-preset ${selectedInterval === 'morning' ? 'active' : ''}`}
+                  onClick={() => handleZoomPreset('morning')}
+                  title="Focus on morning captures (06:00-12:00)"
+                >
+                  Morning (06–12)
+                </button>
+                <button
+                  type="button"
+                  className={`tl-scrubber-preset ${selectedInterval === 'afternoon' ? 'active' : ''}`}
+                  onClick={() => handleZoomPreset('afternoon')}
+                  title="Focus on afternoon captures (12:00-18:00)"
+                >
+                  Afternoon (12–18)
+                </button>
+                <button
+                  type="button"
+                  className={`tl-scrubber-preset ${selectedInterval === 'evening' ? 'active' : ''}`}
+                  onClick={() => handleZoomPreset('evening')}
+                  title="Focus on evening captures (18:00-24:00)"
+                >
+                  Evening (18–24)
+                </button>
+              </div>
+            </div>
+
+            {/* 24-hour visual heat-density scrub track */}
+            <div className="tl-scrubber-track-scroll">
+              <div className="tl-scrubber-track" role="group" aria-label="Hourly timeline scrub track">
+                {hourlyBuckets.map((bucket) => {
+                  const isSelected = selectedHour === bucket.hour;
+                  const heightPercent = bucket.count === 0
+                    ? 0
+                    : Math.max(18, Math.round((bucket.count / maxHourlyCaptures) * 100));
+
+                  let barColor = 'var(--border-subtle)';
+                  if (bucket.count > 0) {
+                    if (bucket.pending === bucket.count) {
+                      barColor = 'var(--text-muted)';
+                    } else if (bucket.avgScore >= FOCUS_GOOD) {
+                      barColor = 'var(--accent-green)';
+                    } else if (bucket.avgScore >= 40) {
+                      barColor = 'var(--accent-amber)';
+                    } else {
+                      barColor = 'var(--accent-red)';
+                    }
+                  }
+
+                  const hourTooltip = bucket.count > 0
+                    ? `${bucket.label}–${String(bucket.hour).padStart(2, '0')}:59: ${bucket.count} captures · ${bucket.avgScore}% Focus`
+                    : `${bucket.label}: No captures`;
+
+                  return (
+                    <button
+                      key={bucket.hour}
+                      type="button"
+                      className={`tl-scrubber-hour ${isSelected ? 'active' : ''}`}
+                      onClick={() => toggleHourScrub(bucket.hour)}
+                      title={hourTooltip}
+                      aria-label={hourTooltip}
+                      aria-pressed={isSelected}
+                    >
+                      <div className="tl-scrubber-bar-wrap">
+                        {bucket.count > 0 ? (
+                          <div
+                            className="tl-scrubber-bar"
+                            style={{
+                              height: `${heightPercent}%`,
+                              backgroundColor: barColor,
+                            }}
+                          />
+                        ) : (
+                          <div className="tl-scrubber-tick" />
+                        )}
+                      </div>
+                      <span className="tl-scrubber-label">
+                        {String(bucket.hour).padStart(2, '0')}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Filter Toolbar: Filter Pills + Search + Dropdowns */}
+      <section className="card tl-filter-card" style={{ marginBottom: 16 }}>
         <div className="card-body tl-filter-body">
-          <div className="tl-filter-bar">
-            <DateNavigator
-              className="tl-date-nav"
-              currentDate={today}
-              maxDate={localISODate()}
-              onDateChange={onDateChange}
-            />
+          {/* Row 1: Focus Filter Pills */}
+          <div className="tl-filter-bar" style={{ marginBottom: 12 }}>
+            <div className="tl-filter-pills" role="tablist" aria-label="Filter captures by focus rating">
+              <button
+                type="button"
+                className={`tl-filter-pill ${selectedFocus === 'ALL' ? 'active' : ''}`}
+                data-variant="all"
+                onClick={() => updateSelectedFocus('ALL')}
+                aria-pressed={selectedFocus === 'ALL'}
+              >
+                <Icon name="filter" size={13} />
+                <span>All Focus</span>
+                <span className="tl-pill-count">{focusCounts.ALL}</span>
+              </button>
 
+              <button
+                type="button"
+                className={`tl-filter-pill ${selectedFocus === 'productive' ? 'active' : ''}`}
+                data-variant="productive"
+                onClick={() => updateSelectedFocus('productive')}
+                aria-pressed={selectedFocus === 'productive'}
+              >
+                <Icon name="check" size={13} color="var(--accent-green)" />
+                <span>Productive</span>
+                <span className="tl-pill-count">{focusCounts.productive}</span>
+              </button>
+
+              <button
+                type="button"
+                className={`tl-filter-pill ${selectedFocus === 'neutral' ? 'active' : ''}`}
+                data-variant="neutral"
+                onClick={() => updateSelectedFocus('neutral')}
+                aria-pressed={selectedFocus === 'neutral'}
+              >
+                <Icon name="minus" size={13} color="var(--accent-amber)" />
+                <span>Neutral</span>
+                <span className="tl-pill-count">{focusCounts.neutral}</span>
+              </button>
+
+              <button
+                type="button"
+                className={`tl-filter-pill ${selectedFocus === 'unproductive' ? 'active' : ''}`}
+                data-variant="unproductive"
+                onClick={() => updateSelectedFocus('unproductive')}
+                aria-pressed={selectedFocus === 'unproductive'}
+              >
+                <Icon name="x" size={13} color="var(--accent-red)" />
+                <span>Unproductive</span>
+                <span className="tl-pill-count">{focusCounts.unproductive}</span>
+              </button>
+
+              {focusCounts.pending > 0 && (
+                <button
+                  type="button"
+                  className={`tl-filter-pill ${selectedFocus === 'pending' ? 'active' : ''}`}
+                  data-variant="pending"
+                  onClick={() => updateSelectedFocus('pending')}
+                  aria-pressed={selectedFocus === 'pending'}
+                >
+                  <Icon name="clock" size={13} color="var(--text-muted)" />
+                  <span>Pending AI</span>
+                  <span className="tl-pill-count">{focusCounts.pending}</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Row 2: Search Input + App Filter + Category Filter + Interval Select */}
+          <div className="tl-filter-bar">
             <div className="tl-search-wrap">
               <input
                 type="text"
@@ -389,14 +831,6 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
               ariaLabel="Filter by time interval"
               options={TIME_INTERVAL_OPTIONS}
             />
-
-            <CustomSelect
-              className="tl-focus-select"
-              value={selectedFocus}
-              onChange={updateSelectedFocus}
-              ariaLabel="Filter by focus score"
-              options={FOCUS_FILTER_OPTIONS}
-            />
           </div>
 
           {/* Meta summary + active filter chips */}
@@ -440,36 +874,27 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                 ))}
                 <button type="button" className="tl-chip-clear" onClick={clearFilters}>
                   <Icon name="x" size={12} />
-                  Clear filters
+                  Clear all filters
                 </button>
               </div>
             )}
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Main Activity Timeline List */}
-      <div className="card tl-list-card">
+      {/* Main Activity Timeline (List or Grid View) */}
+      <section className="card tl-list-card">
         <div className="card-header">
           <span className="card-title tl-card-title">
             <Icon name="calendar" size={14} color="var(--accent-primary)" />
-            {today === localISODate() ? "Today's Log Feed" : safeFormatDateHeader(today)}
+            {today === localISODate() ? "Today's Activity Feed" : safeFormatDateHeader(today)}
             {loading && dayLogs.length > 0 && (
               <span className="spinner-sm" style={{ marginLeft: 6 }} title="Refreshing activity feed..." />
             )}
           </span>
-          <div>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => setMaskSensitive((prev) => !prev)}
-              title={maskSensitive ? 'Disable sensitive window masking' : 'Mask sensitive window titles'}
-              style={{ fontSize: 11, padding: '4px 8px' }}
-            >
-              <Icon name="lock" size={12} color={maskSensitive ? 'var(--accent-teal)' : undefined} />
-              {maskSensitive ? 'Privacy Mask ON' : 'Privacy Mask OFF'}
-            </button>
-          </div>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+            {viewMode === 'list' ? 'List View' : 'Grid View'} ({filteredLogs.length} matching)
+          </span>
         </div>
 
         <div className="card-body tl-list-body">
@@ -481,28 +906,50 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
               className="tl-error-alert"
             />
           )}
+
+          {/* Loading Skeleton States */}
           {loading && dayLogs.length === 0 ? (
-            <ul className="timeline-list tl-rows" aria-label="Loading captures">
-              {SKELETON_ROWS.map((i) => (
-                <li key={i} className="timeline-item tl-row tl-skeleton-row">
-                  <span className="skeleton tl-sk-time" />
-                  <span className="skeleton tl-sk-thumb" />
-                  <div className="tl-sk-info">
-                    <div className="tl-sk-chips">
-                      <span className="skeleton tl-sk-chip tl-sk-chip-a" />
-                      <span className="skeleton tl-sk-chip tl-sk-chip-b" />
+            viewMode === 'grid' ? (
+              <ul className="tl-grid" aria-label="Loading captures in grid">
+                {SKELETON_GRID_CARDS.map((i) => (
+                  <li key={i} className="tl-grid-card tl-sk-grid-card">
+                    <span className="skeleton tl-sk-grid-media" />
+                    <div className="tl-sk-grid-tags">
+                      <span className="skeleton" style={{ width: 80, height: 20, borderRadius: 4 }} />
+                      <span className="skeleton" style={{ width: 70, height: 20, borderRadius: 4 }} />
                     </div>
-                    <span className="skeleton tl-sk-line" />
-                    <span className="skeleton tl-sk-line2" />
-                    <span className="skeleton tl-sk-keys" />
-                  </div>
-                  <div className="tl-sk-score">
-                    <span className="skeleton tl-sk-badge" />
-                    <span className="skeleton tl-sk-conf" />
-                  </div>
-                </li>
-              ))}
-            </ul>
+                    <span className="skeleton tl-sk-grid-title" />
+                    <span className="skeleton tl-sk-grid-desc" />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 'auto' }}>
+                      <span className="skeleton" style={{ width: 85, height: 20, borderRadius: 99 }} />
+                      <span className="skeleton" style={{ width: 60, height: 14 }} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <ul className="timeline-list tl-rows" aria-label="Loading captures">
+                {SKELETON_ROWS.map((i) => (
+                  <li key={i} className="timeline-item tl-row tl-skeleton-row">
+                    <span className="skeleton tl-sk-time" />
+                    <span className="skeleton tl-sk-thumb" />
+                    <div className="tl-sk-info">
+                      <div className="tl-sk-chips">
+                        <span className="skeleton tl-sk-chip tl-sk-chip-a" />
+                        <span className="skeleton tl-sk-chip tl-sk-chip-b" />
+                      </div>
+                      <span className="skeleton tl-sk-line" />
+                      <span className="skeleton tl-sk-line2" />
+                      <span className="skeleton tl-sk-keys" />
+                    </div>
+                    <div className="tl-sk-score">
+                      <span className="skeleton tl-sk-badge" />
+                      <span className="skeleton tl-sk-conf" />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )
           ) : loadError && dayLogs.length === 0 ? (
             <Alert
               type="error"
@@ -512,43 +959,52 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
             />
           ) : paginatedLogs.length === 0 ? (
             <EmptyState
-              icon={<Icon name="inbox" size={32} />}
-              title={hasActiveFilters ? 'No matching captures found' : 'No captures on this date'}
+              icon={
+                hasActiveFilters ? (
+                  <Icon name="search" size={36} color="var(--text-muted)" />
+                ) : (
+                  <Icon name="calendar" size={36} color="var(--accent-primary)" />
+                )
+              }
+              title={hasActiveFilters ? 'No matching captures found' : 'No activity recorded for this day'}
               description={
                 hasActiveFilters
-                  ? 'Try adjusting or clearing your filters.'
-                  : 'The tracker may not have been running, or no activity was recorded on this day.'
+                  ? 'No captures match your current search, focus rating, or hour filter. Try resetting them.'
+                  : `MiniTracker was either paused, not running, or no keystroke/window activity was logged on ${safeFormatDateHeader(today)}.`
               }
               action={
                 hasActiveFilters ? (
-                  <button className="btn btn-secondary btn-sm" onClick={clearFilters}>
-                    Clear filters
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={clearFilters}>
+                    <Icon name="x" size={13} />
+                    Clear all filters
                   </button>
                 ) : (
-                  <div style={{ display: 'inline-flex', gap: 8 }}>
-                    {onRetry && (
-                      <button className="btn btn-primary btn-sm" onClick={onRetry}>
-                        <Icon name="refresh" size={14} /> Refresh Feed
+                  <div className="tl-empty-actions">
+                    {today !== localISODate() && (
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        onClick={() => onDateChange(localISODate())}
+                      >
+                        <Icon name="chevron-right" size={14} />
+                        Go to Today's Feed
                       </button>
                     )}
-                    {today !== localISODate() && (
-                      <button className="btn btn-secondary btn-sm" onClick={() => onDateChange(localISODate())}>
-                        Go to today
+                    {onRetry && (
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={onRetry}>
+                        <Icon name="refresh" size={14} /> Refresh Feed
                       </button>
                     )}
                   </div>
                 )
               }
             />
-          ) : (
-            <ul className="timeline-list tl-rows">
+          ) : viewMode === 'grid' ? (
+            /* --- Capture Grid View --- */
+            <ul className="tl-grid" role="list" aria-label="Activity captures gallery">
               {paginatedLogs.map((log, index) => {
-                const isNum = typeof log.productive_score === 'number' && Number.isFinite(log.productive_score);
-                const rawScore = isNum ? log.productive_score! : log.is_productive ? 100 : 0;
-                const scoreVal = Math.min(100, Math.max(0, Math.round(rawScore)));
                 const appName = canonicalAppName(log.app_name);
                 const time = safeFormatTime(log.timestamp);
-                const stateLabel = isPendingLog(log) ? 'pending' : scoreVal >= 50 ? 'productive' : 'unproductive';
                 const windowTitle = maskSensitive ? redactSensitiveTitle(log.window_title) : (log.window_title || '');
                 const entropySafe = typeof log.entropy_score === 'number' && Number.isFinite(log.entropy_score)
                   ? log.entropy_score.toFixed(1)
@@ -556,9 +1012,94 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
 
                 return (
                   <li
-                    key={log.id ?? `log-${log.timestamp}-${index}`}
+                    key={log.id ?? `grid-log-${log.timestamp}-${index}`}
+                    className="tl-grid-card"
+                  >
+                    {/* 16:9 Media container with inspect overlay */}
+                    <div className="tl-grid-media">
+                      <ScreenshotThumb
+                        imagePath={log.image_path}
+                        onClick={log.image_path ? () => setSelectedImage(log.image_path) : undefined}
+                      />
+                      <div className="tl-grid-media-badge">
+                        <span className="tl-grid-time">{time}</span>
+                      </div>
+                      {log.image_path && (
+                        <div className="tl-grid-overlay" aria-hidden="true">
+                          <Icon name="search" size={14} />
+                          <span>Inspect Screenshot</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Card Body */}
+                    <div className="tl-grid-body">
+                      <div className="tl-grid-header">
+                        {appName && (
+                          <span className="tl-app-chip" title={appName}>
+                            <AppIcon name={appName} size={14} />
+                            <span className="tl-app-chip-label">{appName}</span>
+                          </span>
+                        )}
+                        <CategoryBadge category={log.ai_category} />
+                      </div>
+
+                      {windowTitle && (
+                        <h3 className="tl-grid-title" title={windowTitle}>
+                          {windowTitle}
+                        </h3>
+                      )}
+
+                      <p className="tl-grid-reason" title={log.ai_reason || undefined}>
+                        {log.ai_reason || 'No analysis details recorded.'}
+                      </p>
+
+                      <div className="tl-grid-keys">
+                        <span title="Keys pressed">
+                          <Icon name="keyboard" size={12} />
+                          {(log.total_keys ?? 0).toLocaleString()}
+                        </span>
+                        {(log.total_clicks ?? 0) > 0 && (
+                          <span title="Mouse clicks">
+                            <Icon name="target" size={12} />
+                            {log.total_clicks}
+                          </span>
+                        )}
+                        <span title="Typing entropy score">
+                          Entropy: {entropySafe}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Card Footer: 3-tier Focus Badge + AI Confidence */}
+                    <div className="tl-grid-footer">
+                      {renderFocusBadge(log)}
+                      {(log.ai_confidence ?? 0) > 0 && (
+                        <span className="tl-confidence">
+                          {((log.ai_confidence ?? 0) * 100).toFixed(0)}% AI confidence
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            /* --- Capture List View --- */
+            <ul className="timeline-list tl-rows" role="list" aria-label="Activity captures list">
+              {paginatedLogs.map((log, index) => {
+                const appName = canonicalAppName(log.app_name);
+                const time = safeFormatTime(log.timestamp);
+                const windowTitle = maskSensitive ? redactSensitiveTitle(log.window_title) : (log.window_title || '');
+                const entropySafe = typeof log.entropy_score === 'number' && Number.isFinite(log.entropy_score)
+                  ? log.entropy_score.toFixed(1)
+                  : '0.0';
+
+                return (
+                  <li
+                    key={log.id ?? `list-log-${log.timestamp}-${index}`}
                     className="timeline-item tl-row"
-                    aria-label={`${time} — ${appName || 'Unknown app'} — ${stateLabel}`}
+                    aria-label={`${time} — ${appName || 'Unknown app'}`}
                   >
                     <span className="timeline-time tl-time">{time}</span>
 
@@ -610,14 +1151,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                     </div>
 
                     <div className="tl-score-col">
-                      {isPendingLog(log) ? (
-                        <span className="badge badge-pending">Pending AI</span>
-                      ) : (
-                        <span className={`badge ${scoreVal >= 50 ? 'badge-productive' : 'badge-unproductive'}`}>
-                          <Icon name={scoreVal >= 50 ? 'check' : 'x'} size={13} />
-                          {scoreVal}% Focus
-                        </span>
-                      )}
+                      {renderFocusBadge(log)}
                       {(log.ai_confidence ?? 0) > 0 && (
                         <span className="tl-confidence">
                           {((log.ai_confidence ?? 0) * 100).toFixed(0)}% AI confidence
@@ -648,7 +1182,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                     setCurrentPage(1);
                   }
                 }}
-                options={[15, 25, 50, 100].map((size) => ({
+                options={[12, 24, 48, 96].map((size) => ({
                   value: String(size),
                   label: String(size),
                 }))}
@@ -661,6 +1195,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                 disabled={safeCurrentPage <= 1}
                 onClick={() => setCurrentPage(safeCurrentPage - 1)}
                 className="btn btn-secondary btn-sm tl-page-btn"
+                aria-label="Previous page"
               >
                 <Icon name="chevron-left" size={14} />
                 Previous
@@ -673,6 +1208,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                 disabled={safeCurrentPage >= totalPages}
                 onClick={() => setCurrentPage(safeCurrentPage + 1)}
                 className="btn btn-secondary btn-sm tl-page-btn"
+                aria-label="Next page"
               >
                 Next
                 <Icon name="chevron-right" size={14} />
@@ -680,11 +1216,11 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
             </div>
 
             <div className="tl-pagination-side tl-pagination-range">
-              Rows {pageFirstRow}–{pageLastRow} of {filteredLogs.length}
+              Showing {pageFirstRow}–{pageLastRow} of {filteredLogs.length}
             </div>
           </footer>
         )}
-      </div>
+      </section>
     </div>
   );
 }

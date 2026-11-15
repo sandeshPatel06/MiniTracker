@@ -45,10 +45,10 @@ function safeFormatTime(timestamp?: string | null, formatStr = 'HH:mm'): string 
 
 function focusColor(score: number): string {
   return score >= FOCUS_GOOD
-    ? 'var(--accent-green)'
+    ? 'var(--badge-productive-text)'
     : score >= FOCUS_OK
-    ? 'var(--accent-amber)'
-    : 'var(--accent-red)';
+    ? 'var(--badge-amber-text)'
+    : 'var(--badge-unproductive-text)';
 }
 
 function focusBarColor(score: number): string {
@@ -56,7 +56,15 @@ function focusBarColor(score: number): string {
     ? 'var(--accent-green)'
     : score >= FOCUS_OK
     ? 'var(--accent-indigo)'
-    : 'var(--accent-red)';
+    : 'var(--accent-amber)';
+}
+
+function formatHoursAndMinutes(mins: number): string {
+  if (!mins || mins <= 0) return '0m';
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
 function captureScore(log: LogEntry): number {
@@ -95,6 +103,7 @@ export default function Dashboard({
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [processingPending, setProcessingPending] = useState(false);
   const [workSessions, setWorkSessions] = useState<WorkSession[]>([]);
+  const [breakdownView, setBreakdownView] = useState<'apps' | 'categories'>('apps');
 
   // Timezone-safe day scoping: Never fall back to prior days when today has 0 captures
   const activeLogs = useMemo(() => {
@@ -164,6 +173,31 @@ export default function Dashboard({
       : 0;
   }, [activeLogs]);
 
+  const intervalSec = config?.screenshot_interval_seconds || 30;
+
+  const productiveCaptures = useMemo(() => {
+    return activeLogs.filter((l: LogEntry) => {
+      if (typeof l.productive_score === 'number') {
+        return l.productive_score >= FOCUS_OK;
+      }
+      return l.is_productive;
+    }).length;
+  }, [activeLogs]);
+
+  const focusMinutes = useMemo(() => {
+    if (stats?.productive_minutes && stats.productive_minutes > 0) {
+      return stats.productive_minutes;
+    }
+    return Math.round((productiveCaptures * intervalSec) / 60);
+  }, [stats, productiveCaptures, intervalSec]);
+
+  const totalTrackedMinutes = useMemo(() => {
+    if (stats?.total_minutes && stats.total_minutes > 0) {
+      return stats.total_minutes;
+    }
+    return Math.round((activeLogs.length * intervalSec) / 60);
+  }, [stats, activeLogs.length, intervalSec]);
+
   // Memoized App Usage Breakdown
   const topApps = useMemo(() => {
     const appCounts = new Map<string, { count: number; category: string; scoreTotal: number; scoreCount: number }>();
@@ -194,7 +228,36 @@ export default function Dashboard({
       .slice(0, 5);
   }, [activeLogs]);
 
-  // Hourly Productivity Trend (dynamic span covering night work if present)
+  // Memoized Activity Category Breakdown
+  const categoryBreakdown = useMemo(() => {
+    const catMap = new Map<string, { count: number; scoreTotal: number; scoreCount: number }>();
+    activeLogs.forEach((l: LogEntry) => {
+      const cat = l.ai_category && l.ai_category !== 'Unknown' ? l.ai_category : 'Uncategorized';
+      let entry = catMap.get(cat);
+      if (!entry) {
+        entry = { count: 0, scoreTotal: 0, scoreCount: 0 };
+        catMap.set(cat, entry);
+      }
+      entry.count++;
+      if (!isPendingLog(l)) {
+        entry.scoreTotal += captureScore(l);
+        entry.scoreCount++;
+      }
+    });
+
+    const totalLogCount = activeLogs.length || 1;
+    return Array.from(catMap.entries())
+      .map(([category, data]) => ({
+        category,
+        count: data.count,
+        percent: Math.round((data.count / totalLogCount) * 100),
+        avgScore: data.scoreCount > 0 ? Math.round(data.scoreTotal / data.scoreCount) : 0,
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  }, [activeLogs]);
+
+  // Hourly Productivity Trend (dynamic span covering activity if present)
   const hourlyChartData = useMemo(() => {
     let minHour = 8;
     let maxHour = 20;
@@ -289,19 +352,43 @@ export default function Dashboard({
   if (loading && logs.length === 0) {
     return (
       <div className="dash-page" aria-busy="true">
-        <div className="page-header">
+        <div className="page-header dash-header" style={{ marginBottom: 20 }}>
           <div>
-            <div className="skeleton" style={{ width: 160, height: 28, marginBottom: 8 }} />
-            <div className="skeleton" style={{ width: 220, height: 16 }} />
+            <div className="skeleton" style={{ width: 180, height: 28, marginBottom: 8 }} />
+            <div className="skeleton" style={{ width: 240, height: 16 }} />
           </div>
         </div>
-        <div className="stats-grid" style={{ marginTop: 16 }}>
+        <div className="stats-grid dash-stats" style={{ marginBottom: 16 }}>
           {[1, 2, 3, 4].map((i) => (
             <div key={i} className="stat-card">
-              <div className="skeleton" style={{ width: '60%', height: 14, marginBottom: 12 }} />
-              <div className="skeleton" style={{ width: '40%', height: 32 }} />
+              <div className="skeleton" style={{ width: '50%', height: 14, marginBottom: 12 }} />
+              <div className="skeleton" style={{ width: '65%', height: 32, marginBottom: 8 }} />
+              <div className="skeleton" style={{ width: '40%', height: 12 }} />
             </div>
           ))}
+        </div>
+        <div className="dash-charts" style={{ marginBottom: 16 }}>
+          <div className="card" style={{ height: 280 }}>
+            <div className="card-header">
+              <div className="skeleton" style={{ width: 120, height: 16 }} />
+            </div>
+            <div className="card-body">
+              <div className="skeleton" style={{ width: '100%', height: 200, borderRadius: 8 }} />
+            </div>
+          </div>
+          <div className="card" style={{ height: 280 }}>
+            <div className="card-header">
+              <div className="skeleton" style={{ width: 140, height: 16 }} />
+            </div>
+            <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {[1, 2, 3, 4].map((j) => (
+                <div key={j}>
+                  <div className="skeleton" style={{ width: '80%', height: 14, marginBottom: 6 }} />
+                  <div className="skeleton" style={{ width: '100%', height: 6, borderRadius: 99 }} />
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -321,7 +408,7 @@ export default function Dashboard({
       )}
 
       {/* Header Bar */}
-      <div className="page-header" style={{ marginBottom: 20 }}>
+      <div className="page-header dash-header" style={{ marginBottom: 20 }}>
         <div style={{ minWidth: 0 }}>
           <h1 className="page-title">Productivity Intelligence</h1>
           <p
@@ -333,14 +420,14 @@ export default function Dashboard({
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div className="dash-header-actions">
           {today !== localISODate() && onDateChange && (
             <button
               type="button"
               onClick={() => onDateChange(localISODate())}
-              className="btn btn-secondary"
+              className="btn btn-secondary dash-btn"
               title="Jump to today"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '10px 16px', fontSize: 13, fontWeight: 600 }}
+              aria-label="Jump to today's date"
             >
               <Icon name="calendar" size={14} />
               <span>Back to Today</span>
@@ -352,17 +439,10 @@ export default function Dashboard({
               type="button"
               onClick={onRefresh}
               disabled={loading}
-              className="btn btn-secondary"
+              className="btn btn-secondary dash-btn"
               title="Refresh dashboard data"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '10px 18px',
-                fontSize: 14,
-                fontWeight: 600,
-                whiteSpace: 'nowrap',
-              }}
+              aria-label="Refresh dashboard data"
+              aria-busy={loading}
             >
               <Icon name="refresh" size={14} className={loading ? 'spin' : ''} />
               <span>{loading ? 'Refreshing…' : 'Refresh'}</span>
@@ -374,19 +454,10 @@ export default function Dashboard({
               type="button"
               onClick={handleProcessPending}
               disabled={processingPending}
-              className="btn btn-primary"
+              className="btn btn-primary dash-btn dash-btn-analyze"
               title={`Run AI analysis on ${pendingCount} pending capture${pendingCount === 1 ? '' : 's'}`}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '10px 22px',
-                fontSize: 14,
-                fontWeight: 700,
-                whiteSpace: 'nowrap',
-                opacity: processingPending ? 0.6 : undefined,
-                cursor: processingPending ? 'not-allowed' : undefined,
-              }}
+              aria-label={`Run AI vision analysis on ${pendingCount} pending captures`}
+              aria-busy={processingPending}
             >
               <Icon name="sparkles" size={14} />
               <span>{processingPending ? 'Analyzing…' : `Analyze ${pendingCount} Pending`}</span>
@@ -395,149 +466,274 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* Metric Cards Grid */}
+      {/* Metric Cards Grid: Clear Hierarchy (Score, Focus Time, Top App, Activity) */}
       <div className="stats-grid dash-stats" style={{ marginBottom: 16 }}>
         <StatCard
           label="AI Focus Rating"
           value={analyzedLogs.length === 0 ? '—' : `${avgProductivityScore}%`}
-          sub={analyzedLogs.length === 0 ? 'No captures analyzed yet' : 'Gemini AI vision rating'}
+          sub={
+            analyzedLogs.length === 0
+              ? 'Awaiting AI vision analysis'
+              : avgProductivityScore >= FOCUS_GOOD
+              ? 'High focus rating'
+              : avgProductivityScore >= FOCUS_OK
+              ? 'Moderate focus rating'
+              : 'Low focus rating'
+          }
           valueColor={analyzedLogs.length === 0 ? 'var(--text-secondary)' : focusColor(avgProductivityScore)}
         />
         <StatCard
-          label="Total Keystrokes"
-          value={totalKeys.toLocaleString()}
-          sub="Recorded keyboard activity"
-          valueClass="text-cyan"
-        />
-        <StatCard
-          label="Keystroke Variety (Entropy)"
-          value={avgEntropy.toFixed(1)}
-          sub="Typing variety (0-100)"
-          valueClass="text-amber"
+          label="Focus Time"
+          value={activeLogs.length === 0 ? '—' : formatHoursAndMinutes(focusMinutes)}
+          sub={
+            activeLogs.length === 0
+              ? 'No activity tracked today'
+              : `${formatHoursAndMinutes(totalTrackedMinutes)} total active time`
+          }
+          valueClass="text-green"
         />
         <StatCard
           label="Top Application"
           value={topApps[0]?.appName || stats?.top_category || '—'}
           valueTitle={topApps[0]?.appName || stats?.top_category || undefined}
-          sub={topApps[0] ? `${topApps[0].percent}% of captures` : `${activeLogs.length} snapshots recorded`}
+          sub={
+            topApps[0]
+              ? `${topApps[0].percent}% of captures · ${topApps[0].category}`
+              : `${activeLogs.length} snapshot${activeLogs.length === 1 ? '' : 's'} recorded`
+          }
           valueClass="text-teal"
           leading={topApps[0] ? <AppIcon name={topApps[0].appName} size={22} /> : undefined}
         />
+        <StatCard
+          label="Active Keystrokes"
+          value={totalKeys.toLocaleString()}
+          sub={
+            avgEntropy > 0
+              ? `${avgEntropy.toFixed(1)} variety score · active typing`
+              : 'Recorded keyboard input'
+          }
+          valueClass="text-cyan"
+        />
       </div>
 
-      {/* Hourly Trend & App Breakdown Grid */}
-      <div className="dash-charts" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))', gap: 16, marginBottom: 16 }}>
+      {/* Hourly Trend & Activity Distribution Grid */}
+      <div className="dash-charts">
 
         {/* Hourly Focus Score Chart */}
         <div className="card">
           <div className="card-header">
-            <span className="card-title">📈 Hourly Focus</span>
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--purple-text)', fontVariantNumeric: 'tabular-nums' }}>
+            <span className="card-title">
+              <Icon name="activity" size={14} />
+              Hourly Focus
+            </span>
+            <span className="dash-chart-avg-badge">
               Avg {analyzedLogs.length === 0 ? '—' : `${avgProductivityScore}%`}
             </span>
           </div>
           <div className="card-body">
-            <div style={{ width: '100%', height: 210 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={hourlyChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <XAxis dataKey="hour" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-                  <Tooltip
-                    cursor={{ fill: 'color-mix(in srgb, var(--accent-primary) 8%, transparent)' }}
-                    contentStyle={{
-                      backgroundColor: 'var(--bg-elevated)',
-                      borderColor: 'var(--border-medium)',
-                      borderRadius: 8,
-                      fontSize: 12,
-                      color: 'var(--text-primary)',
-                    }}
-                    labelStyle={{ color: 'var(--text-primary)', fontWeight: 600 }}
-                    itemStyle={{ color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}
-                    formatter={(val: any, _name: any, item: any) => {
-                      const captures = item?.payload?.count ?? 0;
-                      const hasAnalyzed = item?.payload?.hasAnalyzed ?? false;
-                      if (captures === 0) {
-                        return ['No captures', 'Focus rating'];
-                      }
-                      const label = hasAnalyzed ? `${val}% AI Focus Rating` : 'Awaiting AI review';
-                      return [label, `Focus · ${captures} capture${captures === 1 ? '' : 's'}`];
-                    }}
-                  />
-                  <Bar dataKey="score" radius={[4, 4, 0, 0]} isAnimationActive={!prefersReducedMotion}>
-                    {hourlyChartData.map((entry, index) => (
-                      <Cell
-                        key={`cell-${index}`}
-                        fill={
-                          entry.hasAnalyzed
-                            ? entry.score >= FOCUS_GOOD
-                              ? 'var(--accent-green)'
-                              : entry.score >= FOCUS_OK
-                              ? 'var(--accent-indigo)'
-                              : 'var(--accent-amber)'
-                            : entry.count > 0
-                            ? 'var(--accent-muted, var(--border-medium))'
-                            : 'var(--border-subtle)'
-                        }
+            {activeLogs.length === 0 ? (
+              <EmptyState
+                icon={<Icon name="clock" size={24} />}
+                title="No Activity Logged Today"
+                description="Hourly focus ratings will render once desktop snapshots are recorded."
+              />
+            ) : (
+              <div className="dash-chart-wrapper">
+                <div style={{ width: '100%', height: 210 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={hourlyChartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                      <XAxis dataKey="hour" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
+                      <YAxis domain={[0, 100]} width={32} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
+                      <Tooltip
+                        cursor={{ fill: 'color-mix(in srgb, var(--accent-primary) 8%, transparent)' }}
+                        contentStyle={{
+                          backgroundColor: 'var(--bg-elevated)',
+                          borderColor: 'var(--border-medium)',
+                          borderRadius: 8,
+                          boxShadow: 'var(--shadow-card)',
+                          fontSize: 12,
+                          color: 'var(--text-primary)',
+                          padding: '8px 12px',
+                        }}
+                        labelStyle={{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: 4 }}
+                        itemStyle={{ color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}
+                        formatter={(val: any, _name: any, item: any) => {
+                          const captures = item?.payload?.count ?? 0;
+                          const hasAnalyzed = item?.payload?.hasAnalyzed ?? false;
+                          if (captures === 0) {
+                            return ['No captures recorded', 'Status'];
+                          }
+                          const label = hasAnalyzed ? `${val}% AI Focus Rating` : 'Awaiting AI review';
+                          return [label, `${captures} capture${captures === 1 ? '' : 's'}`];
+                        }}
                       />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+                      <Bar dataKey="score" radius={[4, 4, 0, 0]} isAnimationActive={!prefersReducedMotion}>
+                        {hourlyChartData.map((entry, index) => (
+                          <Cell
+                            key={`cell-${index}`}
+                            fill={
+                              entry.hasAnalyzed
+                                ? entry.score >= FOCUS_GOOD
+                                  ? 'var(--accent-green)'
+                                  : entry.score >= FOCUS_OK
+                                  ? 'var(--accent-indigo)'
+                                  : 'var(--accent-amber)'
+                                : entry.count > 0
+                                ? 'var(--accent-muted, var(--border-medium))'
+                                : 'transparent'
+                            }
+                          />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="dash-chart-legend" aria-hidden="true">
+                  <span className="dash-legend-item">
+                    <span className="dash-legend-dot" style={{ background: 'var(--accent-green)' }} />
+                    <span>High (≥70%)</span>
+                  </span>
+                  <span className="dash-legend-item">
+                    <span className="dash-legend-dot" style={{ background: 'var(--accent-indigo)' }} />
+                    <span>Moderate (50-69%)</span>
+                  </span>
+                  <span className="dash-legend-item">
+                    <span className="dash-legend-dot" style={{ background: 'var(--accent-amber)' }} />
+                    <span>Low (&lt;50%)</span>
+                  </span>
+                  <span className="dash-legend-item">
+                    <span className="dash-legend-dot" style={{ background: 'var(--border-medium)' }} />
+                    <span>Pending AI</span>
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Top App Usage Share */}
+        {/* Activity Distribution: Top Apps & Category Toggle */}
         <div className="card dash-topapps">
           <div className="card-header">
-            <span className="card-title">🏆 Top Apps</span>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Share of captures</span>
+            <span className="card-title">
+              <Icon name="award" size={14} />
+              {breakdownView === 'apps' ? 'Top Applications' : 'Category Share'}
+            </span>
+            <div className="dash-view-toggle" role="tablist" aria-label="Breakdown view selector">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={breakdownView === 'apps'}
+                className={`dash-view-toggle-btn${breakdownView === 'apps' ? ' is-active' : ''}`}
+                onClick={() => setBreakdownView('apps')}
+              >
+                Apps
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={breakdownView === 'categories'}
+                className={`dash-view-toggle-btn${breakdownView === 'categories' ? ' is-active' : ''}`}
+                onClick={() => setBreakdownView('categories')}
+              >
+                Categories
+              </button>
+            </div>
           </div>
           <div className="card-body">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {topApps.length === 0 ? (
-                <EmptyState
-                  icon={<Icon name="globe" size={24} />}
-                  title="No App Data Yet"
-                  description="Application usage appears here once the tracker records captures."
-                />
-              ) : (
-                topApps.map((app) => (
-                  <div key={app.appName} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-                        <AppIcon name={app.appName} size={16} />
-                        <span title={app.appName} style={{ fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{app.appName}</span>
-                        <span title={app.category} style={{ fontSize: 11, color: 'var(--text-muted)', maxWidth: 120, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>({app.category})</span>
+            <div className="dash-breakdown-list">
+              {breakdownView === 'apps' ? (
+                topApps.length === 0 ? (
+                  <EmptyState
+                    icon={<Icon name="globe" size={24} />}
+                    title="No App Data Yet"
+                    description="Application usage appears here once the tracker records captures."
+                  />
+                ) : (
+                  topApps.map((app) => (
+                    <div key={app.appName} className="dash-breakdown-row">
+                      <div className="dash-breakdown-header">
+                        <div className="dash-breakdown-info">
+                          <AppIcon name={app.appName} size={16} />
+                          <span title={app.appName} className="dash-breakdown-name">{app.appName}</span>
+                          <span title={app.category} className="dash-breakdown-sub">({app.category})</span>
+                        </div>
+                        <div className="dash-breakdown-stats">
+                          <span
+                            className="dash-focus-tag"
+                            style={{ color: app.avgScore >= FOCUS_OK ? 'var(--badge-productive-text)' : 'var(--badge-unproductive-text)' }}
+                          >
+                            {app.avgScore}% Focus
+                          </span>
+                          <span className="dash-percent-tag">
+                            {app.percent}%
+                          </span>
+                        </div>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-                        <span style={{ fontSize: 12, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: app.avgScore >= FOCUS_OK ? 'var(--badge-productive-text)' : 'var(--badge-unproductive-text)' }}>
-                          {app.avgScore}% Focus
-                        </span>
-                        <span style={{ fontSize: 12, color: 'var(--text-muted)', width: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                          {app.percent}%
-                        </span>
-                      </div>
-                    </div>
-                    <div
-                      style={{ width: '100%', height: 6, background: 'var(--bg-elevated)', borderRadius: 99, overflow: 'hidden' }}
-                      role="progressbar"
-                      aria-valuenow={app.percent}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-label={`${app.appName} share of captures`}
-                    >
                       <div
-                        style={{
-                          width: `${app.percent}%`,
-                          height: '100%',
-                          backgroundColor: focusBarColor(app.avgScore),
-                          borderRadius: 99,
-                        }}
-                      />
+                        className="dash-progress-track"
+                        role="progressbar"
+                        aria-valuenow={app.percent}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label={`${app.appName} share of captures`}
+                      >
+                        <div
+                          className="dash-progress-fill"
+                          style={{
+                            width: `${app.percent}%`,
+                            backgroundColor: focusBarColor(app.avgScore),
+                          }}
+                        />
+                      </div>
                     </div>
-                  </div>
-                ))
+                  ))
+                )
+              ) : (
+                categoryBreakdown.length === 0 ? (
+                  <EmptyState
+                    icon={<Icon name="activity" size={24} />}
+                    title="No Category Data Yet"
+                    description="Category classifications will appear once snapshots are analyzed."
+                  />
+                ) : (
+                  categoryBreakdown.map((cat) => (
+                    <div key={cat.category} className="dash-breakdown-row">
+                      <div className="dash-breakdown-header">
+                        <div className="dash-breakdown-info">
+                          <CategoryBadge category={cat.category} />
+                          <span className="dash-breakdown-sub">{cat.count} capture{cat.count === 1 ? '' : 's'}</span>
+                        </div>
+                        <div className="dash-breakdown-stats">
+                          <span
+                            className="dash-focus-tag"
+                            style={{ color: cat.avgScore >= FOCUS_OK ? 'var(--badge-productive-text)' : 'var(--badge-unproductive-text)' }}
+                          >
+                            {cat.avgScore}% Focus
+                          </span>
+                          <span className="dash-percent-tag">
+                            {cat.percent}%
+                          </span>
+                        </div>
+                      </div>
+                      <div
+                        className="dash-progress-track"
+                        role="progressbar"
+                        aria-valuenow={cat.percent}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label={`${cat.category} share of captures`}
+                      >
+                        <div
+                          className="dash-progress-fill"
+                          style={{
+                            width: `${cat.percent}%`,
+                            backgroundColor: focusBarColor(cat.avgScore),
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))
+                )
               )}
             </div>
           </div>
@@ -549,7 +745,10 @@ export default function Dashboard({
       {workSessions.length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-header">
-            <span className="card-title">⏱️ Work Sessions</span>
+            <span className="card-title">
+              <Icon name="clock" size={14} />
+              Work Sessions
+            </span>
             <span style={{ fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
               {workSessions.length} session{workSessions.length === 1 ? '' : 's'}
             </span>
@@ -558,33 +757,28 @@ export default function Dashboard({
             {workSessions.map((session) => (
               <div
                 key={session.id}
-                style={{
-                  padding: '10px 14px',
-                  background: 'var(--bg-surface)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-sm)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 16,
-                  minWidth: 0,
-                }}
+                className="dash-session-row"
               >
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                     {canonicalAppName(session.top_app_name) && (
                       <AppIcon name={canonicalAppName(session.top_app_name)} size={16} />
                     )}
                     <span title={session.title} style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {session.title}
                     </span>
+                    {session.start_time && session.end_time && (
+                      <span className="dash-session-times">
+                        {safeFormatTime(session.start_time)} – {safeFormatTime(session.end_time)}
+                      </span>
+                    )}
                   </div>
-                  <div title={session.summary} style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <div title={session.summary} style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {session.summary}
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                <div className="dash-session-meta">
                   <span
                     className={`badge ${session.productive_pct >= FOCUS_OK ? 'badge-productive' : 'badge-unproductive'}`}
                     style={{ fontVariantNumeric: 'tabular-nums' }}
@@ -604,7 +798,10 @@ export default function Dashboard({
       {/* Activity Stream Feed */}
       <div className="card dash-activity">
         <div className="card-header">
-          <span className="card-title">📸 Activity Stream</span>
+          <span className="card-title">
+            <Icon name="desktop" size={14} />
+            Activity Stream
+          </span>
           <div className="dash-feed-meta">
             <span style={{ fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
               Latest {recent.length} captures
@@ -637,38 +834,49 @@ export default function Dashboard({
               }
               action={
                 onRefresh ? (
-                  <button type="button" className="btn btn-secondary" onClick={onRefresh}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary dash-btn"
+                    onClick={onRefresh}
+                    aria-label="Refresh dashboard activity"
+                  >
                     Refresh now
                   </button>
                 ) : undefined
               }
             />
           ) : (
-            <div className="timeline-list">
+            <div className="timeline-list" role="feed" aria-label="Recent activity captures feed">
               {recent.map((log) => {
                 const scoreVal = Math.round(captureScore(log));
                 const isPending = isPendingLog(log);
                 const safeTitle = redactSensitiveTitle(log.window_title);
+                const isProtected = safeTitle.includes('[Protected Window]');
                 return (
-                  <div
+                  <article
                     key={`${log.id}-${log.timestamp}-${log.image_path}`}
                     className="timeline-item dash-log-row"
+                    aria-label={`Capture at ${safeFormatTime(log.timestamp)}`}
                   >
-                    <span className="timeline-time">
-                      {safeFormatTime(log.timestamp)}
-                    </span>
+                    <div className="dash-time-col">
+                      <time className="timeline-time" dateTime={log.timestamp}>
+                        {safeFormatTime(log.timestamp)}
+                      </time>
+                    </div>
 
-                    <ScreenshotThumb
-                      imagePath={log.image_path}
-                      onClick={log.image_path ? () => setSelectedImage(log.image_path) : undefined}
-                    />
+                    <div className="dash-thumb-col">
+                      <ScreenshotThumb
+                        imagePath={log.image_path}
+                        onClick={log.image_path ? () => setSelectedImage(log.image_path) : undefined}
+                      />
+                    </div>
 
-                    <div className="timeline-info">
+                    <div className="timeline-info dash-info-col">
                       <div className="dash-chip-row">
                         <CategoryBadge category={log.ai_category} />
                         {canonicalAppName(log.app_name) && (
                           <span
-                            title={canonicalAppName(log.app_name)}
+                            title={`Application: ${canonicalAppName(log.app_name)}`}
                             className="dash-app-chip"
                           >
                             <AppIcon name={canonicalAppName(log.app_name)} size={14} />
@@ -678,7 +886,7 @@ export default function Dashboard({
                           </span>
                         )}
                         {log.app_category && (
-                          <span title={log.app_category} className="dash-app-category">
+                          <span title={`Category: ${log.app_category}`} className="dash-app-category">
                             ({log.app_category})
                           </span>
                         )}
@@ -686,7 +894,17 @@ export default function Dashboard({
 
                       {safeTitle && (
                         <div title={safeTitle} className="dash-window-title">
-                          🪟 {safeTitle}
+                          {isProtected ? (
+                            <span className="dash-protected-badge">
+                              <Icon name="lock" size={12} color="var(--accent-amber)" />
+                              <span>Protected Window</span>
+                            </span>
+                          ) : (
+                            <span className="dash-window-title-text">
+                              <Icon name="desktop" size={12} color="var(--text-muted)" />
+                              <span className="dash-window-title-string">{safeTitle}</span>
+                            </span>
+                          )}
                         </div>
                       )}
 
@@ -694,6 +912,7 @@ export default function Dashboard({
                         <div
                           className="dash-reason-skeleton"
                           title="AI analysis is queued or running for this capture"
+                          aria-busy="true"
                         >
                           <div className="skeleton dash-shimmer-line" style={{ width: '58%' }} />
                           <div className="skeleton dash-shimmer-line" style={{ width: '34%' }} />
@@ -710,9 +929,12 @@ export default function Dashboard({
 
                     <div className={isPending ? 'dash-score-col is-pending' : 'dash-score-col'}>
                       {isPending ? (
-                        <span className="badge badge-pending dash-pending-chip" title="Pending AI review — add a Gemini API key in Settings to score captures">
+                        <span
+                          className="badge badge-pending dash-pending-chip"
+                          title="Pending AI review — add a Gemini API key in Settings to score captures"
+                        >
                           <span className="dash-mini-spinner" aria-hidden="true" />
-                          Pending AI review
+                          <span>Pending AI</span>
                         </span>
                       ) : (
                         <>
@@ -755,7 +977,7 @@ export default function Dashboard({
                         </>
                       )}
                     </div>
-                  </div>
+                  </article>
                 );
               })}
             </div>

@@ -157,7 +157,7 @@ func stopBackgroundDaemon(dataDir string) {
 		_ = os.Remove(path)
 		return
 	}
-	if !processAlive(pid) {
+	if !processAlive(pid) || !processMatchesDaemon(pid) {
 		_ = os.Remove(path)
 		return
 	}

@@ -147,11 +147,13 @@ func main() {
 				ticker = time.NewTicker(dur)
 				log.Printf("[server] background collector ticker reset to %v", dur)
 			case stats, ok := <-statsCh:
-				if ok {
-					trackerMutex.Lock()
-					latestKeyStats = stats
-					trackerMutex.Unlock()
+				if !ok {
+					statsCh = nil
+					continue
 				}
+				trackerMutex.Lock()
+				latestKeyStats = stats
+				trackerMutex.Unlock()
 			case <-ticker.C:
 				trackerMutex.Lock()
 				active := trackerActive
@@ -422,9 +424,13 @@ func main() {
 			http.Error(w, "Log not found", http.StatusNotFound)
 			return
 		}
-		// Authenticated callers may only persist results for their own logs;
+		// Authenticated callers may only persist results for their own logs or org;
 		// the unauthenticated fallback is already restricted to loopback.
-		if userID > 0 && (entry.UserID != userID || (orgID > 0 && entry.OrgID != orgID)) {
+		if orgID > 0 && entry.OrgID != orgID {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		if userID > 0 && entry.UserID != userID {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -469,7 +475,10 @@ func main() {
 			if err != nil || entry == nil {
 				continue
 			}
-			if userID > 0 && (entry.UserID != userID || (orgID > 0 && entry.OrgID != orgID)) {
+			if orgID > 0 && entry.OrgID != orgID {
+				continue
+			}
+			if userID > 0 && entry.UserID != userID {
 				continue
 			}
 			batchItems = append(batchItems, ai.BatchAnalysisItem{
@@ -1239,17 +1248,10 @@ func main() {
 
 	mailer := email.NewMailer()
 
-	// Helper to set session cookie securely
+	// Helper to set session cookie securely via signed JWT
 	setSessionCookie := func(w http.ResponseWriter, userID int64) {
-		http.SetCookie(w, &http.Cookie{
-			Name:     "mini_session_user_id",
-			Value:    fmt.Sprintf("%d", userID),
-			Path:     "/",
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-			Expires:  time.Now().Add(30 * 24 * time.Hour),
-		})
 		if u, err := database.GetUserByID(userID); err == nil && u != nil {
+			setJWTTokenCookie(w, u)
 			o, _ := database.GetOrganization(u.OrgID)
 			setRecentOAuth(u, o)
 		}

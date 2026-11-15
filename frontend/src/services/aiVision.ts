@@ -95,8 +95,22 @@ export async function runClientVisionAnalysis(options: VisionAnalysisOptions): P
     });
   }
 
-  // Require real images for the batch — never fabricate missing ones.
-  if (loadedItems.length < 3) return;
+  // Mark candidate items without screenshots that have zero user input as Idle so they don't block the queue
+  for (const item of bundle) {
+    if (!item.image_path && (item.total_keys || 0) === 0 && (item.total_clicks || 0) === 0) {
+      resultCache.set(item.id, {
+        ai_category: 'Idle',
+        productive_score: 5,
+        is_productive: false,
+        ai_confidence: 0.9,
+        ai_reason: 'no screen capture or user input',
+      });
+      submittedIds.add(item.id);
+    }
+  }
+
+  // Require at least one real image for multimodal vision analysis.
+  if (loadedItems.length < 1) return;
 
   const taskGoal = userTask.trim()
     ? `CURRENT TARGET USER TASK (GOAL): "${userTask.trim()}"\nEVALUATION RULE: Analyze how relevant the visible desktop content and user input (typing/mouse) are to achieving THIS SPECIFIC TASK. High scores require direct alignment with this task context.`
@@ -168,9 +182,24 @@ Base every field strictly on the provided screenshot and metadata. Do NOT invent
       return patch ? { ...log, ...patch } : log;
     }));
 
-    // Persist to backend DB in web mode
+    // Persist to database in desktop Wails mode or server web mode
     const w = window as any;
-    if (!w.go?.main?.App) {
+    if (w.go?.main?.App?.SaveLogAnalysis) {
+      patches.forEach((patch, id) => {
+        if (!patch.ai_category) return;
+        callGo(() => w.go.main.App.SaveLogAnalysis(
+          id,
+          patch.ai_category || '',
+          patch.app_name || '',
+          patch.app_category || '',
+          patch.window_title || '',
+          !!patch.is_productive,
+          patch.productive_score ?? 0,
+          patch.ai_confidence ?? 0,
+          patch.ai_reason || '',
+        )).catch(() => null);
+      });
+    } else {
       patches.forEach((patch, id) => {
         if (!patch.ai_category) return;
         void apiFetch('/api/ai/log-result', {

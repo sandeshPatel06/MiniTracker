@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useDeferredValue } from 'react';
 import { LogEntry } from '../types';
 import { format } from 'date-fns';
 import { CategoryBadge } from '../components/CategoryBadge';
@@ -24,19 +24,53 @@ interface Props {
 
 const SKELETON_ROWS = [1, 2, 3, 4, 5];
 
-export default function Timeline({ logs, loading, today, onDateChange, loadError, onRetry }: Props) {
+const SENSITIVE_PATTERNS = [
+  /\b(password|vault|bitwarden|1password|keepass|lastpass)\b/i,
+  /\b(bank|banking|chase|paypal|fidelity|schwab|stripe)\b/i,
+  /\b(incognito|private browsing|inprivate)\b/i,
+  /\b(token=|bearer |auth=|session_id=)/i,
+];
+
+function redactSensitiveTitle(title?: string | null): string {
+  if (!title) return '';
+  for (const pattern of SENSITIVE_PATTERNS) {
+    if (pattern.test(title)) {
+      return '🔒 [Protected Window]';
+    }
+  }
+  return title;
+}
+
+function safeFormatTime(timestamp?: string | null, formatStr = 'HH:mm:ss', fallback = '—'): string {
+  if (!timestamp) return fallback;
+  const d = new Date(timestamp);
+  return !Number.isNaN(d.getTime()) ? format(d, formatStr) : fallback;
+}
+
+function safeFormatDateHeader(dateStr: string): string {
+  if (!dateStr) return '—';
+  const cleanDate = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+  const d = new Date(`${cleanDate}T00:00:00`);
+  return !Number.isNaN(d.getTime()) ? format(d, 'MMMM d, yyyy') : dateStr;
+}
+
+export default function Timeline({ logs = [], loading, today, onDateChange, loadError, onRetry }: Props) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedApp, setSelectedApp] = useState('ALL');
   const [selectedCategory, setSelectedCategory] = useState('ALL');
+  const [maskSensitive, setMaskSensitive] = useState(true);
 
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
 
+  // Defer search query processing so input typing stays 60fps
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+
   // Extract unique app names & categories for dropdown filters
   const uniqueApps = useMemo(() => {
     const apps = new Set<string>();
-    logs.forEach((l) => {
+    (logs || []).forEach((l) => {
       const app = canonicalAppName(l.app_name);
       if (app) apps.add(app);
     });
@@ -45,32 +79,42 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
 
   const uniqueCategories = useMemo(() => {
     const cats = new Set<string>();
-    logs.forEach((l) => {
+    (logs || []).forEach((l) => {
       if (l.ai_category && l.ai_category !== 'Unknown') cats.add(l.ai_category);
     });
     return Array.from(cats).sort();
   }, [logs]);
 
-  // Filter logs based on search query, app, and category
+  // Filter & sort logs with fast Date.parse and tie-breaking
   const filteredLogs = useMemo(() => {
-    return logs
+    const q = deferredSearchQuery.trim().toLowerCase();
+    return (logs || [])
       .filter((log) => {
         if (selectedApp !== 'ALL' && canonicalAppName(log.app_name) !== selectedApp) return false;
         if (selectedCategory !== 'ALL' && log.ai_category !== selectedCategory) return false;
-        if (searchQuery.trim()) {
-          const q = searchQuery.toLowerCase();
-          const matchApp = log.app_name?.toLowerCase().includes(q);
+        if (q) {
+          const matchApp = log.app_name?.toLowerCase().includes(q) ||
+                           canonicalAppName(log.app_name).toLowerCase().includes(q);
           const matchReason = log.ai_reason?.toLowerCase().includes(q);
           const matchCat = log.ai_category?.toLowerCase().includes(q);
+          const matchAppCat = log.app_category?.toLowerCase().includes(q);
           const matchWindow = log.window_title?.toLowerCase().includes(q);
-          return matchApp || matchReason || matchCat || matchWindow;
+          return Boolean(matchApp || matchReason || matchCat || matchAppCat || matchWindow);
         }
         return true;
       })
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-  }, [logs, selectedApp, selectedCategory, searchQuery]);
+      .sort((a, b) => {
+        const timeB = Date.parse(b.timestamp) || 0;
+        const timeA = Date.parse(a.timestamp) || 0;
+        if (timeB !== timeA) return timeB - timeA;
+        return (b.id || 0) - (a.id || 0);
+      });
+  }, [logs, selectedApp, selectedCategory, deferredSearchQuery]);
 
-  const totalPages = Math.ceil(filteredLogs.length / pageSize) || 1;
+  // Safe pagination calculations avoiding NaN, 0, or negative pages
+  const safePageSize = Math.max(1, pageSize);
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / safePageSize));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
 
   // Reset to page 1 and clear filters when the selected day changes
   useEffect(() => {
@@ -80,26 +124,32 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
     setSelectedCategory('ALL');
   }, [today]);
 
-  // Never leave the paginator on a page that no longer exists
+  // Never leave paginator state on a page that no longer exists
   useEffect(() => {
     if (currentPage > totalPages) {
       setCurrentPage(totalPages);
+    } else if (currentPage < 1) {
+      setCurrentPage(1);
     }
   }, [currentPage, totalPages]);
 
   const paginatedLogs = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return filteredLogs.slice(start, start + pageSize);
-  }, [filteredLogs, currentPage, pageSize]);
+    const start = (safeCurrentPage - 1) * safePageSize;
+    return filteredLogs.slice(start, start + safePageSize);
+  }, [filteredLogs, safeCurrentPage, safePageSize]);
 
   // Calculate day summary metrics from analyzed captures only
-  const analyzedLogs = useMemo(() => logs.filter((l) => !isPendingLog(l)), [logs]);
+  const analyzedLogs = useMemo(() => (logs || []).filter((l) => !isPendingLog(l)), [logs]);
 
-  const avgDayScore = analyzedLogs.length > 0
-    ? Math.round(
-        analyzedLogs.reduce((acc, l) => acc + (typeof l.productive_score === 'number' ? l.productive_score : l.is_productive ? 100 : 0), 0) / analyzedLogs.length
-      )
-    : 0;
+  const avgDayScore = useMemo(() => {
+    if (analyzedLogs.length === 0) return 0;
+    const sum = analyzedLogs.reduce((acc, l) => {
+      const isNum = typeof l.productive_score === 'number' && Number.isFinite(l.productive_score);
+      const score = isNum ? l.productive_score! : l.is_productive ? 100 : 0;
+      return acc + score;
+    }, 0);
+    return Math.round(sum / analyzedLogs.length);
+  }, [analyzedLogs]);
 
   const hasActiveFilters = Boolean(searchQuery.trim()) || selectedApp !== 'ALL' || selectedCategory !== 'ALL';
 
@@ -256,8 +306,20 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
         <div className="card-header">
           <span className="card-title tl-card-title">
             <Icon name="calendar" size={14} color="var(--accent-primary)" />
-            {today === localISODate() ? 'Today\'s Log Feed' : format(new Date(today + 'T00:00:00'), 'MMMM d, yyyy')}
+            {today === localISODate() ? "Today's Log Feed" : safeFormatDateHeader(today)}
           </span>
+          <div>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setMaskSensitive((prev) => !prev)}
+              title={maskSensitive ? 'Disable sensitive window masking' : 'Mask sensitive window titles'}
+              style={{ fontSize: 11, padding: '4px 8px' }}
+            >
+              <Icon name="lock" size={12} color={maskSensitive ? 'var(--accent-teal)' : undefined} />
+              {maskSensitive ? 'Privacy Mask ON' : 'Privacy Mask OFF'}
+            </button>
+          </div>
         </div>
 
         <div className="card-body tl-list-body">
@@ -320,12 +382,13 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
           ) : (
             <ul className="timeline-list tl-rows">
               {paginatedLogs.map((log) => {
-                const scoreVal = typeof log.productive_score === 'number'
-                  ? Math.round(log.productive_score)
-                  : log.is_productive ? 100 : 0;
+                const isNum = typeof log.productive_score === 'number' && Number.isFinite(log.productive_score);
+                const rawScore = isNum ? log.productive_score! : log.is_productive ? 100 : 0;
+                const scoreVal = Math.min(100, Math.max(0, Math.round(rawScore)));
                 const appName = canonicalAppName(log.app_name);
-                const time = format(new Date(log.timestamp), 'HH:mm:ss');
+                const time = safeFormatTime(log.timestamp);
                 const stateLabel = isPendingLog(log) ? 'pending' : scoreVal >= 50 ? 'productive' : 'unproductive';
+                const windowTitle = maskSensitive ? redactSensitiveTitle(log.window_title) : (log.window_title || '');
 
                 return (
                   <li
@@ -356,9 +419,9 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
                         )}
                       </div>
 
-                      {log.window_title && (
-                        <div className="tl-window-title" title={log.window_title}>
-                          {log.window_title}
+                      {windowTitle && (
+                        <div className="tl-window-title" title={windowTitle}>
+                          {windowTitle}
                         </div>
                       )}
 
@@ -370,9 +433,9 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
                         <span className="tl-keys-icon" aria-hidden="true">
                           <Icon name="keyboard" size={12} />
                         </span>
-                        <span>{log.total_keys} keys · {log.unique_keys} unique</span>
+                        <span>{(log.total_keys ?? 0)} keys · {(log.unique_keys ?? 0)} unique</span>
                         <span className="tl-dot" aria-hidden="true">•</span>
-                        <span>Entropy: {log.entropy_score.toFixed(1)}</span>
+                        <span>Entropy: {(log.entropy_score ?? 0).toFixed(1)}</span>
                       </div>
                     </div>
 
@@ -385,9 +448,9 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
                           {scoreVal}% Focus
                         </span>
                       )}
-                      {log.ai_confidence > 0 && (
+                      {(log.ai_confidence ?? 0) > 0 && (
                         <span className="tl-confidence">
-                          {(log.ai_confidence * 100).toFixed(0)}% AI confidence
+                          {((log.ai_confidence ?? 0) * 100).toFixed(0)}% AI confidence
                         </span>
                       )}
                     </div>
@@ -407,10 +470,13 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
                 id="timeline-page-size"
                 ariaLabel="Rows per page"
                 compact
-                value={String(pageSize)}
+                value={String(safePageSize)}
                 onChange={(value) => {
-                  setPageSize(Number(value));
-                  setCurrentPage(1);
+                  const parsed = Number(value);
+                  if (parsed > 0) {
+                    setPageSize(parsed);
+                    setCurrentPage(1);
+                  }
                 }}
                 options={[15, 25, 50, 100].map((size) => ({
                   value: String(size),
@@ -422,7 +488,7 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
             <div className="tl-pagination-nav">
               <button
                 type="button"
-                disabled={currentPage <= 1}
+                disabled={safeCurrentPage <= 1}
                 onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                 className="btn btn-secondary btn-sm tl-page-btn"
               >
@@ -430,11 +496,11 @@ export default function Timeline({ logs, loading, today, onDateChange, loadError
                 Previous
               </button>
               <span className="tl-page-info">
-                {currentPage} / {totalPages}
+                {safeCurrentPage} / {totalPages}
               </span>
               <button
                 type="button"
-                disabled={currentPage >= totalPages}
+                disabled={safeCurrentPage >= totalPages}
                 onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                 className="btn btn-secondary btn-sm tl-page-btn"
               >

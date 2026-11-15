@@ -44,11 +44,10 @@ const GRID_STROKE = 'var(--border-subtle)';
 // analyzed captures only (see derived-data blocks) so pending rows can't drag
 // ratings toward 0%.
 function captureScore(log: LogEntry): number {
-  return typeof log.productive_score === 'number'
-    ? log.productive_score
-    : log.is_productive
-    ? 100
-    : 0;
+  if (typeof log.productive_score === 'number' && Number.isFinite(log.productive_score)) {
+    return Math.max(0, Math.min(100, Math.round(log.productive_score)));
+  }
+  return log.is_productive ? 100 : 0;
 }
 
 // One analysis threshold → one tone. Focus is emerald; auxiliary
@@ -71,7 +70,9 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
         const display = noData
           ? (p.payload?.Captures === 0 ? 'No captures' : 'Pending analysis')
           : typeof p.value === 'number'
-            ? (Number.isInteger(p.value) ? `${p.value}${p.unit || ''}` : p.value.toFixed(1))
+            ? Number.isNaN(p.value)
+              ? '—'
+              : `${Number.isInteger(p.value) ? p.value : p.value.toFixed(1)}${p.unit || ''}`
             : String(p.value);
         return (
           <div key={i} className="an-tooltip-row">
@@ -162,8 +163,10 @@ export default function Analytics({
     const hourScores: Array<{ total: number; count: number }> = Array.from({ length: 24 }, () => ({ total: 0, count: 0 }));
 
     logs.forEach(l => {
-      const h = new Date(l.timestamp).getHours();
-      if (h < 0 || h > 23) return;
+      if (!l.timestamp) return;
+      const d = new Date(l.timestamp);
+      const h = d.getHours();
+      if (Number.isNaN(h) || h < 0 || h > 23) return;
       hourCounts[h]++;
       if (!isPendingLog(l)) {
         hourScores[h].total += captureScore(l);
@@ -182,7 +185,7 @@ export default function Analytics({
     let best: { hour: string; score: number } | null = null;
     for (const d of hourlyData) {
       const v = d['Focus Rating'];
-      if (typeof v === 'number' && (best === null || v > best.score)) {
+      if (typeof v === 'number' && Number.isFinite(v) && (best === null || v > best.score)) {
         best = { hour: d.hour, score: v };
       }
     }
@@ -225,19 +228,33 @@ export default function Analytics({
   // AI-evaluated points instead of dipping to 0 while analysis is in flight.
   const multiDay = !!(startDate && endDate && startDate !== endDate);
   const entropyData = useMemo(() => {
-    return [...logs]
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-      .map(l => ({
-        time: format(new Date(l.timestamp), multiDay ? 'MMM d HH:mm' : 'HH:mm'),
-        Entropy: typeof l.entropy_score === 'number' ? parseFloat(l.entropy_score.toFixed(1)) : null,
+    if (logs.length === 0) return [];
+    const sorted = [...logs]
+      .filter(l => l.timestamp && !Number.isNaN(new Date(l.timestamp).getTime()))
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    // Downsample if dataset exceeds 150 points to prevent Recharts SVG performance collapse on 30-day views
+    const maxPoints = 150;
+    const step = Math.max(1, Math.ceil(sorted.length / maxPoints));
+    const sampled = sorted.filter((_, idx) => idx % step === 0 || idx === sorted.length - 1);
+
+    return sampled.map(l => {
+      let timeStr = '—';
+      try {
+        timeStr = format(new Date(l.timestamp), multiDay ? 'MMM d HH:mm' : 'HH:mm');
+      } catch {
+        // Safe fallback
+      }
+      return {
+        time: timeStr,
+        Entropy: typeof l.entropy_score === 'number' && Number.isFinite(l.entropy_score)
+          ? parseFloat(Math.max(0, Math.min(100, l.entropy_score)).toFixed(1))
+          : null,
         FocusScore: isPendingLog(l)
           ? null
-          : typeof l.productive_score === 'number'
-          ? Math.round(l.productive_score)
-          : l.is_productive
-          ? 100
-          : 0,
-      }));
+          : captureScore(l),
+      };
+    });
   }, [logs, multiDay]);
 
   // Category breakdown for pie chart
@@ -414,7 +431,10 @@ export default function Analytics({
               max={endDate || localISODate()}
               onChange={(e) => {
                 const s = e.target.value;
-                onDateRangeChange?.(s, endDate && endDate < s ? s : endDate || s);
+                if (!s) return;
+                const currentEnd = endDate || today || localISODate();
+                const nextEnd = currentEnd < s ? s : currentEnd;
+                onDateRangeChange?.(s, nextEnd);
               }}
             />
             <span className="an-dates-sep" aria-hidden="true">to</span>
@@ -427,7 +447,10 @@ export default function Analytics({
               max={localISODate()}
               onChange={(e) => {
                 const ed = e.target.value;
-                onDateRangeChange?.(startDate || today, ed);
+                if (!ed) return;
+                const currentStart = startDate || today || localISODate();
+                const nextStart = currentStart > ed ? ed : currentStart;
+                onDateRangeChange?.(nextStart, ed);
               }}
             />
           </div>

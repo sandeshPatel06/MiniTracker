@@ -361,6 +361,12 @@ export default function App() {
     if (queryToken) {
       setInviteToken(queryToken);
       setPage('accept-invite');
+      // Clean query parameter from URL to prevent token leakage in history or UI
+      urlParams.delete('token');
+      urlParams.delete('invite');
+      const newSearch = urlParams.toString();
+      const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : '') + window.location.hash;
+      window.history.replaceState(null, '', newUrl);
       return;
     }
 
@@ -570,25 +576,39 @@ export default function App() {
                 const data = await readJsonSafe<{ results?: any[] }>(res);
                 const results = Array.isArray(data?.results) ? data!.results : null;
                 if (results) {
-                  if (requestId === requestIdRef.current) {
-                    setLogs((prev) => prev.map((log) => {
-                      const match = results.find((r: any) => r.LogID === log.id);
-                      if (match) {
-                        return {
-                          ...log,
-                          ai_category: match.category,
-                          app_name: match.app_name || log.app_name,
-                          app_category: match.app_category || log.app_category,
-                          window_title: match.window_title || log.window_title,
-                          is_productive: match.productive,
-                          productive_score: match.productivity_score,
-                          ai_confidence: match.confidence,
-                          ai_reason: match.reason,
-                        };
-                      }
-                      return log;
-                    }));
+                  // Cache results so even if a loadData request finished in between,
+                  // future merges will pick up these AI insights.
+                  for (const r of results) {
+                    if (r?.LogID) {
+                      aiResultCacheRef.current.set(r.LogID, {
+                        ai_category: r.category,
+                        app_name: r.app_name,
+                        app_category: r.app_category,
+                        window_title: r.window_title,
+                        is_productive: r.productive,
+                        productive_score: r.productivity_score,
+                        ai_confidence: r.confidence,
+                        ai_reason: r.reason,
+                      });
+                    }
                   }
+                  setLogs((prev) => prev.map((log) => {
+                    const match = results.find((r: any) => r.LogID === log.id);
+                    if (match) {
+                      return {
+                        ...log,
+                        ai_category: match.category,
+                        app_name: match.app_name || log.app_name,
+                        app_category: match.app_category || log.app_category,
+                        window_title: match.window_title || log.window_title,
+                        is_productive: match.productive,
+                        productive_score: match.productivity_score,
+                        ai_confidence: match.confidence,
+                        ai_reason: match.reason,
+                      };
+                    }
+                    return log;
+                  }));
                 }
               } else {
                 candidateIds.forEach(id => aiSubmittedLogIdsRef.current.delete(id));
@@ -651,10 +671,18 @@ export default function App() {
 
   // Periodic background refresh & 7-day retention cleanup — gated on the
   // session so logged-out states don't keep polling in the background.
+  // Throttled when the window/tab is hidden to save power and network.
   useEffect(() => {
     if (!hasSession) return;
-    const syncInterval = setInterval(() => {
+    const triggerRefresh = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
       loadDataRef.current(undefined, undefined, undefined, undefined, { background: true });
+    };
+
+    const syncInterval = setInterval(() => {
+      triggerRefresh();
 
       try {
         const retentionCutoff = new Date();
@@ -672,7 +700,17 @@ export default function App() {
       } catch {}
     }, 30000);
 
-    return () => clearInterval(syncInterval);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        triggerRefresh();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(syncInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [hasSession]);
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
@@ -743,6 +781,17 @@ export default function App() {
     setAuthNotice(null);
     navigateTo('dashboard');
   };
+
+  if (!authChecked) {
+    return (
+      <div className="app-shell" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--bg-main, #0b0f19)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem', color: 'var(--text-secondary, #94a3b8)' }}>
+          <div className="spinner" style={{ width: 32, height: 32, border: '3px solid rgba(255,255,255,0.1)', borderTopColor: 'var(--color-primary, #6366f1)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+          <span style={{ fontSize: '0.875rem' }}>Loading get-Hike...</span>
+        </div>
+      </div>
+    );
+  }
 
   if (authChecked && !currentUser && !isGuestMode) {
     if (window.location.hash.includes('accept-invite')) {

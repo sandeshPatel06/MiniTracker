@@ -1,0 +1,20 @@
+meta {
+  name: Record Input Activity
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{base_url}}/api/tracker/input
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "total_keys": 15,
+    "unique_keys": 8,
+    "total_clicks": 4,
+    "mouse_distance": 320
+  }
+}

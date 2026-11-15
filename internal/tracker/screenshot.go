@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/chai2010/webp"
-	"github.com/kbinani/screenshot"
 	"golang.org/x/image/draw"
 )
 
@@ -33,41 +32,40 @@ const (
 
 // captureMu serializes concurrent CaptureScreenshot calls (scheduled tick,
 // manual "collect now", daemon) so captures never overlap or interleave writes.
-var captureMu sync.Mutex
+var (
+	captureMu       sync.Mutex
+	lastCaptureTime time.Time
+	lastCaptureRes  *ScreenshotResult
+)
 
 // CaptureScreenshot takes a screenshot of all active displays, combines them into
 // a single grid image, compresses it to WebP at 60% quality (max 720p), saves it
 // to disk, and returns a base64 encoded copy for AI analysis.
-func CaptureScreenshot(dataDir string) (*ScreenshotResult, error) {
+func CaptureScreenshot(dataDir string) (res *ScreenshotResult, retErr error) {
 	captureMu.Lock()
 	defer captureMu.Unlock()
 
-	// Capture the moment first so the on-disk name reflects when the frame was
-	// grabbed, not when encoding/writing finished (encode can take ~100ms+).
-	now := time.Now()
-
-	n := screenshot.NumActiveDisplays()
-	if n == 0 {
-		return nil, fmt.Errorf("no active displays detected")
-	}
-
-	var displayImgs []image.Image
-	for i := 0; i < n; i++ {
-		bounds := screenshot.GetDisplayBounds(i)
-		img, err := screenshot.CaptureRect(bounds)
-		if err != nil {
-			log.Printf("[tracker] capture screen display %d: %v", i, err)
-			continue
+	defer func() {
+		if r := recover(); r != nil {
+			res = nil
+			retErr = fmt.Errorf("screenshot capture panic recovered: %v", r)
+			log.Printf("[tracker] %v", retErr)
 		}
-		displayImgs = append(displayImgs, img)
+	}()
+
+	// Debounce rapid bursts: if a capture completed less than 2s ago, return
+	// the cached result instead of hitting the graphics subsystem and creating
+	// duplicate files within the same second.
+	now := time.Now()
+	if !lastCaptureTime.IsZero() && now.Sub(lastCaptureTime) < 2*time.Second && lastCaptureRes != nil {
+		return lastCaptureRes, nil
 	}
 
-	if len(displayImgs) == 0 {
-		return nil, fmt.Errorf("failed to capture any active display")
+	// Capture all displays combined without audio shutter sounds or flash
+	combined, err := captureDisplays()
+	if err != nil {
+		return nil, err
 	}
-
-	// Combine display images into a single grid image
-	combined := stitchDisplayImages(displayImgs)
 
 	// Resize to max 720p maintaining aspect ratio
 	resized := resizeImage(combined, maxWidth, maxHeight)
@@ -104,13 +102,16 @@ func CaptureScreenshot(dataDir string) (*ScreenshotResult, error) {
 	}
 
 	b := resized.Bounds()
-	return &ScreenshotResult{
+	res = &ScreenshotResult{
 		FilePath:   filePath,
 		Base64Data: base64.StdEncoding.EncodeToString(webpData),
 		Width:      b.Dx(),
 		Height:     b.Dy(),
 		SizeBytes:  len(webpData),
-	}, nil
+	}
+	lastCaptureTime = time.Now()
+	lastCaptureRes = res
+	return res, nil
 }
 
 // reserveScreenshotPath atomically claims an unused .webp path under dateDir

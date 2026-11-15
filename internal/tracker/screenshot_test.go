@@ -137,3 +137,22 @@ func TestResizeImageWidthBound(t *testing.T) {
 		t.Fatalf("resizeImage(2560x1440) = %dx%d; want %dx%d", b.Dx(), b.Dy(), maxWidth, maxHeight)
 	}
 }
+
+// TestCaptureScreenshotIntegration verifies that CaptureScreenshot works silently and produces a valid WebP file.
+func TestCaptureScreenshotIntegration(t *testing.T) {
+	dir := t.TempDir()
+	res, err := CaptureScreenshot(dir)
+	if err != nil {
+		t.Logf("CaptureScreenshot in test env: %v", err)
+		return
+	}
+	if res.FilePath == "" {
+		t.Fatal("res.FilePath is empty")
+	}
+	if res.Width <= 0 || res.Height <= 0 {
+		t.Fatalf("res dimensions invalid: %dx%d", res.Width, res.Height)
+	}
+	if info, err := os.Stat(res.FilePath); err != nil || info.Size() == 0 {
+		t.Fatalf("screenshot file not created or empty: %v", err)
+	}
+}

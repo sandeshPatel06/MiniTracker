@@ -5,13 +5,13 @@ meta {
 }
 
 get {
-  url: {{base_url}}/api/image?path=/path/to/screenshot.jpg
+  url: {{base_url}}/api/image?path={{sample_image_path}}
   body: none
   auth: bearer
 }
 
 params:query {
-  path: /path/to/screenshot.jpg
+  path: {{sample_image_path}}
 }
 
 auth:bearer {

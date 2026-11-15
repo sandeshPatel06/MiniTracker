@@ -10,6 +10,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/linux"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed all:frontend/dist
@@ -78,6 +79,15 @@ func runGUI(app *App) (err error) {
 		OnShutdown: app.shutdown,
 		Bind: []interface{}{
 			app,
+		},
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: "get-hike-tracker-app-single-instance-lock",
+			OnSecondInstanceLaunch: func(secondInstanceData options.SecondInstanceData) {
+				if app.ctx != nil {
+					wailsruntime.WindowShow(app.ctx)
+					wailsruntime.WindowUnminimise(app.ctx)
+				}
+			},
 		},
 		Linux: &linux.Options{
 			WindowIsTranslucent: false,

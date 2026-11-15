@@ -1,0 +1,32 @@
+meta {
+  name: Push Telemetry
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/api/telemetry/push
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "logs": [
+      {
+        "timestamp": "2026-11-15T12:00:00Z",
+        "app_name": "vscode",
+        "window_title": "MiniTracker - main.go",
+        "total_keys": 45,
+        "unique_keys": 14,
+        "total_clicks": 6,
+        "mouse_distance": 280,
+        "entropy_score": 0.82
+      }
+    ]
+  }
+}

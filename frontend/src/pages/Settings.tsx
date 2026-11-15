@@ -131,7 +131,9 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
       if ((window as any).go?.main?.App) {
         // In desktop mode, if key is empty we don't fetch
         if (!key.trim()) return;
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key.trim()}`);
+        const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+          headers: { 'x-goog-api-key': key.trim() },
+        });
         if (res.ok) {
           const data = await res.json();
           if (data.models && Array.isArray(data.models)) {
@@ -187,14 +189,22 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
     return Math.min(Math.max(parsed, 5), 3600); // sane range, backend web rule accepts >= 5
   });
 
+  useEffect(() => {
+    if (syncIntervalSeconds && !localStorage.getItem('mini_screenshot_interval')) {
+      setScreenshotInterval(syncIntervalSeconds);
+    }
+  }, [syncIntervalSeconds]);
+
   const handleSave = async () => {
     setSaving(true);
     let backendError: string | null = null;
-    const cleanModel = model.replace('models/', '');
+    const cleanModel = model.replace(/^models\//, '').trim();
+    const trimmedKey = apiKey.trim();
     try {
       if ((window as any).go?.main?.App) {
-        if ((window as any).go.main.App.UpdateGeminiAPIKey) {
-          await (window as any).go.main.App.UpdateGeminiAPIKey(apiKey.trim());
+        // ONLY update key if user explicitly entered one, preventing accidental wipeout of existing backend key
+        if (trimmedKey && (window as any).go.main.App.UpdateGeminiAPIKey) {
+          await (window as any).go.main.App.UpdateGeminiAPIKey(trimmedKey);
         }
         if ((window as any).go.main.App.UpdateAIModel) {
           await (window as any).go.main.App.UpdateAIModel(cleanModel);
@@ -203,31 +213,35 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
           await (window as any).go.main.App.UpdateScreenshotInterval(screenshotInterval);
         }
       } else {
+        const payload: Record<string, any> = {
+          ai_model: model,
+          screenshot_interval_seconds: screenshotInterval
+        };
+        if (trimmedKey) {
+          payload.gemini_api_key = trimmedKey;
+        }
         const res = await apiFetch('/api/config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            gemini_api_key: apiKey.trim(),
-            ai_model: model,
-            screenshot_interval_seconds: screenshotInterval
-          }),
+          body: JSON.stringify(payload),
         });
         if (!res.ok) {
-          throw new Error(`Server returned ${res.status}`);
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData?.error || `Server returned ${res.status}`);
         }
       }
     } catch (err: any) {
       backendError = err?.message || 'unknown error';
     }
 
-    localStorage.setItem('mini_gemini_api_key', apiKey.trim());
-    localStorage.setItem('mini_ai_model', model);
-    localStorage.setItem('mini_screenshot_interval', screenshotInterval.toString());
-
     if (backendError) {
-      showStatus(`✕ Saved locally, but backend update failed: ${backendError}`, 4000);
+      showStatus(`✕ Backend update failed: ${backendError}`, 5000);
     } else {
+      if (trimmedKey) localStorage.setItem('mini_gemini_api_key', trimmedKey);
+      localStorage.setItem('mini_ai_model', model);
+      localStorage.setItem('mini_screenshot_interval', screenshotInterval.toString());
       showStatus('✓ Settings & Selected Model saved successfully!', 4000);
+      window.dispatchEvent(new CustomEvent('mini_settings_updated'));
     }
     setSaving(false);
   };
@@ -244,10 +258,13 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
           return;
         }
         await fetchAvailableModels(apiKey);
-        const cleanModel = model.replace('models/', '');
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${apiKey.trim()}`, {
+        const cleanModel = encodeURIComponent(model.replace(/^models\//, '').trim());
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey.trim(),
+          },
           body: JSON.stringify({
             contents: [{ parts: [{ text: 'Hello, respond with OK if working.' }] }]
           })
@@ -257,8 +274,9 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
           setUsageCount(newUsage);
           setStatusMessage(`✓ Connected successfully to ${cleanModel}!`);
         } else {
-          const err = await res.json();
-          setStatusMessage(`✕ API Error: ${err.error?.message || 'Invalid key or model.'}`);
+          const err = await res.json().catch(() => ({}));
+          const msg = err.error?.message ? String(err.error.message).slice(0, 100) : `Status ${res.status}`;
+          setStatusMessage(`✕ API Error: ${msg}`);
         }
       } else {
         // Proxy through backend test route

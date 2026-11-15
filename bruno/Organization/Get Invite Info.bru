@@ -5,11 +5,11 @@ meta {
 }
 
 get {
-  url: {{base_url}}/api/org/invite-info?token=SAMPLE_INVITE_TOKEN
+  url: {{base_url}}/api/org/invite-info?token={{invite_token}}
   body: none
   auth: none
 }
 
 params:query {
-  token: SAMPLE_INVITE_TOKEN
+  token: {{invite_token}}
 }

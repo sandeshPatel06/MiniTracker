@@ -71,7 +71,14 @@ func ThumbnailForImage(imagePath, cacheDir string) string {
 	return cachePath
 }
 
-func decodeThumbnail(imagePath string) (image.Image, error) {
+func decodeThumbnail(imagePath string) (img image.Image, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			img = nil
+			err = fmt.Errorf("corrupt image decode panic: %v", r)
+		}
+	}()
+
 	f, err := os.Open(imagePath)
 	if err != nil {
 		return nil, err
@@ -82,8 +89,8 @@ func decodeThumbnail(imagePath string) (image.Image, error) {
 		return webp.Decode(f)
 	}
 
-	img, _, err := image.Decode(f)
-	return img, err
+	decoded, _, err := image.Decode(f)
+	return decoded, err
 }
 
 func resizeThumbnail(src image.Image, maxDim int) image.Image {

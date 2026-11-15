@@ -96,7 +96,18 @@ export const OrganizationPage: React.FC = () => {
     setLoadFailed(false);
     setMemberForbidden(false);
     try {
-      const res = await apiFetch('/api/org/members?org_id=1');
+      let orgParam = '';
+      try {
+        const storedUser = localStorage.getItem('mini_auth_user');
+        if (storedUser) {
+          const parsed = JSON.parse(storedUser);
+          if (parsed?.org_id) {
+            orgParam = `?org_id=${encodeURIComponent(parsed.org_id)}`;
+          }
+        }
+      } catch {}
+
+      const res = await apiFetch(`/api/org/members${orgParam}`);
       if (res.status === 403) {
         // Authenticated "member" roles are not allowed to read the roster.
         setMemberForbidden(true);
@@ -403,11 +414,11 @@ export const OrganizationPage: React.FC = () => {
                           <td style={cellPad}>
                             <span className="badge badge-pending">{(u.role || 'member').toUpperCase()}</span>
                           </td>
-                          <td style={cellPad}>{u.total_requests}</td>
-                          <td className="text-muted" style={cellPad}>{u.prompt_tokens.toLocaleString()}</td>
-                          <td className="text-muted" style={cellPad}>{u.candidate_tokens.toLocaleString()}</td>
+                          <td style={cellPad}>{u.total_requests || 0}</td>
+                          <td className="text-muted" style={cellPad}>{(u.prompt_tokens ?? 0).toLocaleString()}</td>
+                          <td className="text-muted" style={cellPad}>{(u.candidate_tokens ?? 0).toLocaleString()}</td>
                           <td style={{ ...cellPad, fontWeight: 700, color: 'var(--teal-text)' }}>
-                            {u.total_tokens.toLocaleString()}
+                            {(u.total_tokens ?? 0).toLocaleString()}
                           </td>
                         </tr>
                       ))}

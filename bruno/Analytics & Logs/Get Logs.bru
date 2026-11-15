@@ -5,18 +5,27 @@ meta {
 }
 
 get {
-  url: {{base_url}}/api/logs?date=2026-08-04&user_id=1&start_date=2026-08-01&end_date=2026-08-04
+  url: {{base_url}}/api/logs?page=1&page_size=50
   body: none
   auth: bearer
 }
 
 params:query {
-  ~date: 2026-08-04
-  ~user_id: 1
-  ~start_date: 2026-08-01
-  ~end_date: 2026-08-04
+  page: 1
+  page_size: 50
+  ~date: 2026-11-15
 }
 
 auth:bearer {
   token: {{token}}
+}
+
+script:post-response {
+  if (res.status === 200 && res.body && res.body.logs && res.body.logs.length > 0) {
+    var firstLog = res.body.logs[0];
+    bru.setEnvVar("sample_log_id", firstLog.id);
+    if (firstLog.image_path) {
+      bru.setEnvVar("sample_image_path", firstLog.image_path);
+    }
+  }
 }

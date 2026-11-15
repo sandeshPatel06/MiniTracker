@@ -126,6 +126,10 @@ export function SaveDiagnosticsBundle(arg1) {
   return window['go']['main']['App']['SaveDiagnosticsBundle'](arg1);
 }
 
+export function SaveLogAnalysis(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
+  return window['go']['main']['App']['SaveLogAnalysis'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+}
+
 export function SeedDemoLogs(arg1) {
   return window['go']['main']['App']['SeedDemoLogs'](arg1);
 }

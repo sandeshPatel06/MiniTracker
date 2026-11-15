@@ -11,9 +11,11 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"runtime/debug"
 	"sort"
@@ -52,6 +54,7 @@ type App struct {
 
 	isGuest   bool
 	authToken string
+	trayMgr   *TrayManager
 
 	// latest input stats — guarded by statsMu against concurrent goroutine access
 	statsMu          sync.Mutex
@@ -68,6 +71,10 @@ type App struct {
 
 	// aiMu serializes batched AI analysis runs (single-flight).
 	aiMu sync.Mutex
+
+	// collectMu serializes capture loops and lastCollectTime debounces rapid bursts
+	collectMu       sync.Mutex
+	lastCollectTime time.Time
 
 	// lastAIAttempt throttles automatic AI batch runs (guarded by statsMu).
 	lastAIAttempt time.Time
@@ -112,6 +119,10 @@ func (a *App) startup(ctx context.Context) {
 
 	// Reclaim tracking from a detached background tracker spawned by a previous run.
 	if !a.headless {
+		if guiAppRunning(cfg.DataDir) {
+			log.Printf("[app] another desktop app instance is already running (pidfile %s) — skipping duplicate tracker initialization", guiPidPath(cfg.DataDir))
+			return
+		}
 		stopBackgroundDaemon(cfg.DataDir)
 		// Register this GUI as the live capture owner so a concurrently started
 		// background daemon (autostart, scheduler, manual `--background`) detects
@@ -214,11 +225,13 @@ func (a *App) startup(ctx context.Context) {
 				ticker = time.NewTicker(dur)
 				log.Printf("[app] screenshot collection loop reset to %v", dur)
 			case stats, ok := <-statsCh:
-				if ok {
-					a.statsMu.Lock()
-					a.latestKeyStats = stats
-					a.statsMu.Unlock()
+				if !ok {
+					statsCh = nil
+					continue
 				}
+				a.statsMu.Lock()
+				a.latestKeyStats = stats
+				a.statsMu.Unlock()
 			case <-ticker.C:
 				a.statsMu.Lock()
 				active := a.isTrackingActive
@@ -321,6 +334,10 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}()
 
+	// Start System Tray Integration (Desktop Panel / Indicator)
+	a.trayMgr = newTrayManager(a)
+	a.trayMgr.Start()
+
 	log.Printf("[app] started — screenshot interval: %s (7-day retention active)", cfg.ScreenshotInterval)
 }
 
@@ -356,6 +373,16 @@ func (a *App) cleanOldScreenshots() {
 						log.Printf("[app] retention cron: deleted screenshots older than 7 days in %s", fullPath)
 					}
 				}
+			}
+		}
+	}
+
+	// Also clean thumbnail cache files older than 7 days
+	thumbDir := filepath.Join(a.cfg.DataDir, "thumbnails")
+	if thumbEntries, err := os.ReadDir(thumbDir); err == nil {
+		for _, te := range thumbEntries {
+			if info, err := te.Info(); err == nil && info.ModTime().Before(cutoff) {
+				_ = os.Remove(filepath.Join(thumbDir, te.Name()))
 			}
 		}
 	}
@@ -437,6 +464,21 @@ func (a *App) bundleSessionEvents(start time.Time) []ai.SessionEvent {
 // collect captures a screenshot + uses latest keystroke/mouse stats, persists the
 // entry, then fires async Gemini analysis (in Guest mode) or queues for backend sync (in Auth mode).
 func (a *App) collect() {
+	if a.shuttingDown.Load() || a.cfg == nil || a.database == nil {
+		return
+	}
+
+	a.collectMu.Lock()
+	defer a.collectMu.Unlock()
+
+	// Debounce rapid/burst collections so captures never happen within 3 seconds of each other
+	now := time.Now()
+	if !a.lastCollectTime.IsZero() && now.Sub(a.lastCollectTime) < 3*time.Second {
+		log.Printf("[app] debounced rapid capture call (interval %v since last capture)", now.Sub(a.lastCollectTime))
+		return
+	}
+	a.lastCollectTime = now
+
 	a.statsMu.Lock()
 	keyStats := a.latestKeyStats
 	a.latestKeyStats = tracker.KeystrokeStats{}
@@ -466,7 +508,7 @@ func (a *App) collect() {
 	}
 
 	syncStatus := "pending_upload"
-	if a.isGuest {
+	if a.isGuestMode() {
 		syncStatus = "local_only"
 	}
 
@@ -495,7 +537,7 @@ func (a *App) collect() {
 		return
 	}
 
-	if a.isGuest {
+	if a.isGuestMode() {
 		// Guest Mode: queue for throttled batch analysis instead of one API call per log.
 		go a.notifyPendingAI()
 	} else if a.syncActive() {
@@ -523,38 +565,50 @@ func (a *App) markSyncReachable(ok bool) {
 	a.statsMu.Unlock()
 }
 
+func (a *App) isGuestMode() bool {
+	a.statsMu.Lock()
+	defer a.statsMu.Unlock()
+	return a.isGuest
+}
+
 // syncUnavailable reports whether backend-side analysis cannot currently be
 // relied on — no sync session at all, or the last sync attempt failed — so the
 // desktop should analyze locally instead. This keeps AI scoring working when
 // the desktop app runs standalone (backend down or never configured).
 func (a *App) syncUnavailable() bool {
+	a.statsMu.Lock()
+	defer a.statsMu.Unlock()
 	if a.isGuest || a.syncEngine == nil || !a.syncEngine.Enabled() {
 		return true
 	}
-	a.statsMu.Lock()
-	defer a.statsMu.Unlock()
 	return a.syncOffline
 }
 
 // syncActive reports whether the app currently holds a usable backend session
 // for telemetry sync (authenticated, non-guest, token set).
 func (a *App) syncActive() bool {
+	a.statsMu.Lock()
+	defer a.statsMu.Unlock()
 	return a.syncEngine != nil && a.syncEngine.Enabled() && !a.isGuest
 }
 
 // SetAuthSession updates active session authentication token and mode (Guest vs Authenticated).
 func (a *App) SetAuthSession(token string, isGuest bool) {
+	a.statsMu.Lock()
 	a.authToken = token
 	a.isGuest = isGuest
-	if a.syncEngine != nil {
-		a.syncEngine.SetAuthToken(token)
+	syncEngine := a.syncEngine
+	a.statsMu.Unlock()
+
+	if syncEngine != nil {
+		syncEngine.SetAuthToken(token)
 	}
 	log.Printf("[app] session updated — isGuest: %v", isGuest)
 }
 
 // TriggerSyncNow initiates an immediate Push + Pull cycle on demand.
 func (a *App) TriggerSyncNow() (bool, error) {
-	if a.isGuest {
+	if a.isGuestMode() {
 		return true, nil // Guest mode is local-only
 	}
 	if a.syncEngine == nil {
@@ -583,9 +637,12 @@ func (a *App) GetAIUsageSummary() (*db.APIUsageSummary, error) {
 
 // SetUserPersonalKey sets personal Gemini API Key for solo users.
 func (a *App) SetUserPersonalKey(apiKey string) (bool, error) {
+	apiKey = strings.TrimSpace(apiKey)
 	if a.cfg != nil {
 		a.cfg.GeminiAPIKey = apiKey
-		_ = config.Save(a.cfg)
+		if err := config.Save(a.cfg); err != nil {
+			return false, fmt.Errorf("save config: %w", err)
+		}
 	}
 	if a.gemini != nil {
 		a.gemini.SetAPIKey(apiKey)
@@ -595,12 +652,34 @@ func (a *App) SetUserPersonalKey(apiKey string) (bool, error) {
 
 // SetOrgGeminiKey updates the organization Gemini API key in backend DB.
 func (a *App) SetOrgGeminiKey(orgID int64, apiKey string) (bool, error) {
-	if a.database != nil && orgID > 0 {
+	if a.isGuestMode() {
+		return false, fmt.Errorf("organization settings unavailable in guest mode")
+	}
+	if a.authToken == "" {
+		return false, fmt.Errorf("unauthenticated: session token required")
+	}
+	if orgID <= 0 {
+		return false, fmt.Errorf("invalid organization id")
+	}
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return false, fmt.Errorf("api key cannot be empty")
+	}
+
+	if a.database != nil {
 		if err := a.database.SetOrgGeminiConfig(orgID, apiKey, "models/gemini-3.5-flash-lite"); err != nil {
 			return false, err
 		}
 	}
 	return true, nil
+}
+
+// SaveLogAnalysis allows the frontend (client vision analysis) to persist AI scoring to the database.
+func (a *App) SaveLogAnalysis(id int64, category, appName, appCategory, windowTitle string, isProductive bool, productiveScore float64, confidence float64, reason string) error {
+	if a.database == nil {
+		return fmt.Errorf("database unavailable")
+	}
+	return a.database.UpdateLogAnalysis(id, category, appName, appCategory, windowTitle, 0, "", isProductive, productiveScore, confidence, reason)
 }
 
 // shutdown is called when the app terminates.
@@ -640,7 +719,7 @@ func (a *App) shutdown(_ context.Context) {
 
 	if a.database != nil && (keyStats.TotalKeys > 0 || mouseStats.TotalClicks > 0) {
 		syncStatus := "local_only"
-		if !a.isGuest {
+		if !a.isGuestMode() {
 			syncStatus = "pending_upload"
 		}
 		if _, err := a.database.InsertLog(&db.LogEntry{
@@ -663,6 +742,9 @@ func (a *App) shutdown(_ context.Context) {
 
 	if a.cancel != nil {
 		a.cancel()
+	}
+	if a.trayMgr != nil {
+		a.trayMgr.Stop()
 	}
 	if a.keyTracker != nil {
 		a.keyTracker.Stop()
@@ -690,7 +772,11 @@ func (a *App) GetLogsByDate(date string) ([]db.LogEntry, error) {
 	if a.database == nil {
 		return nil, nil
 	}
-	return a.database.GetLogsForDate(date)
+	trimmed := strings.TrimSpace(date)
+	if _, err := time.Parse("2006-01-02", trimmed); err != nil {
+		return nil, fmt.Errorf("invalid date format %q: expected YYYY-MM-DD", date)
+	}
+	return a.database.GetLogsForDate(trimmed)
 }
 
 // todaysDBTrackedSeconds returns today's persisted tracked seconds (logs x
@@ -820,11 +906,24 @@ func (a *App) RecordMouseActivity(clicks int) {
 // ClearAllLocalData purges all local screenshot files and resets the SQLite database.
 func (a *App) ClearAllLocalData() (bool, error) {
 	if a.cfg == nil {
-		return false, nil
+		return false, fmt.Errorf("config unavailable")
 	}
+
+	a.collectMu.Lock()
+	defer a.collectMu.Unlock()
+
+	a.aiMu.Lock()
+	defer a.aiMu.Unlock()
+
+	a.statsMu.Lock()
+	defer a.statsMu.Unlock()
+
 	imagesDir := filepath.Join(a.cfg.DataDir, "images")
 	_ = os.RemoveAll(imagesDir)
 	_ = os.MkdirAll(imagesDir, 0755)
+
+	thumbDir := filepath.Join(a.cfg.DataDir, "thumbnails")
+	_ = os.RemoveAll(thumbDir)
 
 	dbPath := filepath.Join(a.cfg.DataDir, "tracker.db")
 	if a.database != nil {
@@ -835,9 +934,24 @@ func (a *App) ClearAllLocalData() (bool, error) {
 	_ = os.Remove(dbPath + "-shm")
 
 	newDb, err := db.Open(a.cfg.DataDir)
-	if err == nil {
-		a.database = newDb
+	if err != nil {
+		return false, fmt.Errorf("failed to reopen database: %w", err)
 	}
+	a.database = newDb
+
+	if a.syncEngine != nil {
+		a.syncEngine = syncp.NewSyncEngine(newDb, a.cfg.BackendEndpoint)
+		if a.authToken != "" {
+			a.syncEngine.SetAuthToken(a.authToken)
+		}
+	}
+
+	a.accumulatedSec = 0
+	a.accumDay = time.Now().Format("2006-01-02")
+	if a.isTrackingActive {
+		a.trackerStartTime = time.Now()
+	}
+
 	return true, nil
 }
 
@@ -953,12 +1067,26 @@ func (a *App) resolveImageRequestPath(imagePath string) (string, error) {
 	if dataDir == "" {
 		return "", fmt.Errorf("config/data dir unavailable")
 	}
-	rel, relErr := filepath.Rel(filepath.Clean(dataDir), p)
+
+	// Resolve all symlinks in dataDir to get canonical real path
+	realDataDir, err := filepath.EvalSymlinks(filepath.Clean(dataDir))
+	if err != nil {
+		return "", fmt.Errorf("invalid data directory: %w", err)
+	}
+
+	// Resolve all symlinks in target path (both intermediate dirs and leaf node)
+	realTarget, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "", err
+	}
+
+	// Verify containment using canonical real paths
+	rel, relErr := filepath.Rel(realDataDir, realTarget)
 	if relErr != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return "", fmt.Errorf("image path outside data directory")
 	}
 
-	info, err := os.Lstat(p)
+	info, err := os.Stat(realTarget)
 	if err != nil {
 		return "", err
 	}
@@ -968,7 +1096,7 @@ func (a *App) resolveImageRequestPath(imagePath string) (string, error) {
 	if info.Size() > maxImageReadBytes {
 		return "", fmt.Errorf("image too large (%d bytes)", info.Size())
 	}
-	return p, nil
+	return realTarget, nil
 }
 
 // imageMimeFor maps an image file extension to its MIME type. Captures are
@@ -1055,6 +1183,9 @@ func (a *App) GetThumbnailBase64(imagePath string) (string, error) {
 func (a *App) UpdateScreenshotInterval(seconds int) (bool, error) {
 	if seconds < 5 {
 		seconds = 5
+	}
+	if seconds > 3600 {
+		seconds = 3600
 	}
 	dur := time.Duration(seconds) * time.Second
 	if a.cfg != nil && a.cfg.ScreenshotInterval == dur {
@@ -1235,9 +1366,13 @@ func (a *App) processPendingAIBatched() {
 // emitAIUsageEvent broadcasts one AI request's token usage to the frontend so
 // open windows (Settings usage panel etc.) refresh their counters without polling.
 func (a *App) emitAIUsageEvent(promptTokens, candidateTokens, totalTokens int) {
-	if a.ctx == nil {
+	if a.headless || a.ctx == nil {
 		return
 	}
+	defer func() {
+		// Recover in case Wails runtime context is not yet initialized or invalid (e.g. headless)
+		_ = recover()
+	}()
 	wailsruntime.EventsEmit(a.ctx, "ai_usage_updated", map[string]interface{}{
 		"requests":         1,
 		"prompt_tokens":    promptTokens,
@@ -1667,7 +1802,7 @@ func (a *App) GetSyncStatus() map[string]interface{} {
 		status["endpoint"] = a.cfg.BackendEndpoint
 	}
 	if a.syncEngine != nil {
-		status["enabled"] = !a.isGuest && a.syncEngine.Enabled()
+		status["enabled"] = !a.isGuestMode() && a.syncEngine.Enabled()
 		status["endpoint"] = a.syncEngine.Endpoint()
 		if t := a.syncEngine.LastSyncedAt(); !t.IsZero() {
 			status["last_synced_at"] = t.UTC().Format(time.RFC3339)
@@ -2087,26 +2222,39 @@ func appVersion() string {
 	return v
 }
 
+var validTokenRegex = regexp.MustCompile(`^[A-Za-z0-9_\-\.~]+$`)
+
 // OpenTrackerWizard opens the wizard as a separate OS-level popup window.
 func (a *App) OpenTrackerWizard(token string) error {
-	url := fmt.Sprintf("http://127.0.0.1:8080/wizard?token=%s", token)
+	trimmed := strings.TrimSpace(token)
+	if trimmed != "" && !validTokenRegex.MatchString(trimmed) {
+		return fmt.Errorf("invalid token format")
+	}
+
+	baseURL := "http://127.0.0.1:8080/wizard"
+	if a.cfg != nil && a.cfg.BackendEndpoint != "" {
+		baseURL = strings.TrimRight(a.cfg.BackendEndpoint, "/") + "/wizard"
+	}
+	targetURL := baseURL
+	if trimmed != "" {
+		targetURL += "?token=" + url.QueryEscape(trimmed)
+	}
+
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "linux":
-		cmd = exec.Command("google-chrome", "--app="+url, "--window-size=300,460")
+		cmd = exec.Command("google-chrome", "--app="+targetURL, "--window-size=300,460")
 		if err := cmd.Start(); err != nil {
-			return exec.Command("xdg-open", url).Start()
+			return exec.Command("xdg-open", targetURL).Start()
 		}
 	case "darwin":
-		cmd = exec.Command("open", "-n", "-a", "Google Chrome", "--args", "--app="+url, "--window-size=300,460")
+		cmd = exec.Command("open", "-n", "-a", "Google Chrome", "--args", "--app="+targetURL, "--window-size=300,460")
 		if err := cmd.Start(); err != nil {
-			return exec.Command("open", url).Start()
+			return exec.Command("open", targetURL).Start()
 		}
 	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", "chrome", "--app="+url, "--window-size=300,460")
-		if err := cmd.Start(); err != nil {
-			return exec.Command("cmd", "/c", "start", url).Start()
-		}
+		cmd = exec.Command("cmd", "/c", "start", "", targetURL)
+		return cmd.Start()
 	}
 	return nil
 }

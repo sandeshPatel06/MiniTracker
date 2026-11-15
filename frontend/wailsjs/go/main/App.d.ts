@@ -64,6 +64,8 @@ export function RunCollectNow():Promise<void>;
 
 export function SaveDiagnosticsBundle(arg1:string):Promise<string>;
 
+export function SaveLogAnalysis(arg1:number,arg2:string,arg3:string,arg4:string,arg5:string,arg6:boolean,arg7:number,arg8:number,arg9:string):Promise<void>;
+
 export function SeedDemoLogs(arg1:number):Promise<number>;
 
 export function SetActiveTask(arg1:string):Promise<string>;

@@ -55,9 +55,9 @@ func BuildBundlePromptSplit(items []PromptItem, activeTask, windowLabel string, 
 	return staticText, b.String()
 }
 
-// IsClearlyIdleBundle reports whether every capture in the window is empty: no
-// app name and no window title. Such windows are idle even if stale pixels
-// produced an image, so they can skip the AI call entirely.
+// IsClearlyIdleBundle reports whether every capture in the window has no content:
+// no app name, no window title, no keyboard/mouse activity, and no readable screenshot.
+// Such windows have no telemetry or visual data for AI to inspect, so they can skip the AI call.
 func IsClearlyIdleBundle(items []BatchAnalysisItem) bool {
 	if len(items) == 0 {
 		return false
@@ -65,6 +65,14 @@ func IsClearlyIdleBundle(items []BatchAnalysisItem) bool {
 	for _, item := range items {
 		if strings.TrimSpace(item.AppName) != "" || strings.TrimSpace(item.WindowTitle) != "" {
 			return false
+		}
+		if item.TotalKeys > 0 || item.TotalClicks > 0 {
+			return false
+		}
+		if item.ImagePath != "" {
+			if info, err := os.Stat(item.ImagePath); err == nil && info.Size() > 0 {
+				return false
+			}
 		}
 	}
 	return true

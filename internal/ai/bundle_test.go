@@ -205,6 +205,12 @@ func TestIsClearlyIdleBundle(t *testing.T) {
 	if IsClearlyIdleBundle([]BatchAnalysisItem{{AppName: "Code", WindowTitle: ""}, {AppName: "", WindowTitle: ""}}) {
 		t.Fatal("app name with empty title is not idle")
 	}
+	if IsClearlyIdleBundle([]BatchAnalysisItem{{TotalKeys: 15}}) {
+		t.Fatal("bundle with keystrokes must not be considered idle")
+	}
+	if IsClearlyIdleBundle([]BatchAnalysisItem{{TotalClicks: 3}}) {
+		t.Fatal("bundle with mouse clicks must not be considered idle")
+	}
 }
 
 func TestApplyBundleActivityGuard(t *testing.T) {

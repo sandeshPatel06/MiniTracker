@@ -1,4 +1,5 @@
 import React, { useEffect, useId, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon } from './Icon';
 
 export interface ModalProps {
@@ -169,7 +170,7 @@ export function Modal({
 
   const hasHeader = Boolean(title || description || icon || actions);
 
-  return (
+  const modalContent = (
     <div
       className="modal-backdrop"
       onClick={(e) => {
@@ -253,4 +254,6 @@ export function Modal({
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 }

@@ -13,9 +13,14 @@
 let runtimeBackendUrl = '';
 
 export function setRuntimeBackendUrl(url: string) {
-  if (url) {
-    runtimeBackendUrl = url.replace(/\/$/, '');
+  if (!url) return;
+  const trimmed = url.trim().replace(/\/$/, '');
+  // Only allow http for localhost/127.0.0.1; require https for all remote endpoints
+  if (!/^https:\/\//i.test(trimmed) && !isLocalhostUrl(trimmed)) {
+    console.error(`[Security] Rejected insecure backend endpoint: ${trimmed}`);
+    return;
   }
+  runtimeBackendUrl = trimmed;
 }
 
 export function getApiBaseUrl(): string {
@@ -50,6 +55,10 @@ function isLocalhostUrl(url: string): boolean {
 }
 
 export function buildApiUrl(path: string): string {
+  // Disallow absolute URLs and protocol-relative URLs
+  if (/^([a-z]+:)?\/\//i.test(path)) {
+    throw new Error(`Insecure absolute or protocol-relative path passed to apiFetch: ${path}`);
+  }
   const base = getApiBaseUrl();
   const cleanPath = path.startsWith('/') ? path : '/' + path;
   return base ? `${base}${cleanPath}` : cleanPath;
@@ -96,17 +105,17 @@ export function apiFetch(path: string, options: RequestInit = {}): Promise<Respo
 
   // Attach JWT or session token from localStorage for robust authentication
   try {
-    const savedToken = localStorage.getItem('mini_jwt_token');
-    if (savedToken) {
-      headers.set('Authorization', `Bearer ${savedToken}`);
-    } else {
-      const savedUser = localStorage.getItem('mini_auth_user');
-      if (savedUser) {
-        const parsed = JSON.parse(savedUser);
-        if (parsed?.token) {
-          headers.set('Authorization', `Bearer ${parsed.token}`);
-        } else if (parsed?.id) {
-          headers.set('X-Session-User-ID', `${parsed.id}`);
+    if (!headers.has('Authorization')) {
+      const savedToken = localStorage.getItem('mini_jwt_token');
+      if (savedToken) {
+        headers.set('Authorization', `Bearer ${savedToken}`);
+      } else {
+        const savedUser = localStorage.getItem('mini_auth_user');
+        if (savedUser) {
+          const parsed = JSON.parse(savedUser);
+          if (parsed?.token) {
+            headers.set('Authorization', `Bearer ${parsed.token}`);
+          }
         }
       }
     }
@@ -128,7 +137,9 @@ export function apiFetch(path: string, options: RequestInit = {}): Promise<Respo
         ms: Date.now() - startedAt,
         ok: response.ok,
       });
-      if (response.status === 401) {
+      // Do not trigger session expiration banner for auth endpoints (e.g. login with wrong password)
+      const isAuthEndpoint = /\/api\/(auth\/(login|logout|me)|org\/(register|accept-invite))(\?|$)/i.test(path);
+      if (response.status === 401 && !isAuthEndpoint) {
         window.dispatchEvent(new CustomEvent('mini-auth-expired'));
       }
       return response;

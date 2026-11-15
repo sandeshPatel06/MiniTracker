@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { LogEntry, ProductivityStats, AppConfig, WorkSession } from '../types';
 import { apiFetch } from '../api';
@@ -113,40 +113,47 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
     };
   }, [today, logs]);
 
-  const pendingCount = logs.filter(isPendingLog).length;
+  const dayLogs = useMemo(() => {
+    if (!today || !Array.isArray(logs)) return [];
+    return logs.filter((l: LogEntry) => l && typeof l.timestamp === 'string' && l.timestamp.startsWith(today));
+  }, [logs, today]);
 
-  const analyzedLogs = logs.filter((l) => !isPendingLog(l));
+  const activeLogs: LogEntry[] = dayLogs.length > 0 || logs.length === 0 ? dayLogs : logs;
+
+  const pendingCount = activeLogs.filter(isPendingLog).length;
+
+  const analyzedLogs = activeLogs.filter((l: LogEntry) => !isPendingLog(l));
 
   // Calculate Average AI-Returned Productivity Score
   const avgProductivityScore = analyzedLogs.length > 0
     ? Math.round(
-        analyzedLogs.reduce((acc, l) => acc + captureScore(l), 0) / analyzedLogs.length
+        analyzedLogs.reduce((acc: number, l: LogEntry) => acc + captureScore(l), 0) / analyzedLogs.length
       )
     : 0;
 
-  const totalKeys = logs.reduce((acc, l) => acc + (typeof l.total_keys === 'number' ? l.total_keys : 0), 0);
-  const avgEntropy = logs.length
-    ? logs.reduce((acc, l) => acc + (typeof l.entropy_score === 'number' ? l.entropy_score : 0), 0) / logs.length
+  const totalKeys = activeLogs.reduce((acc: number, l: LogEntry) => acc + (typeof l.total_keys === 'number' ? l.total_keys : 0), 0);
+  const avgEntropy = activeLogs.length
+    ? activeLogs.reduce((acc: number, l: LogEntry) => acc + (typeof l.entropy_score === 'number' ? l.entropy_score : 0), 0) / activeLogs.length
     : 0;
 
-  // App usage breakdown: capture counts span every log, but focus-rating
-  // averages must only use analyzed captures — pending rows are serialized
-  // with productive_score 0 and would otherwise drag ratings toward 0%.
-  const appCounts: Record<string, { count: number; category: string; scoreTotal: number; scoreCount: number }> = {};
-  logs.forEach((l) => {
+  // App usage breakdown: use Map to prevent prototype collision (e.g. process named "toString")
+  const appCounts = new Map<string, { count: number; category: string; scoreTotal: number; scoreCount: number }>();
+  activeLogs.forEach((l: LogEntry) => {
     const app = canonicalAppName(l.app_name) || 'Other';
-    if (!appCounts[app]) {
-      appCounts[app] = { count: 0, category: l.app_category || 'Application', scoreTotal: 0, scoreCount: 0 };
+    let entry = appCounts.get(app);
+    if (!entry) {
+      entry = { count: 0, category: l.app_category || 'Application', scoreTotal: 0, scoreCount: 0 };
+      appCounts.set(app, entry);
     }
     if (!isPendingLog(l)) {
-      appCounts[app].scoreTotal += captureScore(l);
-      appCounts[app].scoreCount++;
+      entry.scoreTotal += captureScore(l);
+      entry.scoreCount++;
     }
-    appCounts[app].count++;
+    entry.count++;
   });
 
-  const totalLogCount = logs.length || 1;
-  const topApps = Object.entries(appCounts)
+  const totalLogCount = activeLogs.length || 1;
+  const topApps = Array.from(appCounts.entries())
     .map(([appName, data]) => ({
       appName,
       category: data.category,
@@ -170,7 +177,7 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
 
   const hourlyScores: Record<string, { total: number; count: number }> = {};
 
-  logs.forEach((l) => {
+  activeLogs.forEach((l: LogEntry) => {
     try {
       const date = new Date(l.timestamp);
       const h = date.getHours();
@@ -195,14 +202,16 @@ export default function Dashboard({ logs, stats, config, loading, today, onRefre
     };
   });
 
-  // Latest 10 entries for Activity Feed
-  const recent = [...logs].reverse().slice(0, 10);
+  // Latest 10 entries for Activity Feed (slice without copying entire array)
+  const recent = logs.slice(-10).reverse();
 
-  const dateLabel = today === localISODate()
-    ? 'Today'
-    : format(new Date(today + 'T00:00:00'), 'MMMM d, yyyy');
+  let dateLabel = today === localISODate() ? 'Today' : today;
+  try {
+    const cleanDate = today.includes('T') ? today.split('T')[0] : today;
+    dateLabel = today === localISODate() ? 'Today' : format(new Date(`${cleanDate}T00:00:00`), 'MMMM d, yyyy');
+  } catch {}
 
-  const headerMeta = `${dateLabel} · ${logs.length} captures${config ? ` · every ${config.screenshot_interval_seconds}s` : ''}`;
+  const headerMeta = `${dateLabel} · ${activeLogs.length} captures${config ? ` · every ${config.screenshot_interval_seconds}s` : ''}`;
 
   const handleProcessPending = async () => {
     setProcessingPending(true);

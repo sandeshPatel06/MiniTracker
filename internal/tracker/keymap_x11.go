@@ -42,7 +42,7 @@ func pollX11Keymap(eventCh chan<- int, stopCh <-chan struct{}) error {
 		}
 
 		reply, err := xproto.QueryKeymap(conn).Reply()
-		if err != nil || len(reply.Keys) == 0 {
+		if err != nil || reply == nil || len(reply.Keys) == 0 {
 			// A dead X server ends the fallback; the caller can re-arm it.
 			return err
 		}

@@ -124,7 +124,15 @@ export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token, onSuccess
           <div className="card-body">
             <Alert type="error" message={error} style={{ marginBottom: 16 }} />
             <button
-              onClick={() => window.location.hash = ''}
+              onClick={() => {
+                const url = new URL(window.location.href);
+                url.searchParams.delete('token');
+                url.searchParams.delete('invite');
+                url.hash = '';
+                window.history.replaceState({}, document.title, url.pathname);
+                window.location.hash = '';
+                window.location.reload();
+              }}
               className="btn btn-secondary w-full"
             >
               Return to Dashboard

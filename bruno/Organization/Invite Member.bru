@@ -16,8 +16,16 @@ auth:bearer {
 
 body:json {
   {
-    "org_id": 1,
-    "email": "member@example.com",
+    "email": "teammate@example.com",
     "role": "member"
+  }
+}
+
+script:post-response {
+  if (res.status === 200 && res.body) {
+    var invToken = res.body.token || res.body.invitation_token;
+    if (invToken) {
+      bru.setEnvVar("invite_token", invToken);
+    }
   }
 }

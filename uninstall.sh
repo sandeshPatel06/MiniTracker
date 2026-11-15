@@ -12,15 +12,17 @@ set -euo pipefail
 APP_NAME="get-Hike"
 APP_NAME_LOWER="get-hike"
 
-KEEP_DATA=false
+# Default: always preserve user data (logs, screenshots, tracker.db) unless explicitly requested with --purge-data
+KEEP_DATA=true
 
 usage() {
     cat <<'EOF'
-get-Hike uninstaller — removes launchers, binaries and (optionally) user data.
+get-Hike uninstaller — removes launchers and binaries while preserving your data by default.
 
 Usage:
-  ./uninstall.sh                 # remove app + launchers + user data & config
-  ./uninstall.sh --keep-data     # remove app, keep logs/screenshots/tracker.db
+  ./uninstall.sh                 # remove app & launchers (preserves data by default)
+  ./uninstall.sh --purge-data    # permanently delete all logs, screenshots and tracker.db
+  ./uninstall.sh --keep-data     # explicit data preservation
   ./uninstall.sh --help
 EOF
 }
@@ -30,6 +32,9 @@ for arg in "$@"; do
         -h|--help)
             usage
             exit 0
+            ;;
+        --purge-data)
+            KEEP_DATA=false
             ;;
         --keep-data)
             KEEP_DATA=true

@@ -410,16 +410,44 @@ if [ "${IS_SUDO}" = false ]; then
 fi
 
 # ==============================================================================
-# 10. CONFIGURATION & DATA DIRECTORIES
+# 10. CONFIGURATION & DATA DIRECTORIES AND AUTOMATIC MIGRATION
 # ==============================================================================
 log "Provisioning directories..."
 mkdir -p "${CONFIG_DIR}"
 mkdir -p "${DATA_DIR}/images"
 mkdir -p "${DATA_DIR}/logs"
 
+# Automatic legacy migration: if old data exists under ~/.local/share/mini-tracker/
+# migrate database, screenshots, and logs to ~/.local/share/get-hike/
+LEGACY_DATA_DIR="${REAL_HOME}/.local/share/mini-tracker"
+if [ -d "${LEGACY_DATA_DIR}" ] && [ ! -f "${DB_PATH}" ]; then
+    log "📦 Legacy installation data found at ${LEGACY_DATA_DIR} — migrating to ${DATA_DIR}..."
+    if [ -f "${LEGACY_DATA_DIR}/tracker.db" ]; then
+        cp -a "${LEGACY_DATA_DIR}/tracker.db"* "${DATA_DIR}/" 2>/dev/null || true
+        log "✅ Migrated legacy database to ${DB_PATH}"
+    fi
+    if [ -d "${LEGACY_DATA_DIR}/images" ]; then
+        cp -rn "${LEGACY_DATA_DIR}/images/"* "${DATA_DIR}/images/" 2>/dev/null || true
+        log "✅ Migrated legacy screenshot captures"
+    fi
+    if [ -d "${LEGACY_DATA_DIR}/logs" ]; then
+        cp -rn "${LEGACY_DATA_DIR}/logs/"* "${DATA_DIR}/logs/" 2>/dev/null || true
+        log "✅ Migrated legacy log files"
+    fi
+fi
+
+# Also migrate legacy config if present (~/.config/mini-tracker -> ~/.config/get-hike)
+LEGACY_CONFIG_DIR="${REAL_HOME}/.config/mini-tracker"
+if [ -d "${LEGACY_CONFIG_DIR}" ] && [ ! -f "${CONFIG_DIR}/config.yaml" ]; then
+    if [ -f "${LEGACY_CONFIG_DIR}/config.yaml" ]; then
+        cp -a "${LEGACY_CONFIG_DIR}/config.yaml" "${CONFIG_DIR}/config.yaml" 2>/dev/null || true
+        log "✅ Migrated legacy config.yaml to ${CONFIG_DIR}"
+    fi
+fi
+
 # Data preservation guard: restore from backup if the DB vanished mid-install.
 if [ -f "${DB_PATH}" ]; then
-    log "✅ User database preserved: ${DB_PATH} ($(human_size "${DB_PATH}") on disk)"
+    log "✅ User database preserved & active: ${DB_PATH} ($(human_size "${DB_PATH}") on disk)"
 elif [ -n "${DB_BACKUP_PATH}" ] && [ -f "${DB_BACKUP_PATH}" ] && [ ! -f "${DB_PATH}" ]; then
     cp -a "${DB_BACKUP_PATH}" "${DB_PATH}"
     log "⚠️ Database restored from backup: ${DB_BACKUP_PATH}"

@@ -1,0 +1,8 @@
+{
+  "name": "minitracker-workspace",
+  "private": true,
+  "scripts": {
+    "build:frontend": "cd frontend && npm install && npm run build",
+    "build:website": "cd website && npm install && npm run build"
+  }
+}

@@ -271,7 +271,7 @@ fi
 BINARY_SOURCE=""
 CUSTOM_BUILD_PATH="${LOCAL_BUILD_PATH:-${POSITIONAL_ARG}}"
 
-DEFAULT_REPO_URL="https://github.com/sandeshPatel06/mini-tracker"
+DEFAULT_REPO_URL="https://github.com/sandeshPatel06/MiniTracker"
 
 LATEST_TAG=""
 if command -v gh >/dev/null 2>&1; then
@@ -463,7 +463,7 @@ INSTALLED_ICON_PATH="${INSTALL_DIR}/get-hike.png"
 if [ -z "${ICON_SOURCE}" ]; then
     log "📥 Standalone execution detected — downloading app icon from repository..."
     if download_file \
-        "https://raw.githubusercontent.com/sandeshPatel06/mini-tracker/main/frontend/src/assets/logo.png" \
+        "https://raw.githubusercontent.com/sandeshPatel06/MiniTracker/main/frontend/src/assets/logo.png" \
         "${INSTALLED_ICON_PATH}" quiet; then
         ICON_SOURCE="${INSTALLED_ICON_PATH}"
         log "✅ Downloaded remote app icon to ${INSTALLED_ICON_PATH}"

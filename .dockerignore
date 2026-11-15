@@ -1,0 +1,14 @@
+node_modules
+dist
+build
+.git
+.gemini
+frontend/node_modules
+frontend/dist
+website/node_modules
+website/dist
+*.iso
+*.dmg
+*.zip
+*.msi
+*.exe

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Icon } from './Icon';
 import { DistractionAlertPayload } from '../types';
 
@@ -10,10 +10,15 @@ interface DistractionToastProps {
 
 export function DistractionToast({ alert, onSnooze, onDismiss }: DistractionToastProps) {
   const dwellMins = Math.max(1, Math.round(alert.dwell_seconds / 60));
+  const resumeBtnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
+    // Focus the primary action button on appear for fast keyboard response
+    resumeBtnRef.current?.focus();
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        e.preventDefault();
         onDismiss();
       }
     };
@@ -22,13 +27,13 @@ export function DistractionToast({ alert, onSnooze, onDismiss }: DistractionToas
   }, [onDismiss]);
 
   return (
-    <div
+    <aside
       role="alert"
       aria-live="polite"
       className="distraction-toast-card"
     >
       <div className="distraction-toast-body" style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-        <div className="distraction-toast-icon">
+        <div className="distraction-toast-icon" aria-hidden="true">
           <Icon name="bell" size={18} />
         </div>
 
@@ -42,9 +47,10 @@ export function DistractionToast({ alert, onSnooze, onDismiss }: DistractionToas
               lineHeight: 1.3,
               marginBottom: 4,
               letterSpacing: '-0.01em',
+              overflowWrap: 'anywhere',
             }}
           >
-            Time Check: <span style={{ color: 'var(--accent-amber)' }}>{dwellMins}m</span> on{' '}
+            Time Check: <span style={{ color: 'var(--accent-amber)', fontWeight: 700 }}>{dwellMins}m</span> on{' '}
             <span style={{ color: 'var(--text-primary)' }}>{alert.app_name}</span>
           </div>
           <div
@@ -103,6 +109,7 @@ export function DistractionToast({ alert, onSnooze, onDismiss }: DistractionToas
           Snooze 30m
         </button>
         <button
+          ref={resumeBtnRef}
           type="button"
           className="btn btn-primary btn-sm distraction-toast-btn distraction-toast-btn-primary"
           onClick={onDismiss}
@@ -110,6 +117,6 @@ export function DistractionToast({ alert, onSnooze, onDismiss }: DistractionToas
           Resume Work
         </button>
       </div>
-    </div>
+    </aside>
   );
 }

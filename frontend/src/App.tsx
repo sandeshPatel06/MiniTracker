@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { DistractionToast } from './components/DistractionToast';
 import { IdlePromptModal } from './components/IdlePromptModal';
-import { LogEntry, ProductivityStats, AppConfig, Page, User, IdleBlock, DistractionAlertPayload } from './types';
+import { LogEntry, ProductivityStats, AppConfig, Page, User, Organization, IdleBlock, DistractionAlertPayload } from './types';
 import { apiFetch, readJsonSafe, setRuntimeBackendUrl } from './api';
 import { useToast } from './context/ToastContext';
 import Dashboard from './pages/Dashboard';
@@ -50,6 +50,14 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     try {
       const stored = localStorage.getItem('mini_auth_user');
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [currentOrg, setCurrentOrg] = useState<Organization | null>(() => {
+    try {
+      const stored = localStorage.getItem('mini_auth_org');
       return stored ? JSON.parse(stored) : null;
     } catch {
       return null;
@@ -137,14 +145,20 @@ export default function App() {
 
       try {
         const res = await apiFetch('/api/auth/me');
-        const data = res.ok ? await readJsonSafe<{ authenticated?: boolean; user?: User }>(res) : null;
+        const data = res.ok ? await readJsonSafe<{ authenticated?: boolean; user?: User; org?: Organization }>(res) : null;
         setBackendUnavailable(false);
         if (data && data.authenticated && data.user) {
           setCurrentUser(data.user);
           localStorage.setItem('mini_auth_user', JSON.stringify(data.user));
+          if (data.org) {
+            setCurrentOrg(data.org);
+            localStorage.setItem('mini_auth_org', JSON.stringify(data.org));
+          }
         } else {
           localStorage.removeItem('mini_auth_user');
+          localStorage.removeItem('mini_auth_org');
           setCurrentUser(null);
+          setCurrentOrg(null);
           if (isDesktopApp() && localStorage.getItem('mini_guest_mode') === 'true') {
             setIsGuestMode(true);
           } else {
@@ -165,6 +179,13 @@ export default function App() {
             const parsed = JSON.parse(cached);
             if (parsed?.id) {
               setCurrentUser(parsed);
+            }
+          }
+          const cachedOrg = localStorage.getItem('mini_auth_org');
+          if (cachedOrg) {
+            const parsedOrg = JSON.parse(cachedOrg);
+            if (parsedOrg?.id) {
+              setCurrentOrg(parsedOrg);
             }
           }
         } catch {}
@@ -214,6 +235,7 @@ export default function App() {
       clearStoredAuth();
       syncBackendAuthSession('', true);
       setCurrentUser(null);
+      setCurrentOrg(null);
       setIsGuestMode(false);
       setAuthNotice('Your session expired. Please sign in again.');
     };
@@ -228,6 +250,7 @@ export default function App() {
     clearStoredAuth();
     syncBackendAuthSession('', true);
     setCurrentUser(null);
+    setCurrentOrg(null);
     setIsGuestMode(false);
     setPage('dashboard');
     // Reset in-flight/poll-dependent local state so the next session starts
@@ -870,6 +893,7 @@ export default function App() {
     }
     if (result.org) {
       localStorage.setItem('mini_auth_org', JSON.stringify(result.org));
+      setCurrentOrg(result.org);
     }
     if (result.token) {
       localStorage.setItem('mini_jwt_token', result.token);
@@ -928,6 +952,7 @@ export default function App() {
             }
             if (org) {
               localStorage.setItem('mini_auth_org', JSON.stringify(org));
+              setCurrentOrg(org);
             }
             if (token) {
               localStorage.setItem('mini_jwt_token', token);
@@ -959,6 +984,7 @@ export default function App() {
         isMobileMenuOpen={isMobileMenuOpen}
         setIsMobileMenuOpen={setIsMobileMenuOpen}
         currentUser={currentUser}
+        currentOrg={currentOrg}
         isGuestMode={isGuestMode}
         setIsGuestMode={setIsGuestMode}
         elapsedSeconds={elapsedSeconds}
@@ -977,6 +1003,7 @@ export default function App() {
         dev={dev}
         aiKeyPresent={aiKeyPresent}
         aiConfigured={config?.ai_configured}
+        backendUnavailable={backendUnavailable}
       />
 
       {/* Main content area */}

@@ -410,32 +410,32 @@ export default function Dashboard({
 
   if (loading && logs.length === 0) {
     return (
-      <div className="dash-page" aria-busy="true">
-        <div className="page-header dash-header" style={{ marginBottom: 20 }}>
+      <main className="dash-page" aria-busy="true">
+        <header className="page-header dash-header" style={{ marginBottom: 20 }}>
           <div>
             <div className="skeleton" style={{ width: 180, height: 28, marginBottom: 8 }} />
             <div className="skeleton" style={{ width: 240, height: 16 }} />
           </div>
-        </div>
-        <div className="stats-grid dash-stats" style={{ marginBottom: 16 }}>
+        </header>
+        <section className="stats-grid dash-stats" aria-label="Loading summary metrics" style={{ marginBottom: 16 }}>
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="stat-card">
+            <article key={i} className="stat-card">
               <div className="skeleton" style={{ width: '50%', height: 14, marginBottom: 12 }} />
               <div className="skeleton" style={{ width: '65%', height: 32, marginBottom: 8 }} />
               <div className="skeleton" style={{ width: '40%', height: 12 }} />
-            </div>
+            </article>
           ))}
-        </div>
-        <div className="dash-charts" style={{ marginBottom: 16 }}>
-          <div className="card" style={{ height: 280 }}>
+        </section>
+        <section className="dash-charts" aria-label="Loading charts" style={{ marginBottom: 16 }}>
+          <article className="card" style={{ height: 280 }}>
             <div className="card-header">
               <div className="skeleton" style={{ width: 120, height: 16 }} />
             </div>
             <div className="card-body">
               <div className="skeleton" style={{ width: '100%', height: 200, borderRadius: 8 }} />
             </div>
-          </div>
-          <div className="card" style={{ height: 280 }}>
+          </article>
+          <article className="card" style={{ height: 280 }}>
             <div className="card-header">
               <div className="skeleton" style={{ width: 140, height: 16 }} />
             </div>
@@ -447,14 +447,14 @@ export default function Dashboard({
                 </div>
               ))}
             </div>
-          </div>
-        </div>
-      </div>
+          </article>
+        </section>
+      </main>
     );
   }
 
   return (
-    <div className="dash-page" aria-busy={loading}>
+    <main className="dash-page" aria-busy={loading}>
       <ImageModal imagePath={selectedImage} onClose={() => setSelectedImage(null)} />
 
       {loadError && (
@@ -467,7 +467,7 @@ export default function Dashboard({
       )}
 
       {/* Header Bar */}
-      <div className="page-header dash-header" style={{ marginBottom: 20 }}>
+      <header className="page-header dash-header" style={{ marginBottom: 20 }}>
         <div style={{ minWidth: 0 }}>
           <h1 className="page-title">Productivity Intelligence</h1>
           <p
@@ -479,7 +479,7 @@ export default function Dashboard({
           </p>
         </div>
 
-        <div className="dash-header-actions">
+        <nav className="dash-header-actions" aria-label="Dashboard actions">
           {onDateChange && (
             <DateNavigator
               currentDate={today}
@@ -531,11 +531,11 @@ export default function Dashboard({
               </button>
             )
           )}
-        </div>
-      </div>
+        </nav>
+      </header>
 
       {/* Target Task Banner & Distraction Shield Status */}
-      <div className={`dash-task-banner ${userTask ? 'has-goal' : 'no-goal'}`} role="region" aria-label="Active focus goal">
+      <section className={`dash-task-banner ${userTask ? 'has-goal' : 'no-goal'}`} role="region" aria-label="Active focus goal">
         <div className="dash-task-banner-left">
           <div className="dash-task-icon-wrap" aria-hidden="true">
             <Icon name="target" size={16} />
@@ -573,10 +573,10 @@ export default function Dashboard({
             </button>
           )}
         </div>
-      </div>
+      </section>
 
       {/* Metric Cards Grid: Clear Hierarchy (Score, Focus Time, Top App, Activity) */}
-      <div className="stats-grid dash-stats" style={{ marginBottom: 16 }}>
+      <section className="stats-grid dash-stats" aria-label="Summary productivity statistics" style={{ marginBottom: 16 }}>
         <StatCard
           label="Focus Rating"
           value={
@@ -623,7 +623,7 @@ export default function Dashboard({
               : `${activeLogs.length} snapshot${activeLogs.length === 1 ? '' : 's'} recorded`
           }
           valueClass="text-teal"
-          leading={topApps[0] ? <AppIcon name={topApps[0].appName} size={22} /> : undefined}
+          leading={topApps[0] ? <AppIcon name={topApps[0].appName} size={20} /> : undefined}
         />
         <StatCard
           label="Active Keystrokes"
@@ -635,14 +635,14 @@ export default function Dashboard({
           }
           valueClass="text-cyan"
         />
-      </div>
+      </section>
 
       {/* Hourly Trend & Activity Distribution Grid */}
-      <div className="dash-charts">
+      <section className="dash-charts" aria-label="Hourly trend and breakdown charts">
 
         {/* Hourly Focus Score Chart */}
-        <div className="card">
-          <div className="card-header">
+        <article className="card">
+          <header className="card-header">
             <span className="card-title">
               <Icon name="activity" size={14} />
               Hourly Focus
@@ -650,7 +650,7 @@ export default function Dashboard({
             <span className="dash-chart-avg-badge">
               Avg {analyzedLogs.length === 0 ? '—' : `${avgProductivityScore}%`}
             </span>
-          </div>
+          </header>
           <div className="card-body">
             {activeLogs.length === 0 ? (
               <EmptyState
@@ -730,11 +730,11 @@ export default function Dashboard({
               </div>
             )}
           </div>
-        </div>
+        </article>
 
         {/* Activity Distribution: Top Apps & Category Toggle */}
-        <div className="card dash-topapps">
-          <div className="card-header">
+        <article className="card dash-topapps">
+          <header className="card-header">
             <span className="card-title">
               <Icon name="award" size={14} />
               {breakdownView === 'apps' ? 'Top Applications' : 'Category Share'}
@@ -759,7 +759,7 @@ export default function Dashboard({
                 Categories
               </button>
             </div>
-          </div>
+          </header>
           <div className="card-body">
             <div className="dash-breakdown-list">
               {breakdownView === 'apps' ? (
@@ -774,7 +774,9 @@ export default function Dashboard({
                     <div key={app.appName} className="dash-breakdown-row">
                       <div className="dash-breakdown-header">
                         <div className="dash-breakdown-info">
-                          <AppIcon name={app.appName} size={16} />
+                          <div className="dash-app-icon-wrap" aria-hidden="true">
+                            <AppIcon name={app.appName} size={20} />
+                          </div>
                           <span title={app.appName} className="dash-breakdown-name">{app.appName}</span>
                           <span title={app.category} className="dash-breakdown-sub">({app.category})</span>
                         </div>
@@ -858,14 +860,14 @@ export default function Dashboard({
               )}
             </div>
           </div>
-        </div>
+        </article>
 
-      </div>
+      </section>
 
       {/* Work Sessions Timeline Block */}
       {workSessions.length > 0 && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-header">
+        <article className="card" style={{ marginBottom: 16 }}>
+          <header className="card-header">
             <span className="card-title">
               <Icon name="clock" size={14} />
               Work Sessions
@@ -873,7 +875,7 @@ export default function Dashboard({
             <span style={{ fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
               {workSessions.length} session{workSessions.length === 1 ? '' : 's'}
             </span>
-          </div>
+          </header>
           <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {workSessions.map((session) => (
               <div
@@ -883,7 +885,9 @@ export default function Dashboard({
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                     {canonicalAppName(session.top_app_name) && (
-                      <AppIcon name={canonicalAppName(session.top_app_name)} size={16} />
+                      <div className="dash-app-icon-wrap" aria-hidden="true" style={{ width: 22, height: 22 }}>
+                        <AppIcon name={canonicalAppName(session.top_app_name)} size={16} />
+                      </div>
                     )}
                     <span title={session.title} style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {session.title}
@@ -913,13 +917,13 @@ export default function Dashboard({
               </div>
             ))}
           </div>
-        </div>
+        </article>
       )}
 
       {/* Connected Calendar Schedule Block */}
       {calendarEvents.length > 0 && (
-        <div className="card dash-calendar-card" style={{ marginBottom: 16 }}>
-          <div className="card-header">
+        <article className="card dash-calendar-card" style={{ marginBottom: 16 }}>
+          <header className="card-header">
             <span className="card-title">
               <Icon name="calendar" size={14} />
               Connected Calendar Events
@@ -927,7 +931,7 @@ export default function Dashboard({
             <span style={{ fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
               {calendarEvents.length} event{calendarEvents.length === 1 ? '' : 's'} today
             </span>
-          </div>
+          </header>
           <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {calendarEvents.map((event) => {
               const now = new Date();
@@ -984,12 +988,12 @@ export default function Dashboard({
               );
             })}
           </div>
-        </div>
+        </article>
       )}
 
       {/* Activity Stream Feed */}
-      <div className="card dash-activity">
-        <div className="card-header">
+      <article className="card dash-activity">
+        <header className="card-header">
           <span className="card-title">
             <Icon name="desktop" size={14} />
             Activity Stream
@@ -1012,7 +1016,7 @@ export default function Dashboard({
               </span>
             )}
           </div>
-        </div>
+        </header>
 
         <div className="card-body" style={{ padding: '12px 14px' }}>
           {recent.length === 0 ? (
@@ -1195,7 +1199,7 @@ export default function Dashboard({
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </article>
+    </main>
   );
 }

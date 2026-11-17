@@ -21,11 +21,16 @@ export function EmptyState({
     <div
       className={`empty-state ${className}`.trim()}
       style={minHeight ? { minHeight } : undefined}
+      role="status"
     >
-      {icon && <div className="empty-state-icon">{icon}</div>}
+      {icon && (
+        <div className="empty-state-icon" aria-hidden="true">
+          {icon}
+        </div>
+      )}
       <div className="empty-state-title">{title}</div>
       {description && <div className="empty-state-desc">{description}</div>}
-      {action && <div style={{ marginTop: 14 }}>{action}</div>}
+      {action && <div className="empty-state-actions" style={{ marginTop: 14 }}>{action}</div>}
     </div>
   );
 }

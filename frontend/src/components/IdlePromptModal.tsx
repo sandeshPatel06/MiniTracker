@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon, IconName } from './Icon';
 import { IdleBlock } from '../types';
 
@@ -86,6 +87,15 @@ const QUICK_OPTIONS: QuickOption[] = [
   },
 ];
 
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'textarea:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(', ');
+
 export function IdlePromptModal({
   isOpen,
   block,
@@ -95,19 +105,82 @@ export function IdlePromptModal({
 }: IdlePromptModalProps) {
   const [selectedIdx, setSelectedIdx] = useState<number>(0);
   const [taskTag, setTaskTag] = useState<string>(currentTask || '');
+  const cardRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (currentTask) setTaskTag(currentTask);
   }, [currentTask]);
 
+  // Body scroll lock
+  useEffect(() => {
+    if (!isOpen) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [isOpen]);
+
+  // Focus restoration & keyboard navigation
   useEffect(() => {
     if (!isOpen) return;
 
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    const card = cardRef.current;
+    if (card) {
+      // Focus the currently selected option or the card itself
+      const selectedOption = card.querySelector<HTMLElement>('.idle-modal-option.selected');
+      if (selectedOption) {
+        selectedOption.focus();
+      } else {
+        card.focus();
+      }
+    }
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        if (e.key === 'Escape') onDismiss();
+      const isInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onDismiss();
         return;
       }
+
+      // Tab trap
+      if (e.key === 'Tab') {
+        const modalEl = cardRef.current;
+        if (!modalEl) return;
+        const focusables = Array.from(
+          modalEl.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+        ).filter((el) => !el.hasAttribute('disabled') && el.getClientRects().length > 0);
+
+        if (focusables.length === 0) {
+          e.preventDefault();
+          modalEl.focus();
+          return;
+        }
+
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const active = document.activeElement;
+        const outside = !modalEl.contains(active);
+
+        if (e.shiftKey) {
+          if (outside || active === modalEl || active === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else if (outside || active === last) {
+          e.preventDefault();
+          first.focus();
+        }
+        return;
+      }
+
+      if (isInput) return;
 
       if (e.key >= '1' && e.key <= '5') {
         const idx = parseInt(e.key, 10) - 1;
@@ -124,14 +197,18 @@ export function IdlePromptModal({
       } else if (e.key === 'Enter') {
         e.preventDefault();
         handleSubmit(QUICK_OPTIONS[selectedIdx]);
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        onDismiss();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      const prev = previousFocusRef.current;
+      previousFocusRef.current = null;
+      if (prev && document.contains(prev) && typeof prev.focus === 'function') {
+        prev.focus();
+      }
+    };
   }, [isOpen, selectedIdx, taskTag, onDismiss]);
 
   if (!isOpen || !block) return null;
@@ -150,15 +227,17 @@ export function IdlePromptModal({
     });
   };
 
-  return (
+  const content = (
     <div
       className="modal-backdrop idle-modal-backdrop"
       onClick={onDismiss}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="idle-modal-title"
     >
       <div
+        ref={cardRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="idle-modal-title"
+        tabIndex={-1}
         className="modal-card idle-modal-card"
         onClick={(e) => e.stopPropagation()}
         style={{
@@ -166,10 +245,11 @@ export function IdlePromptModal({
         }}
       >
         {/* Header */}
-        <div className="modal-header idle-modal-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+        <header className="modal-header idle-modal-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: '1 1 auto' }}>
             <div
               className="modal-icon-chip"
+              aria-hidden="true"
               style={{
                 color: 'var(--accent-purple)',
                 background: 'color-mix(in srgb, var(--accent-purple) 12%, transparent)',
@@ -179,7 +259,7 @@ export function IdlePromptModal({
               <Icon name="clock" size={18} />
             </div>
             <div style={{ minWidth: 0 }}>
-              <h2 id="idle-modal-title" className="modal-title" style={{ margin: 0 }}>
+              <h2 id="idle-modal-title" className="modal-title" style={{ margin: 0, fontSize: 16 }}>
                 Welcome Back!
               </h2>
               <p className="modal-description" style={{ margin: '2px 0 0' }}>
@@ -195,9 +275,11 @@ export function IdlePromptModal({
             aria-label="Dismiss and decide later (Escape)"
             title="Dismiss / Decide Later (Esc)"
           >
-            <Icon name="x" size={18} />
+            <span className="modal-close" aria-hidden="true">
+              <Icon name="x" size={16} />
+            </span>
           </button>
-        </div>
+        </header>
 
         {/* Body Content */}
         <div className="modal-body idle-modal-body" style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -235,6 +317,7 @@ export function IdlePromptModal({
 
                   <div
                     className="idle-modal-option-icon"
+                    aria-hidden="true"
                     style={{
                       width: 32,
                       height: 32,
@@ -314,7 +397,7 @@ export function IdlePromptModal({
         </div>
 
         {/* Footer */}
-        <div
+        <footer
           className="modal-footer idle-modal-footer"
           style={{
             padding: '14px 22px',
@@ -362,8 +445,10 @@ export function IdlePromptModal({
               Apply Allocation
             </button>
           </div>
-        </div>
+        </footer>
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 }

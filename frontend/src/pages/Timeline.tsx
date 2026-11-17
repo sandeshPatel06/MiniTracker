@@ -530,7 +530,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
   };
 
   return (
-    <div aria-busy={loading} className="tl-page fade-in-up">
+    <main aria-busy={loading} className="tl-page fade-in-up">
       <ImageModal imagePath={selectedImage} onClose={() => setSelectedImage(null)} />
 
       {/* Header Bar with Date Navigation & View Controls */}
@@ -1339,6 +1339,6 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
           </footer>
         )}
       </section>
-    </div>
+    </main>
   );
 }

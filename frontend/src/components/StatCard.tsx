@@ -8,6 +8,10 @@ interface StatCardProps {
   valueClass?: string;
   valueColor?: string;
   leading?: ReactNode;
+  trend?: {
+    direction: 'up' | 'down' | 'neutral';
+    value: string;
+  };
 }
 
 export function StatCard({
@@ -18,19 +22,33 @@ export function StatCard({
   valueClass,
   valueColor,
   leading,
+  trend,
 }: StatCardProps) {
   return (
-    <div className="stat-card">
-      <span className="stat-label">{label}</span>
+    <article className="stat-card">
+      <header className="stat-header">
+        <span className="stat-label">{label}</span>
+        {trend && (
+          <span
+            className={`stat-trend stat-trend-${trend.direction}`}
+            aria-label={`Trend: ${trend.direction} ${trend.value}`}
+          >
+            <span className="stat-trend-arrow" aria-hidden="true">
+              {trend.direction === 'up' ? '↑' : trend.direction === 'down' ? '↓' : '→'}
+            </span>
+            <span className="stat-trend-val">{trend.value}</span>
+          </span>
+        )}
+      </header>
       <div
         className={`stat-value${valueClass ? ` ${valueClass}` : ''}`}
         title={valueTitle}
         style={valueColor ? { color: valueColor } : undefined}
       >
-        {leading}
+        {leading && <div className="stat-leading-icon">{leading}</div>}
         <span className="stat-value-text">{value}</span>
       </div>
       {sub && <div className="stat-sub">{sub}</div>}
-    </div>
+    </article>
   );
 }

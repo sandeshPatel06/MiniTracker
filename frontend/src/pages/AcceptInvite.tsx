@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { apiFetch, readJsonSafe } from '../api';
 import { User, Organization } from '../types';
 import { Alert } from '../components/Alert';
+import { Icon } from '../components/Icon';
 
 export interface AcceptInviteResult {
   user?: User | null;
@@ -272,8 +273,8 @@ export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token: propToken
   // 1. Loading Skeleton Screen (mirrors actual card geometry to prevent CLS)
   if (loading) {
     return (
-      <div className="accept-invite-page">
-        <div className="accept-invite-card">
+      <main className="accept-invite-page" role="main">
+        <article className="accept-invite-card" aria-label="Loading invitation">
           <div style={{ textAlign: 'center', marginBottom: 24 }}>
             <div className="skeleton" style={{ width: 52, height: 52, borderRadius: 14, margin: '0 auto 14px' }} />
             <div className="skeleton" style={{ width: 200, height: 22, margin: '0 auto 8px', borderRadius: 4 }} />
@@ -285,18 +286,18 @@ export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token: propToken
             <div className="skeleton" style={{ width: '100%', height: 42, borderRadius: 6 }} />
             <div className="skeleton" style={{ width: '100%', height: 44, borderRadius: 8, marginTop: 6 }} />
           </div>
-        </div>
-      </div>
+        </article>
+      </main>
     );
   }
 
   // 2. Error Screen (Token Invalid, Expired or Missing)
   if (error && !invitation) {
     return (
-      <div className="accept-invite-page">
-        <div className="accept-invite-card" style={{ textAlign: 'center' }}>
+      <main className="accept-invite-page" role="main">
+        <article className="accept-invite-card" style={{ textAlign: 'center' }}>
           <div className="accept-invite-badge-icon error" aria-hidden="true">
-            ⚠️
+            <Icon name="x" size={24} />
           </div>
           <h2 style={{ fontSize: 19, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>
             Invalid or Expired Invitation
@@ -313,18 +314,18 @@ export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token: propToken
           >
             Return to Sign In
           </button>
-        </div>
-      </div>
+        </article>
+      </main>
     );
   }
 
   return (
-    <div className="accept-invite-page">
-      <div className="accept-invite-card">
+    <main className="accept-invite-page" role="main">
+      <article className="accept-invite-card">
         {/* Header & Org Detail */}
-        <div style={{ textAlign: 'center', marginBottom: 22 }}>
+        <header style={{ textAlign: 'center', marginBottom: 22 }}>
           <div className="accept-invite-badge-icon" aria-hidden="true">
-            ✉️
+            <Icon name="mail" size={24} />
           </div>
           <h1
             style={{
@@ -354,12 +355,18 @@ export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token: propToken
           >
             <span>You've been invited to collaborate as</span>
             {invitation?.role === 'admin' ? (
-              <span className="badge badge-role-admin">🛡️ ADMIN</span>
+              <span className="badge badge-role-admin">
+                <Icon name="shield" size={12} />
+                <span>Admin</span>
+              </span>
             ) : (
-              <span className="badge badge-role-member">MEMBER</span>
+              <span className="badge badge-role-member">
+                <Icon name="user" size={12} />
+                <span>Member</span>
+              </span>
             )}
           </div>
-        </div>
+        </header>
 
         {/* Active session mismatch notice */}
         {loggedInUserEmail && loggedInUserEmail.toLowerCase() !== invitation?.email.toLowerCase() && (
@@ -380,7 +387,7 @@ export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token: propToken
 
         {/* Existing User Notification Branch */}
         {isAccountExisting ? (
-          <div style={{ textAlign: 'center', padding: '12px 0' }}>
+          <section style={{ textAlign: 'center', padding: '12px 0' }} aria-label="Existing Account Sign In">
             <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.55 }}>
               An account already exists for <strong>{invitation?.email}</strong>. Please sign in to link your account to this workspace.
             </p>
@@ -392,7 +399,7 @@ export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token: propToken
             >
               Sign In to Existing Account
             </button>
-          </div>
+          </section>
         ) : (
           <form onSubmit={handleSubmit} noValidate>
             <div className="form-group" style={{ marginBottom: 16 }}>
@@ -462,7 +469,7 @@ export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token: propToken
                   title={showPassword ? 'Hide password' : 'Show password'}
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
-                  {showPassword ? '🙈' : '👁️'}
+                  <Icon name={showPassword ? 'x' : 'info'} size={15} />
                 </button>
               </div>
 
@@ -535,7 +542,7 @@ export const AcceptInvitePage: React.FC<AcceptInviteProps> = ({ token: propToken
             </div>
           </form>
         )}
-      </div>
-    </div>
+      </article>
+    </main>
   );
 };

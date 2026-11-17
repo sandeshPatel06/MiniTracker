@@ -190,7 +190,7 @@ export function Modal({
         onClick={(e) => e.stopPropagation()}
       >
         {hasHeader ? (
-          <div className="modal-header">
+          <header className="modal-header">
             <div
               style={{
                 display: 'flex',
@@ -200,7 +200,7 @@ export function Modal({
                 minWidth: 0,
               }}
             >
-              {icon && <div className="modal-icon-chip">{icon}</div>}
+              {icon && <div className="modal-icon-chip" aria-hidden="true">{icon}</div>}
               <div
                 style={{
                   display: 'flex',
@@ -214,7 +214,7 @@ export function Modal({
                     className="modal-title"
                     id={titleId}
                     title={typeof title === 'string' ? title : undefined}
-                    style={{ minWidth: 0, overflowWrap: 'anywhere' }}
+                    style={{ margin: 0, minWidth: 0, overflowWrap: 'anywhere' }}
                   >
                     {title}
                   </h3>
@@ -223,6 +223,7 @@ export function Modal({
                   <p
                     id={descriptionId}
                     className="modal-description"
+                    style={{ margin: 0 }}
                   >
                     {description}
                   </p>
@@ -241,16 +242,16 @@ export function Modal({
               {actions}
               <ModalCloseButton onClose={onClose} />
             </div>
-          </div>
+          </header>
         ) : (
-          <div style={{ position: 'absolute', top: 4, right: 4, zIndex: 5 }}>
+          <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 10 }}>
             <ModalCloseButton onClose={onClose} />
           </div>
         )}
 
         <div className="modal-body">{children}</div>
 
-        {footer && <div className="modal-footer">{footer}</div>}
+        {footer && <footer className="modal-footer">{footer}</footer>}
       </div>
     </div>
   );

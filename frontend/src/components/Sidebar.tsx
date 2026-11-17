@@ -1,6 +1,6 @@
 import React from 'react';
 import { Icon, IconName } from './Icon';
-import { Page, User } from '../types';
+import { Page, User, Organization } from '../types';
 import { isDesktopApp } from '../services/wailsBridge';
 import { useToast } from '../context/ToastContext';
 import logoAsset from '../assets/logo.png';
@@ -10,6 +10,7 @@ interface SidebarProps {
   isMobileMenuOpen: boolean;
   setIsMobileMenuOpen: (open: boolean) => void;
   currentUser: User | null;
+  currentOrg?: Organization | null;
   isGuestMode: boolean;
   setIsGuestMode: (isGuest: boolean) => void;
   elapsedSeconds: number;
@@ -32,6 +33,7 @@ interface SidebarProps {
   };
   aiKeyPresent: boolean;
   aiConfigured?: boolean;
+  backendUnavailable?: boolean;
 }
 
 export function Sidebar({
@@ -39,6 +41,7 @@ export function Sidebar({
   isMobileMenuOpen,
   setIsMobileMenuOpen,
   currentUser,
+  currentOrg,
   isGuestMode,
   setIsGuestMode,
   elapsedSeconds,
@@ -57,28 +60,56 @@ export function Sidebar({
   dev,
   aiKeyPresent,
   aiConfigured,
+  backendUnavailable,
 }: SidebarProps) {
   const toast = useToast();
   const isDesktop = isDesktopApp();
+
+  const userInitials = (currentUser?.full_name || currentUser?.email || 'U')
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((s) => s[0]?.toUpperCase() || '')
+    .join('') || 'U';
+
+  const isAIReady = aiKeyPresent || Boolean(aiConfigured) || Boolean(currentUser?.role === 'member');
 
   return (
     <>
       {/* Mobile Header Bar */}
       <header className="mobile-header">
-        <div className="mobile-header-brand" onClick={() => dev.registerTap()} style={{ cursor: 'default' }}>
-          <img src={logoAsset} alt="get-Hike Logo" className="app-brand-logo-img" style={{ width: 34, height: 34 }} />
-          <span className="sidebar-logo-text" style={{ fontSize: 14 }}>get-Hike</span>
+        <div
+          className="mobile-header-brand"
+          onClick={() => dev.registerTap()}
+          style={{ cursor: 'pointer' }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              dev.registerTap();
+            }
+          }}
+          title="get-Hike"
+        >
+          <img
+            src={logoAsset}
+            alt="get-Hike brand logo"
+            className="sidebar-brand-img"
+          />
+          <span className="sidebar-logo-text">get-Hike</span>
+          <span className="sidebar-brand-pill">v1</span>
         </div>
         <div className="mobile-header-actions">
           {isDesktop && (
-            <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: 'var(--teal-text)', fontVariantNumeric: 'tabular-nums' }}>
+            <div style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: 13, fontWeight: 700, color: 'var(--teal-text)', fontVariantNumeric: 'tabular-nums' }}>
               {formatTimer(elapsedSeconds)}
             </div>
           )}
           <button
+            type="button"
             className="mobile-menu-toggle"
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            aria-label="Toggle Navigation Menu"
+            aria-label={isMobileMenuOpen ? 'Close Navigation Menu' : 'Open Navigation Menu'}
             aria-expanded={isMobileMenuOpen}
             aria-controls="sidebar"
           >
@@ -89,18 +120,56 @@ export function Sidebar({
 
       {/* Sidebar Backdrop Overlay for Mobile */}
       {isMobileMenuOpen && (
-        <div className="sidebar-backdrop" onClick={() => setIsMobileMenuOpen(false)} />
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setIsMobileMenuOpen(false)}
+          aria-hidden="true"
+        />
       )}
 
       {/* Sidebar Drawer */}
-      <aside className={`sidebar ${isMobileMenuOpen ? 'open' : ''}`} id="sidebar">
-        <div className="sidebar-logo" onClick={() => dev.registerTap()} style={{ cursor: 'default' }}>
-          <img src={logoAsset} alt="get-Hike Logo" className="app-brand-logo-img" style={{ width: 32, height: 32 }} />
-          <div>
-            <div className="sidebar-logo-text">get-Hike</div>
-            <div className="sidebar-logo-sub">Productivity</div>
+      <aside className={`sidebar ${isMobileMenuOpen ? 'open' : ''}`} id="sidebar" aria-label="Sidebar navigation">
+        {/* Brand Header */}
+        <div
+          className="sidebar-logo"
+          onClick={() => dev.registerTap()}
+          style={{ cursor: 'pointer' }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              dev.registerTap();
+            }
+          }}
+          title="get-Hike — Click to inspect"
+        >
+          <div className="sidebar-logo-brand">
+            <img
+              src={logoAsset}
+              alt="get-Hike brand logo"
+              className="sidebar-brand-img"
+            />
+            <div>
+              <div className="sidebar-logo-text">get-Hike</div>
+              <div className="sidebar-logo-sub">Productivity</div>
+            </div>
           </div>
+          <span className="sidebar-brand-pill">v1</span>
         </div>
+
+        {/* Workspace / Organization Switcher Info */}
+        {(currentOrg || currentUser) && (
+          <div
+            className="sidebar-org-box"
+            title={currentOrg ? `Workspace: ${currentOrg.name}` : 'Default Workspace'}
+          >
+            <Icon name="building" size={13} color="var(--text-muted)" />
+            <div className="sidebar-org-name">
+              {currentOrg?.name || 'My Workspace'}
+            </div>
+          </div>
+        )}
 
         {/* Work Clock & Tracking Control Widget - Desktop Only */}
         {isDesktop && (
@@ -126,6 +195,7 @@ export function Sidebar({
               {formatTimer(elapsedSeconds)}
             </div>
             <button
+              type="button"
               onClick={handleToggleTracking}
               className={`btn-tracker-toggle ${isTrackingActive ? 'active' : 'paused'}`}
               style={{ marginBottom: 8 }}
@@ -154,6 +224,7 @@ export function Sidebar({
               </div>
             )}
             <button
+              type="button"
               onClick={onOpenTaskModal}
               className={`btn-task-goal ${userTask ? 'active' : ''}`}
               title={userTask || 'Set target task goal (max 20 words)'}
@@ -164,6 +235,7 @@ export function Sidebar({
               </span>
             </button>
             <button
+              type="button"
               onClick={() => {
                 const w = window as any;
                 if (w.go?.main?.App?.TogglePrivacyMode) {
@@ -181,6 +253,7 @@ export function Sidebar({
             </button>
             {!isGuestMode && (
               <button
+                type="button"
                 onClick={handleSyncNow}
                 disabled={isSyncing}
                 className={`btn-sync-now ${isSyncing ? 'syncing' : ''}`}
@@ -193,73 +266,70 @@ export function Sidebar({
         )}
 
         <div className="sidebar-section-label">Navigation</div>
-        {navItems.map((item) => {
-          const active = page === item.id;
-          return (
-            <button
-              key={item.id}
-              id={`nav-${item.id}`}
-              type="button"
-              className={`nav-item ${active ? 'active' : ''}`}
-              onClick={() => {
-                navigateTo(item.id);
-                setIsMobileMenuOpen(false);
-              }}
-              aria-current={active ? 'page' : undefined}
-              style={{
-                background: active ? 'color-mix(in srgb, var(--accent-primary) 9%, transparent)' : 'none',
-                border: 'none',
-                borderLeft: active ? '3px solid var(--accent-primary)' : '3px solid transparent',
-                textAlign: 'left',
-                fontFamily: 'inherit',
-                cursor: 'pointer',
-              }}
-            >
-              <Icon name={item.iconName} size={16} className="nav-icon" />
-              <span className="nav-text">{item.label}</span>
-            </button>
-          );
-        })}
+        <nav aria-label="Main Navigation">
+          {navItems.map((item) => {
+            const active = page === item.id;
+            return (
+              <button
+                key={item.id}
+                id={`nav-${item.id}`}
+                type="button"
+                className={`nav-item ${active ? 'active' : ''}`}
+                onClick={() => {
+                  navigateTo(item.id);
+                  setIsMobileMenuOpen(false);
+                }}
+                aria-current={active ? 'page' : undefined}
+                style={{
+                  textAlign: 'left',
+                  fontFamily: 'inherit',
+                  cursor: 'pointer',
+                  width: 'calc(100% - 16px)',
+                }}
+              >
+                <Icon name={item.iconName} size={16} className="nav-icon" />
+                <span className="nav-text">{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
 
         <div className="sidebar-footer">
           {currentUser ? (
-            <div style={{ marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid var(--border-subtle)' }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Icon name="user" size={14} color="var(--text-secondary)" />
-                <span
-                  style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                  title={currentUser.full_name || currentUser.email}
-                >
-                  {currentUser.full_name || currentUser.email}
-                </span>
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
-                <span style={{ textTransform: 'capitalize' }}>Role: {currentUser.role}</span>
-                <button
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    handleLogout();
-                  }}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: 'var(--danger-text)',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 4,
-                  }}
-                >
-                  <span>Logout</span>
-                  <Icon name="logout" size={12} />
-                </button>
+            <div className="sidebar-footer-user">
+              <div className="sidebar-user-row">
+                <div className="sidebar-user-avatar" aria-hidden="true">
+                  {userInitials}
+                </div>
+                <div className="sidebar-user-info">
+                  <div
+                    className="sidebar-user-name"
+                    title={currentUser.full_name || currentUser.email}
+                  >
+                    {currentUser.full_name || currentUser.email}
+                  </div>
+                  <div className="sidebar-user-meta">
+                    <span style={{ textTransform: 'capitalize' }}>Role: {currentUser.role}</span>
+                    <button
+                      type="button"
+                      className="sidebar-logout-btn"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        handleLogout();
+                      }}
+                      title="Sign out of your account"
+                    >
+                      <span>Logout</span>
+                      <Icon name="logout" size={11} />
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           ) : (
             <div style={{ marginBottom: 10 }}>
               <button
+                type="button"
                 onClick={() => {
                   setIsMobileMenuOpen(false);
                   setIsGuestMode(false);
@@ -291,21 +361,32 @@ export function Sidebar({
             </button>
           )}
 
-          <div className="status-badge">
-            {(() => {
-              const isAIReady = aiKeyPresent || Boolean(aiConfigured) || Boolean(currentUser?.role === 'member');
-              return (
-                <>
-                  <div
-                    className={`status-dot ${isAIReady ? '' : 'inactive'}`}
-                    style={{ background: isAIReady ? 'var(--accent-teal)' : undefined, boxShadow: isAIReady ? '0 0 8px var(--accent-teal)' : undefined }}
-                  />
-                  <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-                    {isAIReady ? 'AI Engine Ready' : 'AI Standby'}
-                  </span>
-                </>
-              );
-            })()}
+          {/* Status Group: Connection Status & AI Engine Indicator */}
+          <div className="sidebar-status-group">
+            {/* Server Connection Status */}
+            <div className="status-badge" role="status">
+              <div
+                className={`status-dot ${backendUnavailable ? 'error' : isGuestMode ? 'inactive' : ''}`}
+                title={backendUnavailable ? 'Server unreachable' : isGuestMode ? 'Offline Guest Mode' : 'Connected to Server'}
+              />
+              <span>
+                {backendUnavailable ? 'Server Offline' : isGuestMode ? 'Offline Mode' : 'Server Online'}
+              </span>
+            </div>
+
+            {/* AI Engine Status */}
+            <div className="status-badge" role="status">
+              <div
+                className={`status-dot ${isAIReady ? '' : 'inactive'}`}
+                style={{
+                  background: isAIReady ? 'var(--accent-teal)' : undefined,
+                  boxShadow: isAIReady ? '0 0 6px var(--accent-teal)' : undefined,
+                }}
+              />
+              <span>
+                {isAIReady ? 'AI Engine Ready' : 'AI Standby'}
+              </span>
+            </div>
           </div>
         </div>
       </aside>

@@ -108,7 +108,7 @@ func TestReserveScreenshotPathBrokenDir(t *testing.T) {
 // round a resized dimension down to zero (which would encode a broken WebP).
 func TestResizeImageClampsDegenerateResult(t *testing.T) {
 	src := image.NewRGBA(image.Rect(0, 0, 2, 4000))
-	got := resizeImage(src, maxWidth, maxHeight)
+	got := resizeImage(src, defaultMaxWidth, defaultMaxHeight)
 
 	b := got.Bounds()
 	if b.Dx() < 1 || b.Dy() < 1 {
@@ -120,21 +120,86 @@ func TestResizeImageClampsDegenerateResult(t *testing.T) {
 // unchanged rather than scaled up to the cap.
 func TestResizeImageNoUpscale(t *testing.T) {
 	src := image.NewRGBA(image.Rect(0, 0, 800, 400))
-	got := resizeImage(src, maxWidth, maxHeight)
+	got := resizeImage(src, defaultMaxWidth, defaultMaxHeight)
 	if got != image.Image(src) {
 		t.Fatal("resizeImage rescaled an already-small image; expected the source back")
 	}
 }
 
-// TestResizeImageWidthBound asserts the 720p box is respected for landscape
+// TestResizeImageWidthBound asserts the 1080p box is respected for landscape
 // frames (common single-monitor case).
 func TestResizeImageWidthBound(t *testing.T) {
 	src := image.NewRGBA(image.Rect(0, 0, 2560, 1440))
-	got := resizeImage(src, maxWidth, maxHeight)
+	got := resizeImage(src, defaultMaxWidth, defaultMaxHeight)
 
 	b := got.Bounds()
-	if b.Dx() != maxWidth || b.Dy() != maxHeight {
-		t.Fatalf("resizeImage(2560x1440) = %dx%d; want %dx%d", b.Dx(), b.Dy(), maxWidth, maxHeight)
+	if b.Dx() != defaultMaxWidth || b.Dy() != defaultMaxHeight {
+		t.Fatalf("resizeImage(2560x1440) = %dx%d; want %dx%d", b.Dx(), b.Dy(), defaultMaxWidth, defaultMaxHeight)
+	}
+}
+
+func TestGetMaxDimensionsDefaultsAndEnv(t *testing.T) {
+	// 1. Defaults
+	os.Unsetenv("SCREENSHOT_MAX_WIDTH")
+	os.Unsetenv("SCREENSHOT_MAX_HEIGHT")
+	w, h := getMaxDimensions()
+	if w != 1920 || h != 1080 {
+		t.Errorf("getMaxDimensions() = %dx%d; want 1920x1080", w, h)
+	}
+
+	// 2. Custom env overrides
+	os.Setenv("SCREENSHOT_MAX_WIDTH", "2560")
+	os.Setenv("SCREENSHOT_MAX_HEIGHT", "1440")
+	defer func() {
+		os.Unsetenv("SCREENSHOT_MAX_WIDTH")
+		os.Unsetenv("SCREENSHOT_MAX_HEIGHT")
+	}()
+
+	w, h = getMaxDimensions()
+	if w != 2560 || h != 1440 {
+		t.Errorf("getMaxDimensions() = %dx%d; want 2560x1440", w, h)
+	}
+
+	// 3. Invalid env values fall back to defaults
+	os.Setenv("SCREENSHOT_MAX_WIDTH", "invalid")
+	os.Setenv("SCREENSHOT_MAX_HEIGHT", "-100")
+	w, h = getMaxDimensions()
+	if w != 1920 || h != 1080 {
+		t.Errorf("getMaxDimensions() with invalid env = %dx%d; want 1920x1080", w, h)
+	}
+}
+
+func TestGetWebpQualityDefaultsAndClamping(t *testing.T) {
+	// 1. Default
+	os.Unsetenv("SCREENSHOT_QUALITY")
+	q := getWebpQuality()
+	if q != 80 {
+		t.Errorf("getWebpQuality() = %v; want 80", q)
+	}
+
+	// 2. Custom valid quality
+	os.Setenv("SCREENSHOT_QUALITY", "85")
+	defer os.Unsetenv("SCREENSHOT_QUALITY")
+	if q := getWebpQuality(); q != 85 {
+		t.Errorf("getWebpQuality() = %v; want 85", q)
+	}
+
+	// 3. Lower bound clamp (clamp to 30)
+	os.Setenv("SCREENSHOT_QUALITY", "10")
+	if q := getWebpQuality(); q != 30 {
+		t.Errorf("getWebpQuality() = %v; want clamped 30", q)
+	}
+
+	// 4. Upper bound clamp (clamp to 100)
+	os.Setenv("SCREENSHOT_QUALITY", "120")
+	if q := getWebpQuality(); q != 100 {
+		t.Errorf("getWebpQuality() = %v; want clamped 100", q)
+	}
+
+	// 5. Invalid string falls back to default 80
+	os.Setenv("SCREENSHOT_QUALITY", "ultra-hd")
+	if q := getWebpQuality(); q != 80 {
+		t.Errorf("getWebpQuality() = %v; want fallback 80", q)
 	}
 }
 

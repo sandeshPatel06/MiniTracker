@@ -102,6 +102,15 @@ export const OrganizationPage: React.FC = () => {
   const [usageForbidden, setUsageForbidden] = useState(false);
   const [resettingUsage, setResettingUsage] = useState(false);
 
+  // Plan and Gemini Settings state
+  const [planTier, setPlanTier] = useState<string>('free');
+  const [planStatus, setPlanStatus] = useState<string>('inactive');
+  const [updatingPlan, setUpdatingPlan] = useState(false);
+  const [maskedOrgKey, setMaskedOrgKey] = useState<string>('');
+  const [hasCustomKey, setHasCustomKey] = useState(false);
+  const [inputOrgKey, setInputOrgKey] = useState('');
+  const [savingKey, setSavingKey] = useState(false);
+
   useEffect(() => {
     return () => {
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
@@ -130,6 +139,122 @@ export const OrganizationPage: React.FC = () => {
       copyTimerRef.current = window.setTimeout(() => setCopiedToken(null), 2500);
     } catch {
       setPageError('Copy failed — please select the link and copy it manually.');
+    }
+  };
+
+  const fetchPlanData = async () => {
+    try {
+      const res = await apiFetch('/api/org/plan');
+      if (res.ok) {
+        const data = await readJsonSafe<{ plan_tier?: string; plan_status?: string }>(res);
+        if (data?.plan_tier) setPlanTier(data.plan_tier);
+        if (data?.plan_status) setPlanStatus(data.plan_status);
+      }
+    } catch {
+      // Best-effort
+    }
+  };
+
+  const fetchOrgSettings = async () => {
+    try {
+      const res = await apiFetch('/api/org/settings');
+      if (res.ok) {
+        const data = await readJsonSafe<{ gemini_api_key?: string; has_custom_key?: boolean }>(res);
+        if (data) {
+          setMaskedOrgKey(data.gemini_api_key || '');
+          setHasCustomKey(Boolean(data.has_custom_key));
+        }
+      }
+    } catch {
+      // Best-effort
+    }
+  };
+
+  const handleSaveOrgKey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanKey = inputOrgKey.trim();
+    if (!cleanKey) {
+      setPageError('Please enter a Gemini API Key to save.');
+      return;
+    }
+    setSavingKey(true);
+    setPageError(null);
+    try {
+      const res = await apiFetch('/api/org/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gemini_api_key: cleanKey }),
+      });
+      if (!res.ok) {
+        const err = await readJsonSafe<{ error?: string; message?: string }>(res);
+        throw new Error(err?.message || err?.error || 'Failed to save Organization API Key.');
+      }
+      setInputOrgKey('');
+      setPageSuccess('Organization Gemini API Key saved securely.');
+      await fetchOrgSettings();
+      setTimeout(() => setPageSuccess(null), 3000);
+    } catch (err: any) {
+      setPageError(err.message || 'Error saving API key.');
+    } finally {
+      setSavingKey(false);
+    }
+  };
+
+  const handleClearOrgKey = async () => {
+    if (!window.confirm('Remove custom organization API key? Team AI features will require an active Managed Cloud Plan.')) {
+      return;
+    }
+    setSavingKey(true);
+    setPageError(null);
+    try {
+      const res = await apiFetch('/api/org/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gemini_api_key: '' }),
+      });
+      if (!res.ok) {
+        const err = await readJsonSafe<{ error?: string; message?: string }>(res);
+        throw new Error(err?.message || err?.error || 'Failed to clear Organization API Key.');
+      }
+      setMaskedOrgKey('');
+      setHasCustomKey(false);
+      setPageSuccess('Custom organization API key removed.');
+      setTimeout(() => setPageSuccess(null), 3000);
+    } catch (err: any) {
+      setPageError(err.message || 'Error clearing API key.');
+    } finally {
+      setSavingKey(false);
+    }
+  };
+
+  const handleTogglePlan = async (targetTier: string, targetStatus: string) => {
+    const isUpgrading = targetTier !== 'free' && targetStatus === 'active';
+    const confirmMsg = isUpgrading
+      ? 'Subscribe to get-Hike Managed Cloud Plan (Pro)? This will enable server-managed AI processing for your organization.'
+      : 'Switch back to Free Plan? Your team will need to bring their own Gemini API key for AI features.';
+
+    if (!window.confirm(confirmMsg)) return;
+
+    setUpdatingPlan(true);
+    setPageError(null);
+    try {
+      const res = await apiFetch('/api/org/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan_tier: targetTier, plan_status: targetStatus }),
+      });
+      if (!res.ok) {
+        const err = await readJsonSafe<{ error?: string; message?: string }>(res);
+        throw new Error(err?.message || err?.error || 'Failed to update plan.');
+      }
+      setPlanTier(targetTier);
+      setPlanStatus(targetStatus);
+      setPageSuccess(isUpgrading ? 'Successfully upgraded to Pro Managed Cloud!' : 'Plan updated to Free.');
+      setTimeout(() => setPageSuccess(null), 3000);
+    } catch (err: any) {
+      setPageError(err.message || 'Error updating plan.');
+    } finally {
+      setUpdatingPlan(false);
     }
   };
 
@@ -205,9 +330,11 @@ export const OrganizationPage: React.FC = () => {
       }
 
       setOrg(data.org || null);
+      if (data.org?.plan_tier) setPlanTier(data.org.plan_tier);
+      if (data.org?.plan_status) setPlanStatus(data.org.plan_status);
       setMembers(data.members || []);
       setInvitations(data.invitations || []);
-      await fetchUsageData();
+      await Promise.all([fetchPlanData(), fetchOrgSettings(), fetchUsageData()]);
     } catch (err) {
       console.error('Failed to fetch team data:', err);
       setLoadFailed(true);
@@ -482,6 +609,15 @@ export const OrganizationPage: React.FC = () => {
               {org?.name || 'Organization'}
             </h1>
             <span className="badge badge-productive">Active</span>
+            {planTier === 'pro' && planStatus === 'active' ? (
+              <span className="badge badge-role-owner" title="Managed get-Hike Cloud AI subscription">
+                Pro Managed Cloud
+              </span>
+            ) : (
+              <span className="badge badge-role-member" title="Self-hosted Free Plan">
+                Free Plan
+              </span>
+            )}
           </div>
           <p className="page-subtitle">
             Manage members, roles, and pending invitations.
@@ -521,6 +657,133 @@ export const OrganizationPage: React.FC = () => {
           style={{ marginBottom: 14 }}
         />
       )}
+
+      {/* Plan & AI Provider Configuration */}
+      <div className="card org-plan-card">
+        <div className="card-header org-plan-header">
+          <div className="org-card-title-group">
+            <Icon name="sparkles" size={16} />
+            <span className="card-title">AI Processing & Subscription Plan</span>
+            <span className="org-card-header-badge">Admin</span>
+          </div>
+          <div>
+            {planTier === 'pro' && planStatus === 'active' ? (
+              <span className="badge badge-role-owner">
+                Pro Managed Cloud Active
+              </span>
+            ) : (
+              <span className="badge badge-role-member">
+                Free Plan (BYOK)
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="card-body">
+          <div className="org-plan-grid">
+            {/* Option A: Bring Your Own Key */}
+            <div className={`org-plan-option-card ${hasCustomKey ? 'active-option' : ''}`}>
+              <div className="org-plan-option-header">
+                <div className="org-plan-option-title">
+                  <Icon name="shield" size={16} />
+                  <span>Bring Your Own Key (Free)</span>
+                </div>
+                {hasCustomKey && (
+                  <span className="badge badge-productive">Connected</span>
+                )}
+              </div>
+              <p className="org-plan-option-desc">
+                Supply an organization-wide Google Gemini API Key. Your key is envelope-encrypted with AES-256-GCM and shared across all members.
+              </p>
+
+              <form onSubmit={handleSaveOrgKey} className="org-key-form">
+                <label className="form-label" htmlFor="org-gemini-key">Organization Gemini API Key</label>
+                <div className="org-key-input-row">
+                  <input
+                    id="org-gemini-key"
+                    type="password"
+                    placeholder={maskedOrgKey ? `Configured: ${maskedOrgKey}` : 'AIzaSy...'}
+                    value={inputOrgKey}
+                    onChange={(e) => setInputOrgKey(e.target.value)}
+                    disabled={savingKey}
+                    className="form-input org-mono-input"
+                  />
+                  <button
+                    type="submit"
+                    disabled={savingKey || !inputOrgKey.trim()}
+                    className="btn btn-primary btn-sm"
+                  >
+                    {savingKey ? 'Saving…' : 'Save Key'}
+                  </button>
+                  {hasCustomKey && (
+                    <button
+                      type="button"
+                      onClick={handleClearOrgKey}
+                      disabled={savingKey}
+                      className="btn btn-danger btn-sm"
+                      title="Remove key"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                {maskedOrgKey && (
+                  <span className="org-key-status-hint">
+                    Active Key: <code style={{ fontSize: 11 }}>{maskedOrgKey}</code>
+                  </span>
+                )}
+              </form>
+            </div>
+
+            {/* Option B: Managed Cloud Plan */}
+            <div className={`org-plan-option-card ${planTier === 'pro' && planStatus === 'active' ? 'active-option' : ''}`}>
+              <div className="org-plan-option-header">
+                <div className="org-plan-option-title">
+                  <Icon name="sparkles" size={16} />
+                  <span>get-Hike Managed Plan</span>
+                </div>
+                {planTier === 'pro' && planStatus === 'active' ? (
+                  <span className="badge badge-role-owner">Active</span>
+                ) : (
+                  <span className="badge badge-role-member">Pro Cloud</span>
+                )}
+              </div>
+              <p className="org-plan-option-desc">
+                Zero configuration required. All team activity telemetry is securely analyzed using get-Hike managed cloud server infrastructure.
+              </p>
+
+              <div style={{ marginTop: 'auto', paddingTop: 12 }}>
+                {planTier === 'pro' && planStatus === 'active' ? (
+                  <div className="flex gap-8 items-center justify-between">
+                    <span className="text-muted" style={{ fontSize: 12 }}>
+                      Managed Cloud Active
+                    </span>
+                    <button
+                      type="button"
+                      disabled={updatingPlan}
+                      onClick={() => handleTogglePlan('free', 'inactive')}
+                      className="btn btn-secondary btn-sm"
+                    >
+                      {updatingPlan ? 'Updating…' : 'Cancel Subscription'}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={updatingPlan}
+                    onClick={() => handleTogglePlan('pro', 'active')}
+                    className="btn btn-primary btn-sm"
+                    style={{ width: '100%', justifyContent: 'center' }}
+                  >
+                    <Icon name="zap" size={14} />
+                    <span>{updatingPlan ? 'Activating…' : 'Subscribe to Managed Cloud Plan'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* API Usage (Admin) */}
       {!usageForbidden && orgUsage && (

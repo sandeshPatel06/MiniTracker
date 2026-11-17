@@ -1,0 +1,21 @@
+---
+// Redirect /pricing to /plans for clean semantic routing
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="refresh" content="0;url=/plans" />
+    <link rel="canonical" href="https://minitracker.pages.dev/plans" />
+    <title>Redirecting to Plans...</title>
+  </head>
+  <body class="bg-slate-950 text-slate-300 font-sans flex items-center justify-center min-h-screen">
+    <div class="text-center p-6 max-w-md">
+      <p class="text-base mb-3">Redirecting to plans and pricing...</p>
+      <a href="/plans" class="text-emerald-400 underline hover:text-emerald-300">Click here if you are not redirected automatically.</a>
+    </div>
+    <script>
+      window.location.replace('/plans');
+    </script>
+  </body>
+</html>

@@ -141,4 +141,15 @@ func TestAuthSecurityAndRegistrationFlow(t *testing.T) {
 	if evDeleted != nil {
 		t.Errorf("expected nil after delete, got %+v", evDeleted)
 	}
+
+	// 7. Test maskAPIKey helper
+	if m := maskAPIKey(""); m != "" {
+		t.Errorf("expected empty string for empty key, got %q", m)
+	}
+	if m := maskAPIKey("short"); m != "••••••••" {
+		t.Errorf("expected bullets for short key, got %q", m)
+	}
+	if m := maskAPIKey("AIzaSy1234567890abcdef"); m != "AIzaSy...cdef" {
+		t.Errorf("expected masked key format, got %q", m)
+	}
 }

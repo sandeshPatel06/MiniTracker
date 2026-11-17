@@ -27,6 +27,11 @@ type Config struct {
 	TelegramBotToken   string        `mapstructure:"telegram_bot_token" json:"telegram_bot_token"`
 	TelegramChatID     string        `mapstructure:"telegram_chat_id" json:"telegram_chat_id"`
 
+	// Screenshot Configuration
+	ScreenshotQuality   int `mapstructure:"screenshot_quality" json:"screenshot_quality"`
+	ScreenshotMaxWidth  int `mapstructure:"screenshot_max_width" json:"screenshot_max_width"`
+	ScreenshotMaxHeight int `mapstructure:"screenshot_max_height" json:"screenshot_max_height"`
+
 	// Feature 8: Privacy & Sensitive Content Protection
 	PrivacyModeEnabled bool   `mapstructure:"privacy_mode_enabled" json:"privacy_mode_enabled"`
 	PrivacyBlurStyle   string `mapstructure:"privacy_blur_style" json:"privacy_blur_style"`
@@ -58,6 +63,9 @@ func Load() (*Config, error) {
 	// 1. Set default values
 	v.SetDefault("gemini_model", "models/gemini-3.5-flash-lite")
 	v.SetDefault("screenshot_interval_seconds", 30*time.Second)
+	v.SetDefault("screenshot_quality", 80)
+	v.SetDefault("screenshot_max_width", 1920)
+	v.SetDefault("screenshot_max_height", 1080)
 	v.SetDefault("ai_analysis_interval_seconds", 3*time.Hour)
 	v.SetDefault("backend_port", 8080)
 	v.SetDefault("backend_endpoint", "https://minitracker-api.fly.dev")
@@ -103,6 +111,9 @@ func Load() (*Config, error) {
 	_ = v.BindEnv("azure_tenant_id", "AZURE_TENANT_ID")
 	_ = v.BindEnv("data_dir", "DATA_DIR")
 	_ = v.BindEnv("screenshot_interval_seconds", "SCREENSHOT_INTERVAL_SECONDS")
+	_ = v.BindEnv("screenshot_quality", "SCREENSHOT_QUALITY")
+	_ = v.BindEnv("screenshot_max_width", "SCREENSHOT_MAX_WIDTH")
+	_ = v.BindEnv("screenshot_max_height", "SCREENSHOT_MAX_HEIGHT")
 	_ = v.BindEnv("ai_analysis_interval_seconds", "AI_ANALYSIS_INTERVAL_SECONDS")
 	_ = v.BindEnv("telegram_bot_token", "TELEGRAM_BOT_TOKEN")
 	_ = v.BindEnv("telegram_chat_id", "TELEGRAM_CHAT_ID")
@@ -163,6 +174,19 @@ func Load() (*Config, error) {
 	}
 	cfg.TelegramBotToken = v.GetString("telegram_bot_token")
 	cfg.TelegramChatID = v.GetString("telegram_chat_id")
+
+	cfg.ScreenshotQuality = v.GetInt("screenshot_quality")
+	if cfg.ScreenshotQuality < 30 || cfg.ScreenshotQuality > 100 {
+		cfg.ScreenshotQuality = 80
+	}
+	cfg.ScreenshotMaxWidth = v.GetInt("screenshot_max_width")
+	if cfg.ScreenshotMaxWidth <= 0 {
+		cfg.ScreenshotMaxWidth = 1920
+	}
+	cfg.ScreenshotMaxHeight = v.GetInt("screenshot_max_height")
+	if cfg.ScreenshotMaxHeight <= 0 {
+		cfg.ScreenshotMaxHeight = 1080
+	}
 
 	cfg.PrivacyModeEnabled = v.GetBool("privacy_mode_enabled")
 	cfg.PrivacyBlurStyle = v.GetString("privacy_blur_style")
@@ -243,6 +267,9 @@ func Save(cfg *Config) error {
 	v.Set("gemini_api_key", cfg.GeminiAPIKey)
 	v.Set("gemini_model", cfg.GeminiModel)
 	v.Set("screenshot_interval_seconds", cfg.ScreenshotInterval.String())
+	v.Set("screenshot_quality", cfg.ScreenshotQuality)
+	v.Set("screenshot_max_width", cfg.ScreenshotMaxWidth)
+	v.Set("screenshot_max_height", cfg.ScreenshotMaxHeight)
 	v.Set("ai_analysis_interval_seconds", cfg.AIAnalysisInterval.String())
 	v.Set("data_dir", cfg.DataDir)
 	v.Set("backend_port", cfg.BackendPort)

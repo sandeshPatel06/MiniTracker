@@ -23,6 +23,15 @@ func TestLoadConfig(t *testing.T) {
 	if cfg.ScreenshotInterval != 30*time.Second {
 		t.Errorf("expected ScreenshotInterval to be 30s, got %v", cfg.ScreenshotInterval)
 	}
+	if cfg.ScreenshotQuality != 80 {
+		t.Errorf("expected ScreenshotQuality to be 80, got %d", cfg.ScreenshotQuality)
+	}
+	if cfg.ScreenshotMaxWidth != 1920 {
+		t.Errorf("expected ScreenshotMaxWidth to be 1920, got %d", cfg.ScreenshotMaxWidth)
+	}
+	if cfg.ScreenshotMaxHeight != 1080 {
+		t.Errorf("expected ScreenshotMaxHeight to be 1080, got %d", cfg.ScreenshotMaxHeight)
+	}
 }
 
 func TestEnvVarFallbacks(t *testing.T) {

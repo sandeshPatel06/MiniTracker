@@ -17,6 +17,7 @@ import (
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/reak/get-hike/internal/appname"
+	"github.com/reak/get-hike/internal/crypto"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -93,6 +94,8 @@ type Organization struct {
 	ID           int64     `json:"id"`
 	Name         string    `json:"name"`
 	Slug         string    `json:"slug"`
+	PlanTier     string    `json:"plan_tier"`
+	PlanStatus   string    `json:"plan_status"`
 	GeminiAPIKey string    `json:"gemini_api_key,omitempty"`
 	GeminiModel  string    `json:"gemini_model,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -294,6 +297,8 @@ func (db *DB) migrate() error {
 	// Safe column additions for existing databases (run before CREATE TABLE / index creation).
 	// These use _, _ so errors ("duplicate column") are silently ignored.
 	colMigrations := []string{
+		"ALTER TABLE organizations ADD COLUMN plan_tier TEXT DEFAULT 'free'",
+		"ALTER TABLE organizations ADD COLUMN plan_status TEXT DEFAULT 'inactive'",
 		"ALTER TABLE organizations ADD COLUMN gemini_api_key TEXT DEFAULT ''",
 		"ALTER TABLE organizations ADD COLUMN gemini_model TEXT DEFAULT ''",
 		"ALTER TABLE users ADD COLUMN personal_gemini_api_key TEXT DEFAULT ''",
@@ -317,6 +322,8 @@ func (db *DB) migrate() error {
 	// queries failing with "column ai_retry_count does not exist".
 	if db.dialect == dialect.Postgres {
 		pgMigrations := []string{
+			"ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan_tier TEXT DEFAULT 'free'",
+			"ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan_status TEXT DEFAULT 'inactive'",
 			"ALTER TABLE organizations ADD COLUMN IF NOT EXISTS gemini_api_key TEXT DEFAULT ''",
 			"ALTER TABLE organizations ADD COLUMN IF NOT EXISTS gemini_model TEXT DEFAULT ''",
 			"ALTER TABLE users ADD COLUMN IF NOT EXISTS personal_gemini_api_key TEXT DEFAULT ''",
@@ -344,6 +351,8 @@ func (db *DB) migrate() error {
 			id              SERIAL PRIMARY KEY,
 			name            TEXT NOT NULL,
 			slug            TEXT UNIQUE NOT NULL,
+			plan_tier       TEXT DEFAULT 'free',
+			plan_status     TEXT DEFAULT 'inactive',
 			gemini_api_key  TEXT DEFAULT '',
 			gemini_model    TEXT DEFAULT '',
 			created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
@@ -457,6 +466,8 @@ func (db *DB) migrate() error {
 				id              INTEGER PRIMARY KEY AUTOINCREMENT,
 				name            TEXT NOT NULL,
 				slug            TEXT UNIQUE NOT NULL,
+				plan_tier       TEXT DEFAULT 'free',
+				plan_status     TEXT DEFAULT 'inactive',
 				gemini_api_key  TEXT DEFAULT '',
 				gemini_model    TEXT DEFAULT '',
 				created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -692,7 +703,7 @@ func (db *DB) CreateOrganization(name, slug string) (*Organization, error) {
 		if err := db.rawDB.QueryRow(query, args...).Scan(&id); err != nil {
 			return nil, fmt.Errorf("create org: %w", err)
 		}
-		return &Organization{ID: id, Name: name, Slug: slug, CreatedAt: time.Now()}, nil
+		return &Organization{ID: id, Name: name, Slug: slug, PlanTier: "free", PlanStatus: "inactive", CreatedAt: time.Now()}, nil
 	}
 
 	query, args := builder.Query()
@@ -701,17 +712,28 @@ func (db *DB) CreateOrganization(name, slug string) (*Organization, error) {
 		return nil, fmt.Errorf("create org: %w", err)
 	}
 	id, _ := res.LastInsertId()
-	return &Organization{ID: id, Name: name, Slug: slug, CreatedAt: time.Now()}, nil
+	return &Organization{ID: id, Name: name, Slug: slug, PlanTier: "free", PlanStatus: "inactive", CreatedAt: time.Now()}, nil
 }
 
 // GetOrganization returns an org by ID using Ent SQL Builder.
 func (db *DB) GetOrganization(id int64) (*Organization, error) {
-	builder := entsql.Dialect(db.dialect).Select("id", "name", "slug", "created_at").From(entsql.Table("organizations")).Where(entsql.EQ("id", id))
+	builder := entsql.Dialect(db.dialect).Select("id", "name", "slug", "plan_tier", "plan_status", "created_at").From(entsql.Table("organizations")).Where(entsql.EQ("id", id))
 	query, args := builder.Query()
 	var o Organization
 	var ts interface{}
-	if err := db.rawDB.QueryRow(query, args...).Scan(&o.ID, &o.Name, &o.Slug, &ts); err != nil {
+	var planTier, planStatus sql.NullString
+	if err := db.rawDB.QueryRow(query, args...).Scan(&o.ID, &o.Name, &o.Slug, &planTier, &planStatus, &ts); err != nil {
 		return nil, err
+	}
+	if planTier.Valid && planTier.String != "" {
+		o.PlanTier = planTier.String
+	} else {
+		o.PlanTier = "free"
+	}
+	if planStatus.Valid && planStatus.String != "" {
+		o.PlanStatus = planStatus.String
+	} else {
+		o.PlanStatus = "inactive"
 	}
 	o.CreatedAt = parseFlexibleTime(ts)
 	return &o, nil
@@ -719,12 +741,23 @@ func (db *DB) GetOrganization(id int64) (*Organization, error) {
 
 // GetOrganizationBySlug returns an org by slug using Ent SQL Builder.
 func (db *DB) GetOrganizationBySlug(slug string) (*Organization, error) {
-	builder := entsql.Dialect(db.dialect).Select("id", "name", "slug", "created_at").From(entsql.Table("organizations")).Where(entsql.EQ("slug", slug))
+	builder := entsql.Dialect(db.dialect).Select("id", "name", "slug", "plan_tier", "plan_status", "created_at").From(entsql.Table("organizations")).Where(entsql.EQ("slug", slug))
 	query, args := builder.Query()
 	var o Organization
 	var ts interface{}
-	if err := db.rawDB.QueryRow(query, args...).Scan(&o.ID, &o.Name, &o.Slug, &ts); err != nil {
+	var planTier, planStatus sql.NullString
+	if err := db.rawDB.QueryRow(query, args...).Scan(&o.ID, &o.Name, &o.Slug, &planTier, &planStatus, &ts); err != nil {
 		return nil, err
+	}
+	if planTier.Valid && planTier.String != "" {
+		o.PlanTier = planTier.String
+	} else {
+		o.PlanTier = "free"
+	}
+	if planStatus.Valid && planStatus.String != "" {
+		o.PlanStatus = planStatus.String
+	} else {
+		o.PlanStatus = "inactive"
 	}
 	o.CreatedAt = parseFlexibleTime(ts)
 	return &o, nil
@@ -2178,9 +2211,19 @@ func (db *DB) MarkLogsSynced(localIDs []int64, remoteIDs []int64) error {
 }
 
 // SetOrgGeminiConfig updates the Gemini API key and model for an organization.
+// The apiKey is encrypted using AES-256-GCM envelope encryption before storing.
 func (db *DB) SetOrgGeminiConfig(orgID int64, apiKey, model string) error {
+	var storedKey string
+	if strings.TrimSpace(apiKey) != "" {
+		encrypted, err := crypto.Encrypt(strings.TrimSpace(apiKey))
+		if err != nil {
+			return fmt.Errorf("encrypt org gemini key: %w", err)
+		}
+		storedKey = encrypted
+	}
+
 	builder := entsql.Dialect(db.dialect).Update("organizations").
-		Set("gemini_api_key", apiKey).
+		Set("gemini_api_key", storedKey).
 		Set("gemini_model", model).
 		Where(entsql.EQ("id", orgID))
 	query, args := builder.Query()
@@ -2188,43 +2231,160 @@ func (db *DB) SetOrgGeminiConfig(orgID int64, apiKey, model string) error {
 	return err
 }
 
+// SetOrgGeminiKey updates the Gemini API key for an organization with the default model.
+func (db *DB) SetOrgGeminiKey(orgID int64, apiKey string) error {
+	return db.SetOrgGeminiConfig(orgID, apiKey, "models/gemini-3.5-flash-lite")
+}
+
 // SetUserPersonalKey updates the personal Gemini API key for a user.
+// The apiKey is encrypted using AES-256-GCM envelope encryption before storing.
 func (db *DB) SetUserPersonalKey(userID int64, apiKey string) error {
+	var storedKey string
+	if strings.TrimSpace(apiKey) != "" {
+		encrypted, err := crypto.Encrypt(strings.TrimSpace(apiKey))
+		if err != nil {
+			return fmt.Errorf("encrypt user personal gemini key: %w", err)
+		}
+		storedKey = encrypted
+	}
+
 	builder := entsql.Dialect(db.dialect).Update("users").
-		Set("personal_gemini_api_key", apiKey).
+		Set("personal_gemini_api_key", storedKey).
 		Where(entsql.EQ("id", userID))
 	query, args := builder.Query()
 	_, err := db.rawDB.Exec(query, args...)
 	return err
 }
 
+// SetUserPersonalGeminiKey is an alias for SetUserPersonalKey.
+func (db *DB) SetUserPersonalGeminiKey(userID int64, apiKey string) error {
+	return db.SetUserPersonalKey(userID, apiKey)
+}
+
+// GetOrgGeminiConfig retrieves the decrypted Gemini API key and model for an organization.
+func (db *DB) GetOrgGeminiConfig(orgID int64) (apiKey, model string, err error) {
+	orgBuilder := entsql.Dialect(db.dialect).Select("gemini_api_key", "gemini_model").
+		From(entsql.Table("organizations")).Where(entsql.EQ("id", orgID))
+	query, args := orgBuilder.Query()
+	var rawKey, m sql.NullString
+	if err := db.rawDB.QueryRow(query, args...).Scan(&rawKey, &m); err != nil {
+		return "", "", err
+	}
+	model = "models/gemini-3.5-flash-lite"
+	if m.Valid && strings.TrimSpace(m.String) != "" {
+		model = strings.TrimSpace(m.String)
+	}
+	if rawKey.Valid && strings.TrimSpace(rawKey.String) != "" {
+		decrypted, decErr := crypto.Decrypt(strings.TrimSpace(rawKey.String))
+		if decErr == nil {
+			apiKey = strings.TrimSpace(decrypted)
+		}
+	}
+	return apiKey, model, nil
+}
+
+// GetUserPersonalKey retrieves the decrypted personal Gemini API key for a user.
+func (db *DB) GetUserPersonalKey(userID int64) (apiKey string, err error) {
+	userBuilder := entsql.Dialect(db.dialect).Select("personal_gemini_api_key").
+		From(entsql.Table("users")).Where(entsql.EQ("id", userID))
+	query, args := userBuilder.Query()
+	var rawKey sql.NullString
+	if err := db.rawDB.QueryRow(query, args...).Scan(&rawKey); err != nil {
+		return "", err
+	}
+	if rawKey.Valid && strings.TrimSpace(rawKey.String) != "" {
+		decrypted, decErr := crypto.Decrypt(strings.TrimSpace(rawKey.String))
+		if decErr == nil {
+			apiKey = strings.TrimSpace(decrypted)
+		}
+	}
+	return apiKey, nil
+}
+
+// UpdateOrgPlan updates the subscription plan tier and status for an organization.
+func (db *DB) UpdateOrgPlan(orgID int64, tier, status string) error {
+	builder := entsql.Dialect(db.dialect).Update("organizations").
+		Set("plan_tier", tier).
+		Set("plan_status", status).
+		Where(entsql.EQ("id", orgID))
+	query, args := builder.Query()
+	_, err := db.rawDB.Exec(query, args...)
+	return err
+}
+
+// GetOrgPlan retrieves the subscription plan tier and status for an organization.
+func (db *DB) GetOrgPlan(orgID int64) (tier, status string, err error) {
+	builder := entsql.Dialect(db.dialect).Select("plan_tier", "plan_status").
+		From(entsql.Table("organizations")).Where(entsql.EQ("id", orgID))
+	query, args := builder.Query()
+	var t, s sql.NullString
+	if err := db.rawDB.QueryRow(query, args...).Scan(&t, &s); err != nil {
+		return "", "", err
+	}
+	tier = "free"
+	if t.Valid && t.String != "" {
+		tier = t.String
+	}
+	status = "inactive"
+	if s.Valid && s.String != "" {
+		status = s.String
+	}
+	return tier, status, nil
+}
+
 // ResolveEffectiveGeminiKey determines the Gemini API key and model based on hierarchy:
-// 1. Org Admin Key in DB (for Org members)
-// 2. User Personal Key in DB/Config (for Solo Non-Org users)
-// 3. Global System Key (fallback)
+// 1. If user belongs to an Org (orgID > 0):
+//    - Query gemini_api_key, gemini_model, plan_tier, plan_status from organizations.
+//    - If gemini_api_key exists, decrypt it with crypto.Decrypt. If valid key, return decrypted key, model, "org_admin", nil.
+//    - Else if plan_status == "active" and plan_tier != "free", return defaultKey, defaultModel, "managed_plan", nil.
+//    - Else: return "", defaultModel, "org_key_or_plan_required", nil (DO NOT give global server key to unpaying orgs without their own key!).
+// 2. If solo user (orgID == 0):
+//    - Query personal_gemini_api_key. If exists, decrypt and return key, defaultModel, "user_personal", nil.
+//    - Fallback to defaultKey, defaultModel, "global_system", nil.
 func (db *DB) ResolveEffectiveGeminiKey(userID, orgID int64, defaultKey, defaultModel string) (apiKey string, model string, source string, err error) {
 	if defaultModel == "" {
 		defaultModel = "models/gemini-3.5-flash-lite"
 	}
 
-	// 1. Check if user is part of an Organization with an Admin-configured key
+	// 1. If user belongs to an Org (orgID > 0)
 	if orgID > 0 {
-		orgBuilder := entsql.Dialect(db.dialect).Select("gemini_api_key", "gemini_model").
+		orgBuilder := entsql.Dialect(db.dialect).Select("gemini_api_key", "gemini_model", "plan_tier", "plan_status").
 			From(entsql.Table("organizations")).Where(entsql.EQ("id", orgID))
 		query, args := orgBuilder.Query()
-		var orgKey, orgModel sql.NullString
-		if err := db.rawDB.QueryRow(query, args...).Scan(&orgKey, &orgModel); err == nil {
+		var orgKey, orgModel, planTier, planStatus sql.NullString
+		if err := db.rawDB.QueryRow(query, args...).Scan(&orgKey, &orgModel, &planTier, &planStatus); err == nil {
 			if orgKey.Valid && strings.TrimSpace(orgKey.String) != "" {
-				m := defaultModel
-				if orgModel.Valid && strings.TrimSpace(orgModel.String) != "" {
-					m = orgModel.String
+				decryptedKey, decErr := crypto.Decrypt(strings.TrimSpace(orgKey.String))
+				if decErr == nil && strings.TrimSpace(decryptedKey) != "" {
+					m := defaultModel
+					if orgModel.Valid && strings.TrimSpace(orgModel.String) != "" {
+						m = orgModel.String
+					}
+					return strings.TrimSpace(decryptedKey), m, "org_admin", nil
 				}
-				return strings.TrimSpace(orgKey.String), m, "org_admin", nil
 			}
+
+			// Check managed plan
+			status := "inactive"
+			if planStatus.Valid && planStatus.String != "" {
+				status = planStatus.String
+			}
+			tier := "free"
+			if planTier.Valid && planTier.String != "" {
+				tier = planTier.String
+			}
+
+			if status == "active" && tier != "free" {
+				return defaultKey, defaultModel, "managed_plan", nil
+			}
+
+			return "", defaultModel, "org_key_or_plan_required", nil
 		}
+		// If query fails (e.g. org not found), require org key or plan
+		return "", defaultModel, "org_key_or_plan_required", nil
 	}
 
-	// 2. Check if Solo user has set a Personal API Key
+	// 2. If solo user (orgID == 0)
 	if userID > 0 {
 		userBuilder := entsql.Dialect(db.dialect).Select("personal_gemini_api_key").
 			From(entsql.Table("users")).Where(entsql.EQ("id", userID))
@@ -2232,12 +2392,15 @@ func (db *DB) ResolveEffectiveGeminiKey(userID, orgID int64, defaultKey, default
 		var userKey sql.NullString
 		if err := db.rawDB.QueryRow(query, args...).Scan(&userKey); err == nil {
 			if userKey.Valid && strings.TrimSpace(userKey.String) != "" {
-				return strings.TrimSpace(userKey.String), defaultModel, "user_personal", nil
+				decryptedKey, decErr := crypto.Decrypt(strings.TrimSpace(userKey.String))
+				if decErr == nil && strings.TrimSpace(decryptedKey) != "" {
+					return strings.TrimSpace(decryptedKey), defaultModel, "user_personal", nil
+				}
 			}
 		}
 	}
 
-	// 3. Fallback to Global System Key
+	// Fallback to Global System Key
 	if strings.TrimSpace(defaultKey) != "" {
 		return strings.TrimSpace(defaultKey), defaultModel, "global_system", nil
 	}

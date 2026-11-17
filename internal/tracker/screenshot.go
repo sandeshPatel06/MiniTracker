@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,10 +29,47 @@ type ScreenshotResult struct {
 }
 
 const (
-	maxWidth    = 1280
-	maxHeight   = 720
-	webpQuality = 55 // 55% is visually indistinguishable for AI analysis, encodes ~15% faster
+	defaultMaxWidth    = 1920
+	defaultMaxHeight   = 1080
+	defaultWebpQuality = 80 // 80% produces crisp UI and code text with lightweight WebP payloads
 )
+
+// getMaxDimensions returns the maximum width and height for screenshots,
+// reading SCREENSHOT_MAX_WIDTH and SCREENSHOT_MAX_HEIGHT environment variables
+// if set, falling back to 1920x1080 Full HD.
+func getMaxDimensions() (int, int) {
+	maxW := defaultMaxWidth
+	maxH := defaultMaxHeight
+
+	if val := os.Getenv("SCREENSHOT_MAX_WIDTH"); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+			maxW = parsed
+		}
+	}
+	if val := os.Getenv("SCREENSHOT_MAX_HEIGHT"); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+			maxH = parsed
+		}
+	}
+	return maxW, maxH
+}
+
+// getWebpQuality returns the WebP quality setting clamped between 30 and 100,
+// reading SCREENSHOT_QUALITY environment variable if set, falling back to 80.
+func getWebpQuality() float32 {
+	quality := defaultWebpQuality
+	if val := os.Getenv("SCREENSHOT_QUALITY"); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil {
+			if parsed < 30 {
+				parsed = 30
+			} else if parsed > 100 {
+				parsed = 100
+			}
+			quality = parsed
+		}
+	}
+	return float32(quality)
+}
 
 // captureMu serializes concurrent CaptureScreenshot calls (scheduled tick,
 // manual "collect now", daemon) so captures never overlap or interleave writes.
@@ -42,7 +80,7 @@ var (
 )
 
 // CaptureScreenshot takes a screenshot of all active displays, combines them into
-// a single grid image, compresses it to WebP at 60% quality (max 720p), saves it
+// a single grid image, compresses it to WebP at high fidelity (Full HD 1080p, 80% quality), saves it
 // to disk, and returns a base64 encoded copy for AI analysis.
 func CaptureScreenshot(dataDir string) (*ScreenshotResult, error) {
 	return CaptureScreenshotWithPrivacy(dataDir, nil, "", "")
@@ -94,8 +132,9 @@ func CaptureScreenshotWithPrivacy(dataDir string, engine *privacy.Engine, appNam
 		return nil, err
 	}
 
-	// Resize to max 720p maintaining aspect ratio
-	resized := resizeImage(combined, maxWidth, maxHeight)
+	// Resize maintaining aspect ratio within configured/environment bounds (default Full HD 1080p)
+	maxW, maxH := getMaxDimensions()
+	resized := resizeImage(combined, maxW, maxH)
 
 	// Apply In-Memory Privacy Transformation (Blur or Shield) on the RAM buffer
 	isBlurred := false
@@ -108,9 +147,10 @@ func CaptureScreenshotWithPrivacy(dataDir string, engine *privacy.Engine, appNam
 		}
 	}
 
-	// Encode to WebP
+	// Encode to WebP with sharp quality
+	quality := getWebpQuality()
 	var buf bytes.Buffer
-	if err := webp.Encode(&buf, resized, &webp.Options{Quality: webpQuality}); err != nil {
+	if err := webp.Encode(&buf, resized, &webp.Options{Quality: quality}); err != nil {
 		return nil, fmt.Errorf("encode webp: %w", err)
 	}
 
@@ -219,6 +259,7 @@ func stitchDisplayImages(imgs []image.Image) image.Image {
 }
 
 // resizeImage resizes the image to fit within maxW×maxH, preserving aspect ratio.
+// Uses draw.CatmullRom bicubic filtering to preserve crisp text and sharp UI fonts.
 func resizeImage(src image.Image, maxW, maxH int) image.Image {
 	srcBounds := src.Bounds()
 	srcW := srcBounds.Dx()
@@ -248,6 +289,6 @@ func resizeImage(src image.Image, maxW, maxH int) image.Image {
 	}
 
 	dst := image.NewRGBA(image.Rect(0, 0, newW, newH))
-	draw.BiLinear.Scale(dst, dst.Bounds(), src, srcBounds, draw.Over, nil)
+	draw.CatmullRom.Scale(dst, dst.Bounds(), src, srcBounds, draw.Over, nil)
 	return dst
 }

@@ -58,6 +58,8 @@ export interface Organization {
   id: number;
   name: string;
   slug: string;
+  plan_tier?: string;
+  plan_status?: string;
   created_at: string;
 }
 

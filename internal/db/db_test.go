@@ -294,26 +294,112 @@ func TestKeyResolutionHierarchy(t *testing.T) {
 	database, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	// 1. Fallback to Global Key
-	key, model, source, err := database.ResolveEffectiveGeminiKey(1, 1, "global-key-123", "gemma-4-31b-it")
+	// 1. Solo user without personal key -> Fallback to Global Key
+	key, model, source, err := database.ResolveEffectiveGeminiKey(1, 0, "global-key-123", "gemma-4-31b-it")
 	if err != nil || key != "global-key-123" || source != "global_system" {
-		t.Errorf("expected global_system key fallback, got key=%s source=%s err=%v", key, source, err)
+		t.Errorf("expected global_system key fallback for solo user, got key=%s source=%s err=%v", key, source, err)
 	}
 
-	// 2. Solo user sets personal key
+	// 2. Org member with no org key and free/inactive plan -> org_key_or_plan_required
+	key, model, source, err = database.ResolveEffectiveGeminiKey(1, 1, "global-key-123", "gemma-4-31b-it")
+	if err != nil || key != "" || source != "org_key_or_plan_required" {
+		t.Errorf("expected org_key_or_plan_required for unpaid org without key, got key=%s source=%s err=%v", key, source, err)
+	}
+
+	// 3. Org with active paid plan -> managed_plan (returns defaultKey)
+	if err := database.UpdateOrgPlan(1, "pro", "active"); err != nil {
+		t.Fatalf("failed to update org plan: %v", err)
+	}
+	tier, status, err := database.GetOrgPlan(1)
+	if err != nil || tier != "pro" || status != "active" {
+		t.Fatalf("unexpected org plan: tier=%s status=%s err=%v", tier, status, err)
+	}
+	key, model, source, err = database.ResolveEffectiveGeminiKey(1, 1, "global-key-123", "gemma-4-31b-it")
+	if err != nil || key != "global-key-123" || source != "managed_plan" {
+		t.Errorf("expected managed_plan key, got key=%s source=%s err=%v", key, source, err)
+	}
+
+	// 4. Solo user sets personal key
 	_ = database.SetUserPersonalKey(1, "user-personal-key-456")
 	key, model, source, err = database.ResolveEffectiveGeminiKey(1, 0, "global-key-123", "gemma-4-31b-it")
 	if err != nil || key != "user-personal-key-456" || source != "user_personal" {
 		t.Errorf("expected user_personal key, got key=%s source=%s err=%v", key, source, err)
 	}
 
-	// 3. Org Admin sets Org key
+	// 5. Org Admin sets Org key (overrides managed_plan)
 	_ = database.SetOrgGeminiConfig(1, "org-admin-key-789", "gemma-4-31b-it")
 	key, model, source, err = database.ResolveEffectiveGeminiKey(1, 1, "global-key-123", "gemma-4-31b-it")
 	if err != nil || key != "org-admin-key-789" || source != "org_admin" {
 		t.Errorf("expected org_admin key priority, got key=%s source=%s err=%v", key, source, err)
 	}
+
+	// Verify encryption in DB (db should not contain plaintext)
+	var rawOrgKey string
+	if err := database.rawDB.QueryRow("SELECT gemini_api_key FROM organizations WHERE id = 1").Scan(&rawOrgKey); err != nil {
+		t.Fatalf("failed to query raw org gemini key: %v", err)
+	}
+	if rawOrgKey == "org-admin-key-789" {
+		t.Errorf("raw DB contains unencrypted plaintext org key: %s", rawOrgKey)
+	}
+	if !strings.HasPrefix(rawOrgKey, "enc:v1:") {
+		t.Errorf("raw DB org key does not have enc:v1: prefix: %s", rawOrgKey)
+	}
+
+	var rawUserKey string
+	if err := database.rawDB.QueryRow("SELECT personal_gemini_api_key FROM users WHERE id = 1").Scan(&rawUserKey); err != nil {
+		t.Fatalf("failed to query raw user personal key: %v", err)
+	}
+	if rawUserKey == "user-personal-key-456" {
+		t.Errorf("raw DB contains unencrypted plaintext personal key: %s", rawUserKey)
+	}
+	if !strings.HasPrefix(rawUserKey, "enc:v1:") {
+		t.Errorf("raw DB personal key does not have enc:v1: prefix: %s", rawUserKey)
+	}
 	_ = model
+}
+
+func TestOrgPlanAndEncryptionBackwardsCompatibility(t *testing.T) {
+	database, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Direct insertion of legacy unencrypted keys into DB
+	_, err := database.rawDB.Exec("UPDATE organizations SET gemini_api_key = 'legacy-plain-org-key' WHERE id = 1")
+	if err != nil {
+		t.Fatalf("failed to insert legacy org key: %v", err)
+	}
+	_, err = database.rawDB.Exec("UPDATE users SET personal_gemini_api_key = 'legacy-plain-user-key' WHERE id = 1")
+	if err != nil {
+		t.Fatalf("failed to insert legacy user key: %v", err)
+	}
+
+	// Should resolve legacy plaintext transparently via backwards compatibility
+	key, _, source, err := database.ResolveEffectiveGeminiKey(1, 1, "global-default", "gemma-4-31b-it")
+	if err != nil || key != "legacy-plain-org-key" || source != "org_admin" {
+		t.Fatalf("failed to resolve legacy org key: key=%s source=%s err=%v", key, source, err)
+	}
+
+	key, _, source, err = database.ResolveEffectiveGeminiKey(1, 0, "global-default", "gemma-4-31b-it")
+	if err != nil || key != "legacy-plain-user-key" || source != "user_personal" {
+		t.Fatalf("failed to resolve legacy user key: key=%s source=%s err=%v", key, source, err)
+	}
+
+	// Test SetOrgGeminiKey and SetUserPersonalGeminiKey methods
+	if err := database.SetOrgGeminiKey(1, "new-enc-org-key"); err != nil {
+		t.Fatalf("SetOrgGeminiKey failed: %v", err)
+	}
+	if err := database.SetUserPersonalGeminiKey(1, "new-enc-user-key"); err != nil {
+		t.Fatalf("SetUserPersonalGeminiKey failed: %v", err)
+	}
+
+	key, _, source, err = database.ResolveEffectiveGeminiKey(1, 1, "global-default", "gemma-4-31b-it")
+	if err != nil || key != "new-enc-org-key" || source != "org_admin" {
+		t.Fatalf("failed to resolve newly encrypted org key: key=%s source=%s err=%v", key, source, err)
+	}
+
+	key, _, source, err = database.ResolveEffectiveGeminiKey(1, 0, "global-default", "gemma-4-31b-it")
+	if err != nil || key != "new-enc-user-key" || source != "user_personal" {
+		t.Fatalf("failed to resolve newly encrypted user key: key=%s source=%s err=%v", key, source, err)
+	}
 }
 
 func TestResolveServerTimeZone(t *testing.T) {

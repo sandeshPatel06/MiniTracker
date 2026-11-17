@@ -455,8 +455,8 @@ func main() {
 		jsonResp(w, map[string]interface{}{"success": true})
 	})
 
-	// POST /api/ai/analyze-batch — Server-side AI analysis proxy (avoids exposing Gemini API key to browsers)
-	mux.HandleFunc("/api/ai/analyze-batch", func(w http.ResponseWriter, r *http.Request) {
+	// POST /api/ai/analyze-batch & /api/ai/batch-analyze — Server-side AI analysis proxy (avoids exposing Gemini API key to browsers)
+	handleBatchAnalyze := func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -477,6 +477,15 @@ func main() {
 		}
 
 		effKey, effModel, keySource, err := database.ResolveEffectiveGeminiKey(userID, orgID, cfg.GeminiAPIKey, cfg.GeminiModel)
+		if keySource == "org_key_or_plan_required" || (orgID > 0 && effKey == "") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusPaymentRequired)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":         "Organization requires either a custom Gemini API Key or an active get-Hike Cloud subscription.",
+				"requires_plan": true,
+			})
+			return
+		}
 		if err != nil || effKey == "" {
 			jsonError(w, "No Gemini API key configured on server", http.StatusBadRequest)
 			return
@@ -538,7 +547,9 @@ func main() {
 			"model":        effModel,
 			"total_tokens": totalTokens,
 		})
-	})
+	}
+	mux.HandleFunc("/api/ai/analyze-batch", handleBatchAnalyze)
+	mux.HandleFunc("/api/ai/batch-analyze", handleBatchAnalyze)
 
 	// GET /api/ai/models — Server-side model listing using configured effective key
 	mux.HandleFunc("/api/ai/models", func(w http.ResponseWriter, r *http.Request) {
@@ -1156,6 +1167,10 @@ func main() {
 		if len(batchAnalysisItems) > 0 {
 			go func(itemsToAnalyze []ai.BatchAnalysisItem, uID, oID int64) {
 				effKey, effModel, keySource, err := database.ResolveEffectiveGeminiKey(uID, oID, cfg.GeminiAPIKey, cfg.GeminiModel)
+				if keySource == "org_key_or_plan_required" || (oID > 0 && effKey == "") {
+					log.Printf("[server] telemetry AI processing skipped for Org #%d: requires either custom Gemini key or active managed plan (source=%s)", oID, keySource)
+					return
+				}
 				if err != nil || effKey == "" {
 					log.Printf("[server] telemetry AI processing skipped for %d logs (no valid key found, source=%s)", len(itemsToAnalyze), keySource)
 					return
@@ -1306,16 +1321,91 @@ func main() {
 		jsonResp(w, summary)
 	})
 
-	// POST /api/org/settings — Save Organization Admin Gemini API key in database
-	mux.HandleFunc("/api/org/settings", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
+	// GET /api/org/plan — Query organization plan tier and status
+	// POST /api/org/plan — Admin-only endpoint to update organization plan (e.g. mock upgrade to 'pro'/'active')
+	mux.HandleFunc("/api/org/plan", func(w http.ResponseWriter, r *http.Request) {
 		user := getSessionUser(r, database)
 		if user == nil {
 			jsonError(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if r.Method == http.MethodGet {
+			tier, status, err := database.GetOrgPlan(user.OrgID)
+			if err != nil {
+				jsonError(w, fmt.Sprintf("Failed to get org plan: %v", err), http.StatusInternalServerError)
+				return
+			}
+			jsonResp(w, map[string]interface{}{
+				"plan_tier":   tier,
+				"plan_status": status,
+			})
+			return
+		}
+
+		if r.Method == http.MethodPost {
+			if user.Role != "owner" && user.Role != "admin" {
+				jsonError(w, "Forbidden: Only Org Admins or Owners can update plan", http.StatusForbidden)
+				return
+			}
+
+			var payload struct {
+				PlanTier   string `json:"plan_tier"`
+				PlanStatus string `json:"plan_status"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				jsonError(w, "Invalid payload", http.StatusBadRequest)
+				return
+			}
+
+			if payload.PlanTier == "" {
+				payload.PlanTier = "pro"
+			}
+			if payload.PlanStatus == "" {
+				payload.PlanStatus = "active"
+			}
+
+			if err := database.UpdateOrgPlan(user.OrgID, payload.PlanTier, payload.PlanStatus); err != nil {
+				jsonError(w, fmt.Sprintf("Failed to update org plan: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			log.Printf("[server] updated Org #%d plan to tier=%s status=%s by admin User #%d", user.OrgID, payload.PlanTier, payload.PlanStatus, user.ID)
+			jsonResp(w, map[string]interface{}{
+				"success":     true,
+				"plan_tier":   payload.PlanTier,
+				"plan_status": payload.PlanStatus,
+			})
+			return
+		}
+
+		jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+	})
+
+	// GET or POST /api/org/settings — Retrieve (masked) or save Organization Admin Gemini API key in database
+	mux.HandleFunc("/api/org/settings", func(w http.ResponseWriter, r *http.Request) {
+		user := getSessionUser(r, database)
+		if user == nil {
+			jsonError(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if r.Method == http.MethodGet {
+			key, model, err := database.GetOrgGeminiConfig(user.OrgID)
+			if err != nil {
+				jsonError(w, fmt.Sprintf("Failed to retrieve org settings: %v", err), http.StatusInternalServerError)
+				return
+			}
+			jsonResp(w, map[string]interface{}{
+				"gemini_api_key": maskAPIKey(key),
+				"has_custom_key": strings.TrimSpace(key) != "",
+				"gemini_model":   model,
+			})
+			return
+		}
+
+		if r.Method != http.MethodPost {
+			jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -1346,16 +1436,29 @@ func main() {
 		jsonResp(w, map[string]interface{}{"success": true})
 	})
 
-	// POST /api/user/settings — Save Personal Gemini API key for solo accounts
+	// GET or POST /api/user/settings — Retrieve (masked) or save Personal Gemini API key for solo accounts
 	mux.HandleFunc("/api/user/settings", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
 		user := getSessionUser(r, database)
 		if user == nil {
 			jsonError(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if r.Method == http.MethodGet {
+			key, err := database.GetUserPersonalKey(user.ID)
+			if err != nil {
+				jsonError(w, fmt.Sprintf("Failed to retrieve user settings: %v", err), http.StatusInternalServerError)
+				return
+			}
+			jsonResp(w, map[string]interface{}{
+				"personal_gemini_api_key": maskAPIKey(key),
+				"has_custom_key":          strings.TrimSpace(key) != "",
+			})
+			return
+		}
+
+		if r.Method != http.MethodPost {
+			jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -2582,6 +2685,21 @@ func gzipMiddleware(next http.Handler) http.Handler {
 		defer gz.Close()
 		next.ServeHTTP(gzipResponseWriter{Writer: gz, ResponseWriter: w}, r)
 	})
+}
+
+// maskAPIKey returns a masked representation of an API key (e.g. "AIzaSy...XXXX").
+func maskAPIKey(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	if len(key) <= 8 {
+		return "••••••••"
+	}
+	if len(key) <= 12 {
+		return key[:2] + "..." + key[len(key)-2:]
+	}
+	return key[:6] + "..." + key[len(key)-4:]
 }
 
 func jsonError(w http.ResponseWriter, msg string, status int) {

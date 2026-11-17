@@ -13,7 +13,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, PieChart, Pie, Cell, Legend,
 } from 'recharts';
-import { localISODate, isPendingLog, FOCUS_GOOD, FOCUS_OK } from '../utils';
+import { localISODate, isPendingLog, isIdleLog, FOCUS_GOOD, FOCUS_OK } from '../utils';
 import { isDesktopApp } from '../services/wailsBridge';
 
 interface Props {
@@ -254,9 +254,9 @@ export default function Analytics({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Analyzed logs for focus percentage
+  // Analyzed active work logs for focus percentage (ignoring pure idle away captures)
   const analyzedLogs = useMemo(() => {
-    return logs.filter(l => !isPendingLog(l));
+    return logs.filter(l => !isPendingLog(l) && !isIdleLog(l));
   }, [logs]);
 
   // Overall Average Focus Score
@@ -268,10 +268,8 @@ export default function Analytics({
   }, [analyzedLogs]);
 
   // Build hourly focus score trend chart data. Capture counts per hour cover
-  // every log; the average focus rating only uses analyzed captures, because
-  // the server serializes pending rows with productive_score 0. Hours with no
-  // analyzed captures render as null → the bars shows a genuine gap instead
-  // of a misleading 0% spike.
+  // every log; the average focus rating only uses analyzed active captures, because
+  // unanalyzed and pure idle rows skew the working productivity towards 0%.
   const hourlyData = useMemo(() => {
     const hourCounts = Array.from({ length: 24 }, () => 0);
     const hourScores: Array<{ total: number; count: number }> = Array.from({ length: 24 }, () => ({ total: 0, count: 0 }));
@@ -282,7 +280,7 @@ export default function Analytics({
       const h = d.getHours();
       if (Number.isNaN(h) || h < 0 || h > 23) return;
       hourCounts[h]++;
-      if (!isPendingLog(l)) {
+      if (!isPendingLog(l) && !isIdleLog(l)) {
         hourScores[h].total += captureScore(l);
         hourScores[h].count++;
       }
@@ -318,7 +316,7 @@ export default function Analytics({
         appMap[app] = { count: 0, category: l.app_category || 'Application', scoreTotal: 0, scoreCount: 0 };
       }
       appMap[app].count++;
-      if (!isPendingLog(l)) {
+      if (!isPendingLog(l) && !isIdleLog(l)) {
         appMap[app].scoreTotal += captureScore(l);
         appMap[app].scoreCount++;
       }
@@ -367,7 +365,7 @@ export default function Analytics({
         Entropy: typeof l.entropy_score === 'number' && Number.isFinite(l.entropy_score)
           ? parseFloat(Math.max(0, Math.min(100, l.entropy_score)).toFixed(1))
           : null,
-        FocusScore: isPendingLog(l)
+        FocusScore: (isPendingLog(l) || isIdleLog(l))
           ? null
           : captureScore(l),
       };
@@ -405,7 +403,11 @@ export default function Analytics({
     ? 'Today'
     : format(new Date((startDate || today) + 'T00:00:00'), 'MMMM d, yyyy');
 
-  const activeMinutes = logs.length > 0 ? (logs.length * intervalSec) / 60 : 0;
+  const activeWorkingLogs = useMemo(() => {
+    return logs.filter(l => !isIdleLog(l));
+  }, [logs]);
+
+  const activeMinutes = activeWorkingLogs.length > 0 ? (activeWorkingLogs.length * intervalSec) / 60 : 0;
 
   // Quick date-range presets. The selected preset is derived from the active
   // range so manually picking dates naturally switches the dropdown to Custom.
@@ -502,6 +504,7 @@ export default function Analytics({
               ariaLabel="Filter by team member"
               value={selectedUserId ? String(selectedUserId) : ''}
               onChange={(value) => onUserChange?.(value ? Number(value) : null)}
+              className="an-member-select"
               triggerStyle={{ maxWidth: 280 }}
               options={[
                 {
@@ -522,6 +525,30 @@ export default function Analytics({
               ]}
             />
           )}
+
+          {/* Mobile / Narrow Screen Presets Dropdown using CustomSelect */}
+          <div className="an-period-select-wrap">
+            <CustomSelect
+              ariaLabel="Select date range preset"
+              className={`an-period-select${rangePreset !== 'custom' ? ' an-preset-active' : ''}`}
+              value={rangePreset}
+              onChange={(value) => {
+                if (value === 'custom') {
+                  const startEl = document.getElementById('an-start-date');
+                  startEl?.focus();
+                } else {
+                  applyRangePreset(value);
+                }
+              }}
+              options={[
+                { value: 'today', label: 'Today', leading: <Icon name="calendar" size={14} /> },
+                { value: 'yesterday', label: 'Yesterday', leading: <Icon name="calendar" size={14} /> },
+                { value: 'last7', label: 'Last 7 Days', leading: <Icon name="calendar" size={14} /> },
+                { value: 'last30', label: 'Last 30 Days', leading: <Icon name="calendar" size={14} /> },
+                { value: 'custom', label: 'Custom Range', leading: <Icon name="calendar" size={14} /> },
+              ]}
+            />
+          </div>
 
           <div className="an-period-group" role="group" aria-label="Time period selector">
             <button
@@ -571,10 +598,11 @@ export default function Analytics({
             <input
               id="an-start-date"
               type="date"
-              className="date-input"
+              className="date-input an-range-input"
               aria-label="Range start date"
               value={startDate || today}
               max={endDate || localISODate()}
+              style={{ colorScheme: 'dark light' }}
               onChange={(e) => {
                 const s = e.target.value;
                 if (!s) return;
@@ -585,12 +613,14 @@ export default function Analytics({
             />
             <span className="an-dates-sep" aria-hidden="true">to</span>
             <input
+              id="an-end-date"
               type="date"
-              className="date-input"
+              className="date-input an-range-input"
               aria-label="Range end date"
               value={endDate || today}
               min={startDate || undefined}
               max={localISODate()}
+              style={{ colorScheme: 'dark light' }}
               onChange={(e) => {
                 const ed = e.target.value;
                 if (!ed) return;
@@ -764,20 +794,20 @@ export default function Analytics({
               label="Active Work Duration"
               value={activeMinutes >= 60 ? `${(activeMinutes / 60).toFixed(1)} hrs` : `${Math.round(activeMinutes)} mins`}
               leading={<Icon name="clock" size={16} color="var(--accent-teal)" />}
-              sub={`Across ${logs.length.toLocaleString()} telemetry captures`}
+              sub={`Across ${activeWorkingLogs.length.toLocaleString()} active captures (${logs.length - activeWorkingLogs.length} idle/away)`}
             />
 
             <StatCard
               label="Avg Keystroke Activity"
               value={
-                logs.length > 0
+                activeWorkingLogs.length > 0
                   ? `${Math.round(
-                      logs.reduce((acc, l) => acc + (l.total_keys || 0), 0) / logs.length
+                      activeWorkingLogs.reduce((acc, l) => acc + (l.total_keys || 0), 0) / activeWorkingLogs.length
                     ).toLocaleString()} keys / cap`
                   : '0 keys / cap'
               }
               leading={<Icon name="keyboard" size={16} color="var(--accent-indigo)" />}
-              sub={`Keystrokes per ${intervalSec}s capture interval`}
+              sub={`Keystrokes per active ${intervalSec}s interval`}
             />
 
             <StatCard

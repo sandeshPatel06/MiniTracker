@@ -31,7 +31,10 @@ import (
 	"github.com/reak/get-hike/internal/appicon"
 	"github.com/reak/get-hike/internal/config"
 	"github.com/reak/get-hike/internal/db"
+	"github.com/reak/get-hike/internal/distraction"
 	"github.com/reak/get-hike/internal/logger"
+	"github.com/reak/get-hike/internal/notify"
+	"github.com/reak/get-hike/internal/privacy"
 	syncp "github.com/reak/get-hike/internal/sync"
 	"github.com/reak/get-hike/internal/tracker"
 )
@@ -83,6 +86,12 @@ type App struct {
 	// backend-side analysis cannot be relied on and the desktop must fall back
 	// to local Gemini analysis (guarded by statsMu).
 	syncOffline bool
+
+	// Features 5, 8, 9 Engines
+	privacyEngine     *privacy.Engine
+	idleDetector      *tracker.IdleDetector
+	distractionEngine *distraction.Engine
+	notifier          notify.PlatformNotifier
 
 	// shuttingDown flips true once shutdown begins so collection loops skip
 	// racing inserts against the closing DB.
@@ -199,6 +208,78 @@ func (a *App) startup(ctx context.Context) {
 			}
 		}()
 	}
+
+	// Initialize Platform Notifier
+	if n, err := notify.NewNotifier(); err == nil {
+		a.notifier = n
+	}
+
+	// Initialize Privacy Engine (Feature 8)
+	a.privacyEngine = privacy.NewEngine(cfg.PrivacyModeEnabled, cfg.PrivacyBlurStyle, cfg.PrivacyBlurRadius)
+	if rules, err := a.database.GetPrivacyRules(); err == nil {
+		var userRules []privacy.UserPrivacyRule
+		for _, r := range rules {
+			userRules = append(userRules, privacy.UserPrivacyRule{
+				ID:        r.ID,
+				RuleType:  r.RuleType,
+				Pattern:   r.Pattern,
+				Action:    privacy.PrivacyAction(r.Action),
+				Desc:      r.Description,
+				IsActive:  r.IsActive,
+				IsBuiltIn: r.IsBuiltIn,
+			})
+		}
+		a.privacyEngine.SetCustomRules(userRules)
+	}
+
+	// Initialize Idle Detector (Feature 9)
+	a.idleDetector = tracker.NewIdleDetector(
+		cfg.IdleDetectionEnabled,
+		cfg.IdleThreshold,
+		func(startedAt time.Time) {
+			// On Idle Entered: freeze session clock and broadcast
+			a.statsMu.Lock()
+			if a.isTrackingActive && !a.trackerStartTime.IsZero() {
+				a.accumulatedSec += int64(time.Since(a.trackerStartTime).Seconds())
+				a.trackerStartTime = time.Time{}
+			}
+			a.statsMu.Unlock()
+			if a.ctx != nil {
+				wailsruntime.EventsEmit(a.ctx, "idle_state_changed", map[string]interface{}{
+					"is_idle":    true,
+					"started_at": startedAt.Format(time.RFC3339),
+				})
+			}
+		},
+		func(block tracker.IdleBlock) {
+			// On Return / Idle Resumed: restore window & emit prompt
+			if a.ctx != nil && !a.headless {
+				wailsruntime.WindowShow(a.ctx)
+				wailsruntime.WindowUnminimise(a.ctx)
+				wailsruntime.EventsEmit(a.ctx, "idle_prompt_requested", block)
+			}
+		},
+	)
+	a.idleDetector.Start(a.ctx)
+
+	// Initialize Distraction Engine (Feature 5)
+	a.distractionEngine = distraction.NewEngine(
+		cfg.DistractionAlertsEnabled,
+		int(cfg.DistractionThreshold.Seconds()),
+		cfg.DistractionDisableDuringFocus,
+		cfg.DistractionCooldownMinutes,
+		a.notifier,
+		a.database,
+		func(payload distraction.AlertPayload) {
+			if a.ctx != nil {
+				wailsruntime.EventsEmit(a.ctx, "distraction_alert", payload)
+			}
+		},
+	)
+	if dRules, err := a.database.GetDistractionRules(1); err == nil {
+		a.distractionEngine.SetRules(dRules)
+	}
+	a.distractionEngine.Start(a.ctx)
 
 	// Seed today's tracked duration from the DB so the timer keeps its day total
 	// across restarts (and silently picks up background-daemon runs) instead of
@@ -500,11 +581,23 @@ func (a *App) collect() {
 		appName = winRes.AppName
 	}
 
+	// Update Distraction Engine & Idle Detector with activity
+	if a.distractionEngine != nil && appName != "" {
+		a.distractionEngine.OnWindowFocus(appName, windowTitle)
+	}
+	if a.idleDetector != nil {
+		a.idleDetector.RecordActivity()
+	}
+
 	imagePath := ""
-	if res, err := tracker.CaptureScreenshot(a.cfg.DataDir); err != nil {
+	isBlurred := false
+	blurReason := ""
+	if res, err := tracker.CaptureScreenshotWithPrivacy(a.cfg.DataDir, a.privacyEngine, appName, windowTitle); err != nil {
 		log.Printf("[app] screenshot capture error: %v", err)
 	} else if res != nil {
 		imagePath = res.FilePath
+		isBlurred = res.IsBlurred
+		blurReason = res.BlurReason
 	}
 
 	syncStatus := "pending_upload"
@@ -522,6 +615,8 @@ func (a *App) collect() {
 		EntropyScore: keyStats.EntropyScore,
 		TotalClicks:  mouseStats.TotalClicks,
 		SyncStatus:   syncStatus,
+		IsBlurred:    isBlurred,
+		BlurReason:   blurReason,
 	}
 
 	if a.database == nil || a.shuttingDown.Load() {

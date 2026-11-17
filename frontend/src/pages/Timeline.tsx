@@ -71,6 +71,7 @@ function safeFormatDateHeader(dateStr: string): string {
 type TimeInterval = 'ALL' | 'morning' | 'afternoon' | 'evening' | 'night';
 type FocusFilter = 'ALL' | 'productive' | 'neutral' | 'unproductive' | 'pending';
 type ZoomPreset = '24h' | 'active' | 'morning' | 'afternoon' | 'evening' | 'night';
+type SortOrder = 'desc' | 'asc';
 
 const TIME_INTERVAL_OPTIONS = [
   { value: 'ALL', label: 'All Day (24 hrs)', leading: <Icon name="clock" size={14} /> },
@@ -78,6 +79,11 @@ const TIME_INTERVAL_OPTIONS = [
   { value: 'afternoon', label: 'Afternoon (12:00–18:00)' },
   { value: 'evening', label: 'Evening (18:00–24:00)' },
   { value: 'night', label: 'Night (00:00–06:00)' },
+];
+
+const SORT_ORDER_OPTIONS = [
+  { value: 'desc', label: 'Newest First', leading: <Icon name="clock" size={13} /> },
+  { value: 'asc', label: 'Oldest First', leading: <Icon name="clock" size={13} /> },
 ];
 
 export function getLogFocusTier(log: LogEntry): 'productive' | 'neutral' | 'unproductive' | 'pending' {
@@ -99,6 +105,8 @@ interface HourlyBucket {
   neutral: number;
   unproductive: number;
   pending: number;
+  shielded: number;
+  retroactive: number;
 }
 
 export default function Timeline({ logs = [], loading, today, onDateChange, loadError, onRetry }: Props) {
@@ -109,6 +117,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
   const [selectedInterval, setSelectedInterval] = useState<TimeInterval>('ALL');
   const [selectedFocus, setSelectedFocus] = useState<FocusFilter>('ALL');
   const [selectedHour, setSelectedHour] = useState<number | null>(null);
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [maskSensitive, setMaskSensitive] = useState(true);
 
   // View mode switcher: 'list' (default) or 'grid'
@@ -205,6 +214,8 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
       neutral: 0,
       unproductive: 0,
       pending: 0,
+      shielded: 0,
+      retroactive: 0,
     }));
 
     const scoreSums = new Array(24).fill(0);
@@ -218,6 +229,9 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
       if (h >= 0 && h < 24) {
         const b = buckets[h];
         b.count += 1;
+        if (log.is_blurred) b.shielded += 1;
+        if (log.is_retroactive) b.retroactive += 1;
+
         const tier = getLogFocusTier(log);
         if (tier === 'productive') b.productive += 1;
         else if (tier === 'neutral') b.neutral += 1;
@@ -316,11 +330,12 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
         return true;
       })
       .sort((a, b) => {
-        if (b.parsedTime !== a.parsedTime) return b.parsedTime - a.parsedTime;
-        return (b.raw.id || 0) - (a.raw.id || 0);
+        const timeDiff = sortOrder === 'asc' ? a.parsedTime - b.parsedTime : b.parsedTime - a.parsedTime;
+        if (timeDiff !== 0) return timeDiff;
+        return sortOrder === 'asc' ? (a.raw.id || 0) - (b.raw.id || 0) : (b.raw.id || 0) - (a.raw.id || 0);
       })
       .map((item) => item.raw);
-  }, [dayLogs, selectedApp, selectedCategory, selectedInterval, selectedFocus, selectedHour, deferredSearchQuery, maskSensitive]);
+  }, [dayLogs, selectedApp, selectedCategory, selectedInterval, selectedFocus, selectedHour, deferredSearchQuery, maskSensitive, sortOrder]);
 
   // Safe pagination calculations avoiding NaN, 0, or negative pages
   const safePageSize = Math.max(1, pageSize);
@@ -350,7 +365,8 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
     selectedCategory !== 'ALL' ||
     selectedInterval !== 'ALL' ||
     selectedFocus !== 'ALL' ||
-    selectedHour !== null;
+    selectedHour !== null ||
+    sortOrder !== 'desc';
 
   const clearFilters = () => {
     setSearchQuery('');
@@ -359,6 +375,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
     setSelectedInterval('ALL');
     setSelectedFocus('ALL');
     setSelectedHour(null);
+    setSortOrder('desc');
     setCurrentPage(1);
   };
 
@@ -380,6 +397,11 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
   const updateSelectedInterval = (value: string) => {
     setSelectedInterval(value as TimeInterval);
     setSelectedHour(null);
+    setCurrentPage(1);
+  };
+
+  const updateSortOrder = (order: string) => {
+    setSortOrder(order as SortOrder);
     setCurrentPage(1);
   };
 
@@ -454,8 +476,16 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
         onRemove: () => updateSelectedInterval('ALL'),
       });
     }
+    if (sortOrder !== 'desc') {
+      chips.push({
+        key: 'sort',
+        label: 'Order',
+        value: 'Oldest First',
+        onRemove: () => updateSortOrder('desc'),
+      });
+    }
     return chips;
-  }, [searchQuery, selectedFocus, selectedHour, selectedApp, selectedCategory, selectedInterval]);
+  }, [searchQuery, selectedFocus, selectedHour, selectedApp, selectedCategory, selectedInterval, sortOrder]);
 
   // Safe row range numbers
   const pageFirstRow = filteredLogs.length === 0 ? 0 : (safeCurrentPage - 1) * safePageSize + 1;
@@ -515,7 +545,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
               </span>
             )}
           </div>
-          <p className="page-subtitle">Detailed minute-by-minute activity captures &amp; AI focus ratings.</p>
+          <p className="page-subtitle">Detailed minute-by-minute activity captures &amp; focus ratings.</p>
         </div>
 
         <div className="tl-header-actions">
@@ -662,8 +692,22 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                     }
                   }
 
+                  const details = [];
+                  if (bucket.count > 0) {
+                    details.push(`${bucket.count} ${bucket.count === 1 ? 'capture' : 'captures'}`);
+                    if (bucket.pending < bucket.count) {
+                      details.push(`${bucket.avgScore}% Focus`);
+                    }
+                    if (bucket.shielded > 0) {
+                      details.push(`${bucket.shielded} shielded`);
+                    }
+                    if (bucket.retroactive > 0) {
+                      details.push(`${bucket.retroactive} offline`);
+                    }
+                  }
+
                   const hourTooltip = bucket.count > 0
-                    ? `${bucket.label}–${String(bucket.hour).padStart(2, '0')}:59: ${bucket.count} captures · ${bucket.avgScore}% Focus`
+                    ? `${bucket.label}–${String(bucket.hour).padStart(2, '0')}:59: ${details.join(' · ')}`
                     : `${bucket.label}: No captures`;
 
                   return (
@@ -689,6 +733,13 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                           <div className="tl-scrubber-tick" />
                         )}
                       </div>
+                      {/* Sub-dot indicators for privacy shielded or retroactive blocks */}
+                      {(bucket.shielded > 0 || bucket.retroactive > 0) && (
+                        <div className="tl-scrubber-dots">
+                          {bucket.shielded > 0 && <span className="tl-scrubber-dot tl-dot-shield" title={`${bucket.shielded} shielded captures`} />}
+                          {bucket.retroactive > 0 && <span className="tl-scrubber-dot tl-dot-retro" title={`${bucket.retroactive} offline intervals`} />}
+                        </div>
+                      )}
                       <span className="tl-scrubber-label">
                         {String(bucket.hour).padStart(2, '0')}
                       </span>
@@ -829,7 +880,17 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
               value={selectedInterval}
               onChange={updateSelectedInterval}
               ariaLabel="Filter by time interval"
+              align="right"
               options={TIME_INTERVAL_OPTIONS}
+            />
+
+            <CustomSelect
+              className="tl-sort-select"
+              value={sortOrder}
+              onChange={updateSortOrder}
+              ariaLabel="Sort timeline order"
+              align="right"
+              options={SORT_ORDER_OPTIONS}
             />
           </div>
 
@@ -1013,7 +1074,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                 return (
                   <li
                     key={log.id ?? `grid-log-${log.timestamp}-${index}`}
-                    className="tl-grid-card"
+                    className={`tl-grid-card ${log.is_blurred ? 'tl-card-shielded' : ''} ${log.is_retroactive ? 'tl-card-retroactive' : ''}`}
                   >
                     {/* 16:9 Media container with inspect overlay */}
                     <div className="tl-grid-media">
@@ -1024,6 +1085,24 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                       <div className="tl-grid-media-badge">
                         <span className="tl-grid-time">{time}</span>
                       </div>
+                      {log.is_blurred && (
+                        <div
+                          className="tl-grid-media-badge-shield"
+                          title={log.blur_reason || 'Sensitive content protected by Privacy Shield'}
+                        >
+                          <Icon name="shield" size={10} />
+                          <span>Shielded</span>
+                        </div>
+                      )}
+                      {!log.is_blurred && log.is_retroactive && (
+                        <div
+                          className="tl-grid-media-badge-retro"
+                          title="Retroactively allocated offline interval"
+                        >
+                          <Icon name="clock" size={10} />
+                          <span>Offline</span>
+                        </div>
+                      )}
                       {log.image_path && (
                         <div className="tl-grid-overlay" aria-hidden="true">
                           <Icon name="search" size={14} />
@@ -1043,6 +1122,30 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                         )}
                         <CategoryBadge category={log.ai_category} />
                       </div>
+
+                      {/* Privacy & Offline Interval Status Tag for Grid */}
+                      {(log.is_blurred || log.is_retroactive) && (
+                        <div className="tl-grid-tags" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {log.is_blurred && (
+                            <span
+                              className="badge-privacy-shield"
+                              title={log.blur_reason || 'Sensitive window protected at capture'}
+                            >
+                              <Icon name="shield" size={11} />
+                              Privacy Shielded
+                            </span>
+                          )}
+                          {log.is_retroactive && (
+                            <span
+                              className="badge-offline-interval"
+                              title="Retroactively categorized offline block"
+                            >
+                              <Icon name="clock" size={11} />
+                              Offline Interval
+                            </span>
+                          )}
+                        </div>
+                      )}
 
                       {windowTitle && (
                         <h3 className="tl-grid-title" title={windowTitle}>
@@ -1098,7 +1201,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                 return (
                   <li
                     key={log.id ?? `list-log-${log.timestamp}-${index}`}
-                    className="timeline-item tl-row"
+                    className={`timeline-item tl-row ${log.is_blurred ? 'tl-row-shielded' : ''} ${log.is_retroactive ? 'tl-row-retroactive' : ''}`}
                     aria-label={`${time} — ${appName || 'Unknown app'}`}
                   >
                     <span className="timeline-time tl-time">{time}</span>
@@ -1117,9 +1220,22 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                             <span className="tl-app-chip-label">{appName}</span>
                           </span>
                         )}
-                        {log.app_category && (
-                          <span className="tl-app-category" title={log.app_category}>
-                            ({log.app_category})
+                        {log.is_blurred && (
+                          <span
+                            className="badge-privacy-shield"
+                            title={log.blur_reason || 'Sensitive window protected at capture'}
+                          >
+                            <Icon name="shield" size={11} />
+                            Privacy Shielded
+                          </span>
+                        )}
+                        {log.is_retroactive && (
+                          <span
+                            className="badge-offline-interval"
+                            title="Retroactively categorized offline block"
+                          >
+                            <Icon name="clock" size={11} />
+                            Offline Interval
                           </span>
                         )}
                       </div>
@@ -1172,8 +1288,10 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
               <label htmlFor="timeline-page-size" className="tl-pagination-label">Per page</label>
               <CustomSelect
                 id="timeline-page-size"
+                className="tl-page-size-select"
                 ariaLabel="Rows per page"
                 compact
+                align="left"
                 value={String(safePageSize)}
                 onChange={(value) => {
                   const parsed = Number(value);

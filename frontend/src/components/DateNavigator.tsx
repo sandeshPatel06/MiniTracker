@@ -55,72 +55,56 @@ export function DateNavigator({
         borderRadius: 'var(--radius-md)',
         border: '1px solid var(--border-subtle)',
         boxShadow: 'var(--shadow-sm)',
+        maxWidth: '100%',
+        boxSizing: 'border-box',
         ...style,
       }}
     >
       {label && (
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginRight: 4 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginRight: 4, flexShrink: 0 }}>
           {label}
         </span>
       )}
       <button
         type="button"
-        className="btn-icon"
+        className="date-nav-btn btn-icon"
         onClick={handlePrevDay}
         title="Previous Day"
         aria-label="Previous Day"
-        style={{
-          background: 'none',
-          border: 'none',
-          cursor: 'pointer',
-          padding: '6px',
-          borderRadius: 'var(--radius-sm)',
-          color: 'var(--text-secondary)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
       >
         <Icon name="chevron-left" size={14} />
       </button>
 
       <input
         type="date"
+        className="date-nav-input date-input"
+        aria-label={label || 'Select date'}
         value={currentDate}
         max={maxDate}
         onChange={(e) => e.target.value && onDateChange(e.target.value)}
         style={{
-          background: 'transparent',
+          background: 'var(--bg-elevated)',
           border: '1px solid var(--border-subtle)',
           borderRadius: 'var(--radius-sm)',
           padding: '4px 8px',
           fontSize: 13,
           fontWeight: 600,
           color: 'var(--text-primary)',
+          colorScheme: 'dark light',
           cursor: 'pointer',
           fontFamily: 'inherit',
+          minWidth: 0,
+          maxWidth: '100%',
         }}
       />
 
       <button
         type="button"
-        className="btn-icon"
+        className="date-nav-btn btn-icon"
         onClick={handleNextDay}
         disabled={isToday}
         title="Next Day"
         aria-label="Next Day"
-        style={{
-          background: 'none',
-          border: 'none',
-          cursor: isToday ? 'not-allowed' : 'pointer',
-          opacity: isToday ? 0.4 : 1,
-          padding: '6px',
-          borderRadius: 'var(--radius-sm)',
-          color: 'var(--text-secondary)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
       >
         <Icon name="chevron-right" size={14} />
       </button>
@@ -129,8 +113,8 @@ export function DateNavigator({
         <button
           type="button"
           onClick={handleToday}
-          className="btn btn-secondary btn-sm"
-          style={{ padding: '3px 8px', fontSize: 12, marginLeft: 2 }}
+          className="btn btn-secondary btn-sm date-nav-today"
+          style={{ padding: '3px 8px', fontSize: 12, marginLeft: 2, height: 28, flexShrink: 0 }}
         >
           Today
         </button>

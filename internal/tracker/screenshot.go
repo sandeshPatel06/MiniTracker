@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/chai2010/webp"
+	"github.com/reak/get-hike/internal/privacy"
 	"golang.org/x/image/draw"
 )
 
@@ -22,6 +23,8 @@ type ScreenshotResult struct {
 	Width      int    `json:"width"`
 	Height     int    `json:"height"`
 	SizeBytes  int    `json:"size_bytes"`
+	IsBlurred  bool   `json:"is_blurred"`
+	BlurReason string `json:"blur_reason"`
 }
 
 const (
@@ -41,7 +44,13 @@ var (
 // CaptureScreenshot takes a screenshot of all active displays, combines them into
 // a single grid image, compresses it to WebP at 60% quality (max 720p), saves it
 // to disk, and returns a base64 encoded copy for AI analysis.
-func CaptureScreenshot(dataDir string) (res *ScreenshotResult, retErr error) {
+func CaptureScreenshot(dataDir string) (*ScreenshotResult, error) {
+	return CaptureScreenshotWithPrivacy(dataDir, nil, "", "")
+}
+
+// CaptureScreenshotWithPrivacy takes a screenshot and applies in-memory blurring/shielding
+// before encoding or saving if sensitive content/windows are detected.
+func CaptureScreenshotWithPrivacy(dataDir string, engine *privacy.Engine, appName, windowTitle string) (res *ScreenshotResult, retErr error) {
 	captureMu.Lock()
 	defer captureMu.Unlock()
 
@@ -53,12 +62,30 @@ func CaptureScreenshot(dataDir string) (res *ScreenshotResult, retErr error) {
 		}
 	}()
 
-	// Debounce rapid bursts: if a capture completed less than 2s ago, return
-	// the cached result instead of hitting the graphics subsystem and creating
-	// duplicate files within the same second.
 	now := time.Now()
 	if !lastCaptureTime.IsZero() && now.Sub(lastCaptureTime) < 2*time.Second && lastCaptureRes != nil {
 		return lastCaptureRes, nil
+	}
+
+	// 1. Evaluate Privacy before touching disk
+	var privEval privacy.EvaluationResult
+	if engine != nil {
+		privEval = engine.EvaluateWindow(appName, windowTitle)
+		if privEval.IsSensitive && privEval.Action == privacy.ActionSkip {
+			// Zero disk writes when action is skip_screenshot
+			res = &ScreenshotResult{
+				FilePath:   "",
+				Base64Data: "",
+				Width:      0,
+				Height:     0,
+				SizeBytes:  0,
+				IsBlurred:  true,
+				BlurReason: privEval.Reason,
+			}
+			lastCaptureTime = now
+			lastCaptureRes = res
+			return res, nil
+		}
 	}
 
 	// Capture all displays combined without audio shutter sounds or flash
@@ -70,6 +97,17 @@ func CaptureScreenshot(dataDir string) (res *ScreenshotResult, retErr error) {
 	// Resize to max 720p maintaining aspect ratio
 	resized := resizeImage(combined, maxWidth, maxHeight)
 
+	// Apply In-Memory Privacy Transformation (Blur or Shield) on the RAM buffer
+	isBlurred := false
+	blurReason := ""
+	if privEval.IsSensitive {
+		if rgba, ok := resized.(*image.RGBA); ok {
+			engine.ProcessImage(rgba, privEval)
+			isBlurred = true
+			blurReason = privEval.Reason
+		}
+	}
+
 	// Encode to WebP
 	var buf bytes.Buffer
 	if err := webp.Encode(&buf, resized, &webp.Options{Quality: webpQuality}); err != nil {
@@ -78,11 +116,6 @@ func CaptureScreenshot(dataDir string) (res *ScreenshotResult, retErr error) {
 
 	webpData := buf.Bytes()
 
-	// Determine save path: dataDir/images/YYYY-MM-DD/HH-MM-SS.mmm.webp.
-	// The path is reserved with O_CREATE|O_EXCL so captures are unique and
-	// mutually exclusive across PROCESSES too (GUI app vs background daemon vs
-	// standalone server all capture into the same dataDir; the in-process
-	// captureMu cannot serialize those).
 	dateDir := filepath.Join(dataDir, "images", now.Format("2006-01-02"))
 	if err := os.MkdirAll(dateDir, 0755); err != nil {
 		return nil, fmt.Errorf("create image dir: %w", err)
@@ -92,11 +125,7 @@ func CaptureScreenshot(dataDir string) (res *ScreenshotResult, retErr error) {
 		return nil, fmt.Errorf("reserve screenshot file: %w", err)
 	}
 
-	// Write into the exclusively created file: truncation is a no-op because we
-	// just created it empty and nobody else could have claimed the name.
 	if err := os.WriteFile(filePath, webpData, 0644); err != nil {
-		// Best-effort cleanup of a partially written file so a failed write
-		// never leaves a corrupt image on disk.
 		_ = os.Remove(filePath)
 		return nil, fmt.Errorf("write screenshot: %w", err)
 	}
@@ -108,6 +137,8 @@ func CaptureScreenshot(dataDir string) (res *ScreenshotResult, retErr error) {
 		Width:      b.Dx(),
 		Height:     b.Dy(),
 		SizeBytes:  len(webpData),
+		IsBlurred:  isBlurred,
+		BlurReason: blurReason,
 	}
 	lastCaptureTime = time.Now()
 	lastCaptureRes = res

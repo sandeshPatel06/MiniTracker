@@ -4,11 +4,26 @@ import Button from '../components/Button.astro';
 
 const releases = [
   {
+    version: 'v1.2.0',
+    date: 'November 2026',
+    datetime: '2026-11-17',
+    title: 'Privacy AI Auto-Blur, Smart Distraction Alerts, Idle Allocation & Calendar Sync',
+    badge: 'Latest',
+    highlights: [
+      'Sensitive Window Auto-Blur: In-memory credential scanning for AWS, GitHub, Stripe, Google, JWTs, and credit cards with 3 protection modes (Heavy Blur, Frosted Shield, Zero-Storage Skip)',
+      'Smart Distraction Alerts: Dwell-time monitoring with a 45s grace period, 10m/30m snooze controls, and active goal suppression',
+      'Idle & Away Detection: Cascading Mutter/KDE D-Bus and X11 xprintidle monitors with instant keyboard-driven retroactive categorization modal (1-5 keys, Enter, Esc)',
+      'Calendar Sync: Google Calendar & Microsoft 365 integration with AES-256-GCM token encryption and automatic meeting-to-offline correlation',
+      'UI/UX Polish & Gated AI: Removed false 0% metrics for unanalyzed and idle periods; gated Gemini API batch requests cleanly behind valid API keys',
+      'Single-instance capture engine optimization preventing duplicate screenshot races',
+    ],
+  },
+  {
     version: 'v1.0.0-rc1',
     date: 'October 21, 2026',
     datetime: '2026-10-21',
     title: 'Background Daemon, Developer Panel & Telemetry Enhancements',
-    badge: 'Latest',
+    badge: 'RC',
     highlights: [
       'Detached background daemon continues screenshot capture, mouse metrics, and AI analysis even if GUI window is closed',
       'PID lifecycle management with duplicate-daemon guards and clean SIGTERM handling',

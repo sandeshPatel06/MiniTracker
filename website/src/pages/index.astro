@@ -35,9 +35,13 @@ const jsonLd = {
       license: 'https://opensource.org/licenses/MIT',
       url: 'https://get-hike.pages.dev/',
       downloadUrl: 'https://github.com/sandeshPatel06/MiniTracker/releases',
-      softwareVersion: '1.0.0',
+      softwareVersion: '1.2.0',
       screenshot: 'https://get-hike.pages.dev/og.png',
       featureList: [
+        'Sensitive Window Auto-Blur Privacy AI (RAM-only secret redaction & zero-disk leak)',
+        'Smart Distraction Alerts with dwell time grace periods & active goal alignment',
+        'Idle & Away Detection with one-click retroactive time categorization',
+        'Google & Microsoft 365 Calendar synchronization with auto-meeting matching',
         'Cross-platform desktop companion widget (Linux, Windows, macOS)',
         'Standalone Web Browser Dashboard & Cloud portal',
         'Shannon keystroke entropy measurement (no character keylogging)',
@@ -473,10 +477,28 @@ const githubUrl = 'https://github.com/sandeshPatel06/MiniTracker';
 
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 md:gap-8">
         <FeatureCard
-          iconName="timer"
-          title="Work session timer & widget"
-          description="Lightweight floating desktop companion that stays unobtrusively on top. Start, pause, or switch sessions with a single click."
-          tag="Desktop UX"
+          iconName="shield-check"
+          title="Sensitive Window Auto-Blur (Privacy AI)"
+          description="In-memory privacy engine automatically blurs password vaults, banking portals, credentials, and API keys before saving to disk. Zero leak guarantee."
+          tag="Privacy AI"
+        />
+        <FeatureCard
+          iconName="bell"
+          title="Smart Distraction Alerts"
+          description="Adaptive dwell-time alerts gently nudge you when off-task. Includes a 45-second grace window, snooze timers, and active goal suppression."
+          tag="Focus Nudges"
+        />
+        <FeatureCard
+          iconName="clock-pause"
+          title="Idle & Away Return Categorization"
+          description="Automatically detects when you step away from your workstation. Upon return, categorize offline blocks in one click with keyboard shortcuts."
+          tag="Away Tracking"
+        />
+        <FeatureCard
+          iconName="calendar"
+          title="Calendar Sync & Auto-Meeting Match"
+          description="Connects with Google and Microsoft 365 calendars. Automatically matches scheduled meetings with offline periods so your calendar stays aligned."
+          tag="Integrations"
         />
         <FeatureCard
           iconName="sparkles"
@@ -485,22 +507,22 @@ const githubUrl = 'https://github.com/sandeshPatel06/MiniTracker';
           tag="Optional AI"
         />
         <FeatureCard
-          iconName="timeline"
-          title="Filterable capture timeline"
-          description="Browse screenshots, active window titles, and productivity stats in an interactive timeline with rich time-window filtering."
-          tag="Local SQLite"
-        />
-        <FeatureCard
           iconName="lock"
           title="Entropy-based telemetry"
           description="Zero character keylogging. We measure typing cadence entropy, mouse distance, and click counts to gauge focus without reading your secrets."
           tag="Zero Keylogger"
         />
         <FeatureCard
-          iconName="users"
-          title="Optional team organizations"
-          description="Self-host or configure optional team capabilities with Google & Azure OAuth, role-based access control, and workspace invites."
-          tag="Optional Multi-tenant"
+          iconName="timer"
+          title="Work session timer & widget"
+          description="Lightweight floating desktop companion that stays unobtrusively on top. Start, pause, or switch sessions with a single click."
+          tag="Desktop UX"
+        />
+        <FeatureCard
+          iconName="timeline"
+          title="Filterable capture timeline"
+          description="Browse screenshots, active window titles, and productivity stats in an interactive timeline with rich time-window filtering."
+          tag="Local SQLite"
         />
         <FeatureCard
           iconName="terminal"

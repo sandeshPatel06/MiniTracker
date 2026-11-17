@@ -2,6 +2,7 @@ import React from 'react';
 import { Icon, IconName } from './Icon';
 import { Page, User } from '../types';
 import { isDesktopApp } from '../services/wailsBridge';
+import { useToast } from '../context/ToastContext';
 import logoAsset from '../assets/logo.png';
 
 interface SidebarProps {
@@ -57,6 +58,7 @@ export function Sidebar({
   aiKeyPresent,
   aiConfigured,
 }: SidebarProps) {
+  const toast = useToast();
   const isDesktop = isDesktopApp();
 
   return (
@@ -160,6 +162,22 @@ export function Sidebar({
               <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {userTask ? `Task: ${userTask}` : 'Set Target Task Goal'}
               </span>
+            </button>
+            <button
+              onClick={() => {
+                const w = window as any;
+                if (w.go?.main?.App?.TogglePrivacyMode) {
+                  w.go.main.App.TogglePrivacyMode().then((active: boolean) => {
+                    toast.info(active ? 'Privacy Shield enabled' : 'Privacy Shield disabled');
+                  });
+                }
+              }}
+              className="btn-task-goal"
+              style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}
+              title="Toggle Privacy Shield (Auto-blur credentials & vaults)"
+            >
+              <Icon name="shield" size={12} />
+              <span>Privacy Shield</span>
             </button>
             {!isGuestMode && (
               <button

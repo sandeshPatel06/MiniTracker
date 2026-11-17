@@ -26,6 +26,24 @@ type Config struct {
 	AzureTenantID      string        `mapstructure:"azure_tenant_id" json:"azure_tenant_id"`
 	TelegramBotToken   string        `mapstructure:"telegram_bot_token" json:"telegram_bot_token"`
 	TelegramChatID     string        `mapstructure:"telegram_chat_id" json:"telegram_chat_id"`
+
+	// Feature 8: Privacy & Sensitive Content Protection
+	PrivacyModeEnabled bool   `mapstructure:"privacy_mode_enabled" json:"privacy_mode_enabled"`
+	PrivacyBlurStyle   string `mapstructure:"privacy_blur_style" json:"privacy_blur_style"`
+	PrivacyBlurRadius  int    `mapstructure:"privacy_blur_radius" json:"privacy_blur_radius"`
+
+	// Feature 9: Idle & Away Detection
+	IdleDetectionEnabled bool          `mapstructure:"idle_detection_enabled" json:"idle_detection_enabled"`
+	IdleThreshold        time.Duration `mapstructure:"idle_threshold_seconds" json:"idle_threshold_seconds"`
+
+	// Feature 5: Smart Distraction Alerts
+	DistractionAlertsEnabled      bool          `mapstructure:"distraction_alerts_enabled" json:"distraction_alerts_enabled"`
+	DistractionThreshold          time.Duration `mapstructure:"distraction_threshold_seconds" json:"distraction_threshold_seconds"`
+	DistractionDisableDuringFocus bool          `mapstructure:"distraction_disable_during_focus" json:"distraction_disable_during_focus"`
+	DistractionSoundEnabled       bool          `mapstructure:"distraction_sound_enabled" json:"distraction_sound_enabled"`
+	DistractionNativeNotify       bool          `mapstructure:"distraction_native_notify" json:"distraction_native_notify"`
+	DistractionInAppToast         bool          `mapstructure:"distraction_in_app_toast" json:"distraction_in_app_toast"`
+	DistractionCooldownMinutes    int           `mapstructure:"distraction_cooldown_minutes" json:"distraction_cooldown_minutes"`
 }
 
 // Load loads configuration using Viper from config.yaml, .env files, and environment variables.
@@ -45,6 +63,24 @@ func Load() (*Config, error) {
 	v.SetDefault("backend_endpoint", "https://minitracker-api.fly.dev")
 	v.SetDefault("data_dir", filepath.Join(home, ".local", "share", "get-hike"))
 	v.SetDefault("azure_tenant_id", "common")
+
+	// Privacy Defaults
+	v.SetDefault("privacy_mode_enabled", true)
+	v.SetDefault("privacy_blur_style", "blur")
+	v.SetDefault("privacy_blur_radius", 35)
+
+	// Idle Defaults
+	v.SetDefault("idle_detection_enabled", true)
+	v.SetDefault("idle_threshold_seconds", 5*time.Minute)
+
+	// Distraction Defaults
+	v.SetDefault("distraction_alerts_enabled", true)
+	v.SetDefault("distraction_threshold_seconds", 15*time.Minute)
+	v.SetDefault("distraction_disable_during_focus", false)
+	v.SetDefault("distraction_sound_enabled", true)
+	v.SetDefault("distraction_native_notify", true)
+	v.SetDefault("distraction_in_app_toast", true)
+	v.SetDefault("distraction_cooldown_minutes", 15)
 
 	// 2. Load .env files if present (current working directory and config directory)
 	loadDotEnv(".env")
@@ -70,6 +106,13 @@ func Load() (*Config, error) {
 	_ = v.BindEnv("ai_analysis_interval_seconds", "AI_ANALYSIS_INTERVAL_SECONDS")
 	_ = v.BindEnv("telegram_bot_token", "TELEGRAM_BOT_TOKEN")
 	_ = v.BindEnv("telegram_chat_id", "TELEGRAM_CHAT_ID")
+	_ = v.BindEnv("privacy_mode_enabled", "PRIVACY_MODE_ENABLED")
+	_ = v.BindEnv("privacy_blur_style", "PRIVACY_BLUR_STYLE")
+	_ = v.BindEnv("privacy_blur_radius", "PRIVACY_BLUR_RADIUS")
+	_ = v.BindEnv("idle_detection_enabled", "IDLE_DETECTION_ENABLED")
+	_ = v.BindEnv("idle_threshold_seconds", "IDLE_THRESHOLD_SECONDS")
+	_ = v.BindEnv("distraction_alerts_enabled", "DISTRACTION_ALERTS_ENABLED")
+	_ = v.BindEnv("distraction_threshold_seconds", "DISTRACTION_THRESHOLD_SECONDS")
 
 	// 4. Config file locations for config.yaml / config.json
 	v.SetConfigName("config")
@@ -120,6 +163,33 @@ func Load() (*Config, error) {
 	}
 	cfg.TelegramBotToken = v.GetString("telegram_bot_token")
 	cfg.TelegramChatID = v.GetString("telegram_chat_id")
+
+	cfg.PrivacyModeEnabled = v.GetBool("privacy_mode_enabled")
+	cfg.PrivacyBlurStyle = v.GetString("privacy_blur_style")
+	cfg.PrivacyBlurRadius = v.GetInt("privacy_blur_radius")
+	if cfg.PrivacyBlurRadius <= 0 {
+		cfg.PrivacyBlurRadius = 35
+	}
+
+	cfg.IdleDetectionEnabled = v.GetBool("idle_detection_enabled")
+	cfg.IdleThreshold = v.GetDuration("idle_threshold_seconds")
+	if cfg.IdleThreshold <= 0 {
+		cfg.IdleThreshold = 5 * time.Minute
+	}
+
+	cfg.DistractionAlertsEnabled = v.GetBool("distraction_alerts_enabled")
+	cfg.DistractionThreshold = v.GetDuration("distraction_threshold_seconds")
+	if cfg.DistractionThreshold <= 0 {
+		cfg.DistractionThreshold = 15 * time.Minute
+	}
+	cfg.DistractionDisableDuringFocus = v.GetBool("distraction_disable_during_focus")
+	cfg.DistractionSoundEnabled = v.GetBool("distraction_sound_enabled")
+	cfg.DistractionNativeNotify = v.GetBool("distraction_native_notify")
+	cfg.DistractionInAppToast = v.GetBool("distraction_in_app_toast")
+	cfg.DistractionCooldownMinutes = v.GetInt("distraction_cooldown_minutes")
+	if cfg.DistractionCooldownMinutes <= 0 {
+		cfg.DistractionCooldownMinutes = 15
+	}
 
 	// Helper duration getters with fallback
 	dur := v.GetDuration("screenshot_interval_seconds")

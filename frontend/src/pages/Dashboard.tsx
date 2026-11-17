@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { LogEntry, ProductivityStats, AppConfig, WorkSession } from '../types';
+import { LogEntry, ProductivityStats, AppConfig, WorkSession, CalendarEvent } from '../types';
 import { apiFetch, readJsonSafe } from '../api';
 import { format } from 'date-fns';
 import { CategoryBadge } from '../components/CategoryBadge';
@@ -10,8 +10,9 @@ import { StatCard } from '../components/StatCard';
 import { EmptyState } from '../components/EmptyState';
 import { Alert } from '../components/Alert';
 import { canonicalAppName } from '../lib/appNames';
+import { DateNavigator } from '../components/DateNavigator';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from 'recharts';
-import { localISODate, isPendingLog, buildLocalWorkSessions, FOCUS_GOOD, FOCUS_OK } from '../utils';
+import { localISODate, isPendingLog, isIdleLog, buildLocalWorkSessions, FOCUS_GOOD, FOCUS_OK } from '../utils';
 import { isDesktopApp, callGo } from '../services/wailsBridge';
 
 const prefersReducedMotion =
@@ -86,6 +87,10 @@ interface Props {
   onOpenSettings?: () => void;
   loadError?: string | null;
   onRetry?: () => void;
+  userTask?: string;
+  onOpenTaskModal?: () => void;
+  aiKeyPresent?: boolean;
+  onConfigureApiKey?: () => void;
 }
 
 export default function Dashboard({
@@ -99,11 +104,16 @@ export default function Dashboard({
   onOpenSettings: _onOpenSettings,
   loadError,
   onRetry,
+  userTask,
+  onOpenTaskModal,
+  aiKeyPresent,
+  onConfigureApiKey,
 }: Props) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [processingPending, setProcessingPending] = useState(false);
   const [workSessions, setWorkSessions] = useState<WorkSession[]>([]);
   const [breakdownView, setBreakdownView] = useState<'apps' | 'categories'>('apps');
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
 
   // Timezone-safe day scoping: Never fall back to prior days when today has 0 captures
   const activeLogs = useMemo(() => {
@@ -154,8 +164,46 @@ export default function Dashboard({
     };
   }, [today, activeLogs]);
 
+  // Fetch Connected Calendar Events for today if available
+  useEffect(() => {
+    if (!today) return;
+    let isSubscribed = true;
+
+    const fromDate = `${today}T00:00:00Z`;
+    const toDate = `${today}T23:59:59Z`;
+
+    const fetchEvents = async () => {
+      try {
+        if (isDesktopApp()) {
+          const w = window as any;
+          if (w.go?.main?.App?.GetCalendarEvents) {
+            const events = await callGo(() => w.go.main.App.GetCalendarEvents(fromDate, toDate));
+            if (isSubscribed && Array.isArray(events)) {
+              setCalendarEvents(events);
+            }
+          }
+        } else {
+          const res = await apiFetch(`/api/calendar/events?from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}`);
+          if (res.ok) {
+            const data = await readJsonSafe<CalendarEvent[]>(res);
+            if (isSubscribed && Array.isArray(data)) {
+              setCalendarEvents(data);
+            }
+          }
+        }
+      } catch {
+        // Calendar events integration is optional
+      }
+    };
+
+    fetchEvents();
+    return () => {
+      isSubscribed = false;
+    };
+  }, [today]);
+
   const pendingCount = useMemo(() => activeLogs.filter(isPendingLog).length, [activeLogs]);
-  const analyzedLogs = useMemo(() => activeLogs.filter((l: LogEntry) => !isPendingLog(l)), [activeLogs]);
+  const analyzedLogs = useMemo(() => activeLogs.filter((l: LogEntry) => !isPendingLog(l) && !isIdleLog(l)), [activeLogs]);
 
   const avgProductivityScore = useMemo(() => {
     return analyzedLogs.length > 0
@@ -177,6 +225,10 @@ export default function Dashboard({
 
   const productiveCaptures = useMemo(() => {
     return activeLogs.filter((l: LogEntry) => {
+      // Pending/unanalyzed captures must not be penalized or assumed distracted
+      if (isPendingLog(l)) {
+        return false;
+      }
       if (typeof l.productive_score === 'number') {
         return l.productive_score >= FOCUS_OK;
       }
@@ -185,11 +237,14 @@ export default function Dashboard({
   }, [activeLogs]);
 
   const focusMinutes = useMemo(() => {
+    if (analyzedLogs.length === 0) {
+      return null;
+    }
     if (stats?.productive_minutes && stats.productive_minutes > 0) {
       return stats.productive_minutes;
     }
     return Math.round((productiveCaptures * intervalSec) / 60);
-  }, [stats, productiveCaptures, intervalSec]);
+  }, [stats, productiveCaptures, intervalSec, analyzedLogs.length]);
 
   const totalTrackedMinutes = useMemo(() => {
     if (stats?.total_minutes && stats.total_minutes > 0) {
@@ -327,6 +382,10 @@ export default function Dashboard({
   const headerMeta = `${dateLabel} · ${activeLogs.length} capture${activeLogs.length === 1 ? '' : 's'}${config ? ` · every ${config.screenshot_interval_seconds}s` : ''}`;
 
   const handleProcessPending = async () => {
+    if (!aiKeyPresent) {
+      if (onConfigureApiKey) onConfigureApiKey();
+      return;
+    }
     setProcessingPending(true);
     try {
       if (isDesktopApp()) {
@@ -421,17 +480,12 @@ export default function Dashboard({
         </div>
 
         <div className="dash-header-actions">
-          {today !== localISODate() && onDateChange && (
-            <button
-              type="button"
-              onClick={() => onDateChange(localISODate())}
-              className="btn btn-secondary dash-btn"
-              title="Jump to today"
-              aria-label="Jump to today's date"
-            >
-              <Icon name="calendar" size={14} />
-              <span>Back to Today</span>
-            </button>
+          {onDateChange && (
+            <DateNavigator
+              currentDate={today}
+              onDateChange={onDateChange}
+              maxDate={localISODate()}
+            />
           )}
 
           {onRefresh && (
@@ -450,17 +504,72 @@ export default function Dashboard({
           )}
 
           {pendingCount > 0 && (
+            aiKeyPresent ? (
+              <button
+                type="button"
+                onClick={handleProcessPending}
+                disabled={processingPending}
+                className="btn btn-primary dash-btn dash-btn-analyze"
+                title={`Process ${pendingCount} pending capture${pendingCount === 1 ? '' : 's'}`}
+                aria-label={`Process ${pendingCount} pending captures`}
+                aria-busy={processingPending}
+              >
+                <Icon name="sparkles" size={14} />
+                <span>{processingPending ? 'Processing…' : `Process ${pendingCount} Pending`}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onConfigureApiKey}
+                className="btn btn-secondary dash-btn"
+                title="Configure Gemini API Key in Settings to score captures"
+                aria-label="Configure API Key in Settings"
+                style={{ border: '1px dashed var(--accent-amber)', color: 'var(--accent-amber)' }}
+              >
+                <Icon name="sparkles" size={14} />
+                <span>Configure API Key ({pendingCount} Pending)</span>
+              </button>
+            )
+          )}
+        </div>
+      </div>
+
+      {/* Target Task Banner & Distraction Shield Status */}
+      <div className={`dash-task-banner ${userTask ? 'has-goal' : 'no-goal'}`} role="region" aria-label="Active focus goal">
+        <div className="dash-task-banner-left">
+          <div className="dash-task-icon-wrap" aria-hidden="true">
+            <Icon name="target" size={16} />
+          </div>
+          <div className="dash-task-content">
+            <span className="dash-task-label">Focus Objective</span>
+            <span className="dash-task-text" title={userTask || 'No specific objective set'}>
+              {userTask ? userTask : 'No objective defined for current session'}
+            </span>
+          </div>
+        </div>
+        <div className="dash-task-banner-actions">
+          {userTask ? (
+            <span className="dash-goal-badge active" title="Current session target active">
+              <span className="status-dot" aria-hidden="true" />
+              <span>Active Target</span>
+            </span>
+          ) : (
+            <span className="dash-goal-badge pending" title="No active goal set for session">
+              <span className="status-dot inactive" aria-hidden="true" />
+              <span>No Goal Set</span>
+            </span>
+          )}
+
+          {onOpenTaskModal && (
             <button
               type="button"
-              onClick={handleProcessPending}
-              disabled={processingPending}
-              className="btn btn-primary dash-btn dash-btn-analyze"
-              title={`Run AI analysis on ${pendingCount} pending capture${pendingCount === 1 ? '' : 's'}`}
-              aria-label={`Run AI vision analysis on ${pendingCount} pending captures`}
-              aria-busy={processingPending}
+              className={`btn btn-sm dash-task-edit-btn ${userTask ? 'btn-secondary' : 'btn-primary'}`}
+              onClick={onOpenTaskModal}
+              title={userTask ? 'Update active focus objective' : 'Set target focus objective'}
+              aria-label={userTask ? 'Change active focus goal' : 'Set active focus goal'}
             >
-              <Icon name="sparkles" size={14} />
-              <span>{processingPending ? 'Analyzing…' : `Analyze ${pendingCount} Pending`}</span>
+              <Icon name={userTask ? 'edit' : 'target'} size={13} />
+              <span>{userTask ? 'Change Goal' : 'Set Focus Goal'}</span>
             </button>
           )}
         </div>
@@ -469,28 +578,40 @@ export default function Dashboard({
       {/* Metric Cards Grid: Clear Hierarchy (Score, Focus Time, Top App, Activity) */}
       <div className="stats-grid dash-stats" style={{ marginBottom: 16 }}>
         <StatCard
-          label="AI Focus Rating"
-          value={analyzedLogs.length === 0 ? '—' : `${avgProductivityScore}%`}
+          label="Focus Rating"
+          value={
+            analyzedLogs.length === 0
+              ? aiKeyPresent
+                ? '—'
+                : '—'
+              : `${avgProductivityScore}%`
+          }
           sub={
             analyzedLogs.length === 0
-              ? 'Awaiting AI vision analysis'
+              ? !aiKeyPresent
+                ? 'API key required in Settings'
+                : 'Awaiting analysis'
               : avgProductivityScore >= FOCUS_GOOD
-              ? 'High focus rating'
+              ? 'High focus'
               : avgProductivityScore >= FOCUS_OK
-              ? 'Moderate focus rating'
-              : 'Low focus rating'
+              ? 'Moderate focus'
+              : 'Low focus'
           }
           valueColor={analyzedLogs.length === 0 ? 'var(--text-secondary)' : focusColor(avgProductivityScore)}
         />
         <StatCard
           label="Focus Time"
-          value={activeLogs.length === 0 ? '—' : formatHoursAndMinutes(focusMinutes)}
+          value={focusMinutes === null ? '—' : formatHoursAndMinutes(focusMinutes)}
           sub={
             activeLogs.length === 0
               ? 'No activity tracked today'
+              : focusMinutes === null
+              ? !aiKeyPresent
+                ? 'Requires API key to evaluate'
+                : 'Awaiting pending review'
               : `${formatHoursAndMinutes(totalTrackedMinutes)} total active time`
           }
-          valueClass="text-green"
+          valueClass={focusMinutes === null ? 'text-secondary' : 'text-green'}
         />
         <StatCard
           label="Top Application"
@@ -563,7 +684,7 @@ export default function Dashboard({
                           if (captures === 0) {
                             return ['No captures recorded', 'Status'];
                           }
-                          const label = hasAnalyzed ? `${val}% AI Focus Rating` : 'Awaiting AI review';
+                          const label = hasAnalyzed ? `${val}% Focus Rating` : 'Awaiting review';
                           return [label, `${captures} capture${captures === 1 ? '' : 's'}`];
                         }}
                       />
@@ -795,6 +916,77 @@ export default function Dashboard({
         </div>
       )}
 
+      {/* Connected Calendar Schedule Block */}
+      {calendarEvents.length > 0 && (
+        <div className="card dash-calendar-card" style={{ marginBottom: 16 }}>
+          <div className="card-header">
+            <span className="card-title">
+              <Icon name="calendar" size={14} />
+              Connected Calendar Events
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+              {calendarEvents.length} event{calendarEvents.length === 1 ? '' : 's'} today
+            </span>
+          </div>
+          <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {calendarEvents.map((event) => {
+              const now = new Date();
+              const isHappeningNow =
+                !event.all_day &&
+                Boolean(event.start_time) &&
+                Boolean(event.end_time) &&
+                new Date(event.start_time) <= now &&
+                new Date(event.end_time) >= now;
+
+              return (
+                <div key={event.id || `${event.title}-${event.start_time}`} className="dash-calendar-row">
+                  <div className="dash-calendar-info">
+                    <span className="dash-calendar-time">
+                      {event.all_day
+                        ? 'All Day'
+                        : `${safeFormatTime(event.start_time)} – ${safeFormatTime(event.end_time)}`}
+                    </span>
+                    <span className="dash-calendar-title" title={event.title}>
+                      {event.title}
+                    </span>
+                  </div>
+                  <div className="dash-calendar-actions">
+                    {event.meeting_url && (
+                      <a
+                        href={event.meeting_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn btn-secondary btn-sm dash-calendar-join-btn"
+                        title="Join online meeting"
+                        aria-label={`Join meeting for ${event.title}`}
+                      >
+                        <Icon name="globe" size={12} />
+                        <span>Join</span>
+                      </a>
+                    )}
+                    {event.is_matched ? (
+                      <span className="dash-calendar-badge matched" title="Matched to tracked activity">
+                        <Icon name="check" size={12} />
+                        <span>Matched</span>
+                      </span>
+                    ) : isHappeningNow ? (
+                      <span className="dash-calendar-badge live" title="Meeting happening right now">
+                        <span className="status-dot" aria-hidden="true" />
+                        <span>Happening Now</span>
+                      </span>
+                    ) : (
+                      <span className="dash-calendar-badge scheduled" title="Upcoming scheduled calendar event">
+                        Scheduled
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Activity Stream Feed */}
       <div className="card dash-activity">
         <div className="card-header">
@@ -811,12 +1003,12 @@ export default function Dashboard({
                 className={`badge badge-pending dash-pending-pill${processingPending ? ' is-processing' : ''}`}
                 title={
                   processingPending
-                    ? 'AI analysis is running on pending captures'
-                    : `${pendingCount} capture${pendingCount === 1 ? '' : 's'} awaiting AI analysis`
+                    ? 'Processing pending captures'
+                    : `${pendingCount} capture${pendingCount === 1 ? '' : 's'} awaiting analysis`
                 }
               >
                 {processingPending && <span className="dash-mini-spinner" aria-hidden="true" />}
-                {processingPending ? 'Analyzing…' : `${pendingCount} pending AI review`}
+                {processingPending ? 'Processing…' : `${pendingCount} pending review`}
               </span>
             )}
           </div>
@@ -890,6 +1082,26 @@ export default function Dashboard({
                             ({log.app_category})
                           </span>
                         )}
+                        {log.is_blurred && (
+                          <span
+                            className="badge badge-amber"
+                            style={{ fontSize: 10, padding: '1px 6px', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                            title={log.blur_reason || 'Sensitive content protected by Privacy Shield'}
+                          >
+                            <Icon name="shield" size={10} />
+                            Privacy Shielded
+                          </span>
+                        )}
+                        {log.is_retroactive && (
+                          <span
+                            className="badge badge-purple"
+                            style={{ fontSize: 10, padding: '1px 6px', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                            title="Retroactively allocated offline interval"
+                          >
+                            <Icon name="clock" size={10} />
+                            Offline Interval
+                          </span>
+                        )}
                       </div>
 
                       {safeTitle && (
@@ -911,7 +1123,7 @@ export default function Dashboard({
                       {isPending ? (
                         <div
                           className="dash-reason-skeleton"
-                          title="AI analysis is queued or running for this capture"
+                          title="Analysis is running for this capture"
                           aria-busy="true"
                         >
                           <div className="skeleton dash-shimmer-line" style={{ width: '58%' }} />
@@ -931,7 +1143,7 @@ export default function Dashboard({
                       {isPending ? (
                         <span
                           className="badge badge-pending dash-pending-chip"
-                          title="Pending AI review — add a Gemini API key in Settings to score captures"
+                          title="Pending review | add an API key in Settings to score captures"
                         >
                           <span className="dash-mini-spinner" aria-hidden="true" />
                           <span>Pending AI</span>

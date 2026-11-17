@@ -46,6 +46,10 @@ type LogEntry struct {
 	SyncStatus      string    `json:"sync_status"`
 	RemoteID        int64     `json:"remote_id"`
 	SyncedAt        time.Time `json:"synced_at"`
+	IsBlurred       bool      `json:"is_blurred"`
+	BlurReason      string    `json:"blur_reason"`
+	IsRetroactive   bool      `json:"is_retroactive"`
+	IdleIntervalID  int64     `json:"idle_interval_id"`
 }
 
 // WorkSession represents a continuous block of user activity (e.g. 1:00 PM - 3:00 PM).
@@ -284,6 +288,10 @@ func (db *DB) migrate() error {
 		"ALTER TABLE logs ADD COLUMN remote_id INTEGER DEFAULT 0",
 		"ALTER TABLE logs ADD COLUMN synced_at DATETIME",
 		"ALTER TABLE logs ADD COLUMN ai_retry_count INTEGER DEFAULT 0",
+		"ALTER TABLE logs ADD COLUMN is_blurred INTEGER DEFAULT 0",
+		"ALTER TABLE logs ADD COLUMN blur_reason TEXT DEFAULT ''",
+		"ALTER TABLE logs ADD COLUMN is_retroactive INTEGER DEFAULT 0",
+		"ALTER TABLE logs ADD COLUMN idle_interval_id INTEGER DEFAULT 0",
 	}
 	for _, alter := range colMigrations {
 		_, _ = db.rawDB.Exec(alter)
@@ -304,6 +312,10 @@ func (db *DB) migrate() error {
 			"ALTER TABLE logs ADD COLUMN IF NOT EXISTS ai_retry_count INTEGER DEFAULT 0",
 			"ALTER TABLE logs ADD COLUMN IF NOT EXISTS total_clicks INTEGER DEFAULT 0",
 			"ALTER TABLE logs ADD COLUMN IF NOT EXISTS mouse_distance DOUBLE PRECISION DEFAULT 0",
+			"ALTER TABLE logs ADD COLUMN IF NOT EXISTS is_blurred BOOLEAN DEFAULT FALSE",
+			"ALTER TABLE logs ADD COLUMN IF NOT EXISTS blur_reason TEXT DEFAULT ''",
+			"ALTER TABLE logs ADD COLUMN IF NOT EXISTS is_retroactive BOOLEAN DEFAULT FALSE",
+			"ALTER TABLE logs ADD COLUMN IF NOT EXISTS idle_interval_id INTEGER DEFAULT 0",
 		}
 		for _, alter := range pgMigrations {
 			if _, err := db.rawDB.Exec(alter); err != nil {
@@ -521,6 +533,9 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Initialize tables for Features 5, 8, 9, 10
+	db.migrateFeatures()
+
 	// Align the PostgreSQL app_events constraint with the SQLite variant so
 	// both dialects reject lifecycle kinds outside ('open', 'close', 'focus').
 	if db.dialect == dialect.Postgres {
@@ -537,6 +552,10 @@ func (db *DB) migrate() error {
 		safeAddColumn("logs", "total_clicks", "INTEGER DEFAULT 0")
 		safeAddColumn("logs", "mouse_distance", "REAL DEFAULT 0")
 		safeAddColumn("logs", "ai_retry_count", "INTEGER DEFAULT 0")
+		safeAddColumn("logs", "is_blurred", "INTEGER DEFAULT 0")
+		safeAddColumn("logs", "blur_reason", "TEXT DEFAULT ''")
+		safeAddColumn("logs", "is_retroactive", "INTEGER DEFAULT 0")
+		safeAddColumn("logs", "idle_interval_id", "INTEGER DEFAULT 0")
 
 		// One-time normalization (schema version 1): rewrite every timestamp
 		// column stored by go-sqlite3's time.Time binding (legacy
@@ -959,9 +978,17 @@ func (db *DB) DeleteOldAppEvents(cutoff time.Time) (int64, error) {
 // InsertLog stores a new log entry using Ent SQL Builder.
 func (db *DB) InsertLog(e *LogEntry) (int64, error) {
 	appName := appname.Canonical(e.AppName)
+	isBlurredInt := 0
+	if e.IsBlurred {
+		isBlurredInt = 1
+	}
+	isRetroactiveInt := 0
+	if e.IsRetroactive {
+		isRetroactiveInt = 1
+	}
 	builder := entsql.Dialect(db.dialect).Insert("logs").
-		Columns("org_id", "user_id", "timestamp", "image_path", "total_keys", "unique_keys", "entropy_score", "total_clicks", "mouse_distance", "app_name", "window_title").
-		Values(e.OrgID, e.UserID, e.Timestamp.UTC().Format(time.RFC3339), e.ImagePath, e.TotalKeys, e.UniqueKeys, e.EntropyScore, e.TotalClicks, e.MouseDistance, appName, e.WindowTitle)
+		Columns("org_id", "user_id", "timestamp", "image_path", "total_keys", "unique_keys", "entropy_score", "total_clicks", "mouse_distance", "app_name", "window_title", "is_blurred", "blur_reason", "is_retroactive", "idle_interval_id").
+		Values(e.OrgID, e.UserID, e.Timestamp.UTC().Format(time.RFC3339), e.ImagePath, e.TotalKeys, e.UniqueKeys, e.EntropyScore, e.TotalClicks, e.MouseDistance, appName, e.WindowTitle, isBlurredInt, e.BlurReason, isRetroactiveInt, e.IdleIntervalID)
 	if db.dialect == dialect.Postgres {
 		builder.Returning("id")
 		query, args := builder.Query()

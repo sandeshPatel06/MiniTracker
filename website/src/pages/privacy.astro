@@ -2,7 +2,7 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Button from '../components/Button.astro';
 
-const lastUpdated = 'October 20, 2026';
+const lastUpdated = 'November 17, 2026';
 const githubIssuesUrl = 'https://github.com/sandeshPatel06/MiniTracker/issues';
 
 const privacyJsonLd = {
@@ -83,6 +83,9 @@ const privacyJsonLd = {
             <strong class="text-white">Screenshots (Periodic Captures):</strong> Visual snapshots taken at user-configured intervals (default: every 30 seconds, adjustable from 5 seconds to 1 hour) to help you reconstruct what was on screen during focus blocks.
           </li>
           <li>
+            <strong class="text-white">Privacy AI &amp; In-Memory Auto-Blur:</strong> Before writing any capture frame to disk, an in-memory secret inspection engine checks window titles and text against regex signatures for API keys, AWS/Stripe tokens, and private credentials. Depending on user mode, sensitive frames are automatically Gaussian blurred, frosted, or discarded in RAM without ever hitting local storage or SQLite.
+          </li>
+          <li>
             <strong class="text-white">Keystroke Entropy Metrics:</strong> Statistical variance and timing intervals between keypresses to calculate activity presence and focus depth.
           </li>
           <li>
@@ -90,6 +93,9 @@ const privacyJsonLd = {
           </li>
           <li>
             <strong class="text-white">Active Window Metadata:</strong> Window titles and active process names when provided by your desktop window manager or desktop portal.
+          </li>
+          <li>
+            <strong class="text-white">Hardware Idle State:</strong> Inactivity duration queried from desktop D-Bus interfaces (Mutter/KDE) or X11 xprintidle to automatically pause capture sessions during absence.
           </li>
         </ul>
       </section>
@@ -169,7 +175,10 @@ const privacyJsonLd = {
         </p>
         <ul class="list-disc list-outside pl-5 sm:pl-6 space-y-3 sm:space-y-4 text-slate-300">
           <li>
-            <strong class="text-white">Google Gemini API:</strong> If you provide your own Google Gemini API key in settings, get-Hike transmits capture frames directly to Google's Gemini API endpoints to receive task classifications and productivity scores. No intermediary proxy server inspects this transmission.
+            <strong class="text-white">Google Gemini API:</strong> If you provide your own Google Gemini API key in settings, get-Hike transmits capture frames directly to Google's Gemini API endpoints to receive task classifications and productivity scores. No intermediary proxy server inspects this transmission. Analysis is gated strictly behind API key presence.
+          </li>
+          <li>
+            <strong class="text-white">Calendar Synchronization (Google &amp; Microsoft 365):</strong> If connected, OAuth tokens are stored exclusively on your local disk encrypted with AES-256-GCM. Meeting metadata is queried directly to map calendar events onto your timeline, without routing through external relay servers.
           </li>
           <li>
             <strong class="text-white">Google / Azure OAuth (Optional Team Server):</strong> If your organization chooses to deploy the optional multi-tenant server, OAuth endpoints are used solely to verify user identity for workspace access.

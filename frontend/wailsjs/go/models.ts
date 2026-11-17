@@ -66,6 +66,158 @@ export namespace db {
 		    return a;
 		}
 	}
+	export class CalendarEvent {
+	    id: number;
+	    integration_id: number;
+	    external_id: string;
+	    title: string;
+	    description: string;
+	    // Go type: time
+	    start_time: any;
+	    // Go type: time
+	    end_time: any;
+	    all_day: boolean;
+	    status: string;
+	    meeting_url: string;
+	    is_matched: boolean;
+	    matched_log_id?: number;
+	    // Go type: time
+	    created_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new CalendarEvent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.integration_id = source["integration_id"];
+	        this.external_id = source["external_id"];
+	        this.title = source["title"];
+	        this.description = source["description"];
+	        this.start_time = this.convertValues(source["start_time"], null);
+	        this.end_time = this.convertValues(source["end_time"], null);
+	        this.all_day = source["all_day"];
+	        this.status = source["status"];
+	        this.meeting_url = source["meeting_url"];
+	        this.is_matched = source["is_matched"];
+	        this.matched_log_id = source["matched_log_id"];
+	        this.created_at = this.convertValues(source["created_at"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class CalendarIntegration {
+	    id: number;
+	    user_id: number;
+	    provider: string;
+	    account_email: string;
+	    display_name: string;
+	    encrypted_tokens?: string;
+	    sync_status: string;
+	    // Go type: time
+	    last_synced_at?: any;
+	    sync_token?: string;
+	    auto_match_enabled: boolean;
+	    // Go type: time
+	    created_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new CalendarIntegration(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.user_id = source["user_id"];
+	        this.provider = source["provider"];
+	        this.account_email = source["account_email"];
+	        this.display_name = source["display_name"];
+	        this.encrypted_tokens = source["encrypted_tokens"];
+	        this.sync_status = source["sync_status"];
+	        this.last_synced_at = this.convertValues(source["last_synced_at"], null);
+	        this.sync_token = source["sync_token"];
+	        this.auto_match_enabled = source["auto_match_enabled"];
+	        this.created_at = this.convertValues(source["created_at"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class DistractionRule {
+	    id: number;
+	    org_id: number;
+	    user_id: number;
+	    kind: string;
+	    pattern: string;
+	    is_distraction: boolean;
+	    // Go type: time
+	    created_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new DistractionRule(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.org_id = source["org_id"];
+	        this.user_id = source["user_id"];
+	        this.kind = source["kind"];
+	        this.pattern = source["pattern"];
+	        this.is_distraction = source["is_distraction"];
+	        this.created_at = this.convertValues(source["created_at"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class LogEntry {
 	    id: number;
 	    org_id: number;
@@ -93,6 +245,10 @@ export namespace db {
 	    remote_id: number;
 	    // Go type: time
 	    synced_at: any;
+	    is_blurred: boolean;
+	    blur_reason: string;
+	    is_retroactive: boolean;
+	    idle_interval_id: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new LogEntry(source);
@@ -124,6 +280,55 @@ export namespace db {
 	        this.sync_status = source["sync_status"];
 	        this.remote_id = source["remote_id"];
 	        this.synced_at = this.convertValues(source["synced_at"], null);
+	        this.is_blurred = source["is_blurred"];
+	        this.blur_reason = source["blur_reason"];
+	        this.is_retroactive = source["is_retroactive"];
+	        this.idle_interval_id = source["idle_interval_id"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class PrivacyRule {
+	    id: number;
+	    rule_type: string;
+	    pattern: string;
+	    action: string;
+	    description: string;
+	    is_active: boolean;
+	    is_built_in: boolean;
+	    // Go type: time
+	    created_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new PrivacyRule(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.rule_type = source["rule_type"];
+	        this.pattern = source["pattern"];
+	        this.action = source["action"];
+	        this.description = source["description"];
+	        this.is_active = source["is_active"];
+	        this.is_built_in = source["is_built_in"];
+	        this.created_at = this.convertValues(source["created_at"], null);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

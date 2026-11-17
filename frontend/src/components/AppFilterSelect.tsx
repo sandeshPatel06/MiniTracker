@@ -3,13 +3,27 @@ import { CustomSelect } from './CustomSelect';
 import type { SelectOption } from './CustomSelect';
 import { Icon } from './Icon';
 
-interface AppFilterSelectProps {
+export interface AppFilterSelectProps {
   apps: string[];
   value: string;
   onChange: (value: string) => void;
+  align?: 'left' | 'right';
+  className?: string;
+  compact?: boolean;
+  fullWidth?: boolean;
+  id?: string;
 }
 
-export function AppFilterSelect({ apps, value, onChange }: AppFilterSelectProps) {
+export function AppFilterSelect({
+  apps,
+  value,
+  onChange,
+  align = 'left',
+  className = '',
+  compact = false,
+  fullWidth = false,
+  id,
+}: AppFilterSelectProps) {
   const options: SelectOption[] = [
     {
       value: 'ALL',
@@ -25,13 +39,19 @@ export function AppFilterSelect({ apps, value, onChange }: AppFilterSelectProps)
     })),
   ];
 
+  const classes = ['app-filter', className].filter(Boolean).join(' ');
+
   return (
     <CustomSelect
-      className="app-filter"
+      id={id}
+      className={classes}
       value={value}
       options={options}
       onChange={onChange}
       ariaLabel="Filter by application"
+      align={align}
+      compact={compact}
+      fullWidth={fullWidth}
     />
   );
 }

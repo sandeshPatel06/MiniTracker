@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { LogEntry, ProductivityStats, AppConfig, Page, User } from './types';
+import { DistractionToast } from './components/DistractionToast';
+import { IdlePromptModal } from './components/IdlePromptModal';
+import { LogEntry, ProductivityStats, AppConfig, Page, User, IdleBlock, DistractionAlertPayload } from './types';
 import { apiFetch, readJsonSafe, setRuntimeBackendUrl } from './api';
 import { useToast } from './context/ToastContext';
 import Dashboard from './pages/Dashboard';
@@ -238,6 +240,73 @@ export default function App() {
     setIsTrackingActive(false);
     aiAnalysisInFlightRef.current = false;
     aiSubmittedLogIdsRef.current.clear();
+  };
+
+  // Idle & Distraction State
+  const [activeIdleBlock, setActiveIdleBlock] = useState<IdleBlock | null>(null);
+  const [activeDistraction, setActiveDistraction] = useState<DistractionAlertPayload | null>(null);
+
+  // Desktop Events Listener (Idle & Distraction Alerts)
+  useEffect(() => {
+    if (!(window as any).go?.main?.App) return;
+
+    const offIdle = EventsOn('idle_prompt_requested', (block: any) => {
+      if (block && typeof block.duration_seconds === 'number') {
+        setActiveIdleBlock(block);
+      }
+    });
+
+    const offDist = EventsOn('distraction_alert', (payload: any) => {
+      if (payload && payload.app_name) {
+        setActiveDistraction(payload);
+      }
+    });
+
+    return () => {
+      try { (offIdle as unknown as () => void)?.(); } catch {}
+      try { (offDist as unknown as () => void)?.(); } catch {}
+    };
+  }, []);
+
+  const handleResolveIdle = async (params: {
+    action: 'meeting' | 'break' | 'discard';
+    category: string;
+    taskTag: string;
+    isProductive: boolean;
+    score: number;
+  }) => {
+    if (!activeIdleBlock) return;
+    const w = window as any;
+    if (w.go?.main?.App?.ResolveIdleInterval) {
+      try {
+        await callGo(() =>
+          w.go.main.App.ResolveIdleInterval(
+            activeIdleBlock.start_time,
+            activeIdleBlock.end_time,
+            params.action,
+            params.category,
+            params.taskTag,
+            params.isProductive,
+            params.score
+          )
+        );
+        toast.success(params.action === 'discard' ? 'Idle block pruned' : 'Time block allocated');
+      } catch (err) {
+        toast.error('Failed to resolve time block');
+      }
+    }
+    setActiveIdleBlock(null);
+  };
+
+  const handleSnoozeDistraction = async (mins: number) => {
+    const w = window as any;
+    if (w.go?.main?.App?.SnoozeDistractionAlerts) {
+      try {
+        await callGo(() => w.go.main.App.SnoozeDistractionAlerts(mins));
+        toast.info(`Alerts snoozed for ${mins} minutes`);
+      } catch {}
+    }
+    setActiveDistraction(null);
   };
 
   // Desktop AI usage event listener
@@ -930,8 +999,17 @@ export default function App() {
               loading={loading}
               today={today}
               onRefresh={() => loadData(today)}
+              onDateChange={(d) => {
+                setToday(d);
+                setStartDate(d);
+                setEndDate(d);
+                loadData(d);
+              }}
+              onOpenSettings={() => navigateTo('settings')}
               loadError={loadError}
               onRetry={retryLoad}
+              aiKeyPresent={aiKeyPresent}
+              onConfigureApiKey={() => navigateTo('settings')}
             />
           )}
           {page === 'timeline' && (
@@ -1041,6 +1119,24 @@ export default function App() {
           theme={theme}
           onThemeChange={setTheme}
           onDisable={dev.disable}
+        />
+      )}
+
+      {/* Feature 9: Idle & Away Return Resolution Modal */}
+      <IdlePromptModal
+        isOpen={Boolean(activeIdleBlock)}
+        block={activeIdleBlock}
+        currentTask={userTask}
+        onResolve={handleResolveIdle}
+        onDismiss={() => setActiveIdleBlock(null)}
+      />
+
+      {/* Feature 5: Smart Distraction Alert Interactive Toast */}
+      {activeDistraction && (
+        <DistractionToast
+          alert={activeDistraction}
+          onSnooze={handleSnoozeDistraction}
+          onDismiss={() => setActiveDistraction(null)}
         />
       )}
     </div>

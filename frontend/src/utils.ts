@@ -15,6 +15,11 @@ export function isPendingLog(log: { ai_category?: string | null; ai_reason?: str
     reason.includes('API key') || reason.includes('No key');
 }
 
+/** Reports whether a capture represents inactive/away time rather than active work. */
+export function isIdleLog(log: { ai_category?: string | null }): boolean {
+  return log.ai_category === 'Idle';
+}
+
 // sessionGapMs splits consecutive captures into separate work sessions when
 // this much inactivity passes between them.
 const SESSION_GAP_MS = 15 * 60 * 1000;

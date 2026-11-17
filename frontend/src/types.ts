@@ -18,6 +18,10 @@ export interface LogEntry {
   productive_score?: number;
   ai_confidence: number;
   ai_reason: string;
+  is_blurred?: boolean;
+  blur_reason?: string;
+  is_retroactive?: boolean;
+  idle_interval_id?: number;
 }
 
 export interface WorkSession {
@@ -104,3 +108,65 @@ export interface APIUsageSummary {
 }
 
 export type Page = 'dashboard' | 'timeline' | 'analytics' | 'organization' | 'accept-invite' | 'auth' | 'settings';
+
+export interface PrivacyRule {
+  id: number;
+  rule_type: 'app' | 'title_regex' | 'content_regex';
+  pattern: string;
+  action: 'blur' | 'shield' | 'skip_screenshot';
+  description?: string;
+  is_active: boolean;
+  is_built_in?: boolean;
+}
+
+export interface DistractionRule {
+  id: number;
+  kind: 'app' | 'keyword' | 'domain';
+  pattern: string;
+  is_distraction: boolean;
+}
+
+export interface IdleBlock {
+  id: number;
+  start_time: string;
+  end_time: string;
+  duration_seconds: number;
+}
+
+export interface DistractionAlertPayload {
+  alert_id: number;
+  app_name: string;
+  window_title: string;
+  dwell_seconds: number;
+  threshold_seconds: number;
+  active_task?: string;
+  timestamp: string;
+}
+
+export interface CalendarEvent {
+  id: number;
+  integration_id?: number;
+  external_id?: string;
+  title: string;
+  description?: string;
+  start_time: string;
+  end_time: string;
+  all_day?: boolean;
+  status?: string;
+  meeting_url?: string;
+  is_matched?: boolean;
+  matched_log_id?: number;
+}
+
+export interface CalendarIntegration {
+  id: number;
+  user_id: number;
+  provider: string;
+  account_email: string;
+  display_name: string;
+  sync_status: string;
+  last_synced_at?: string;
+  auto_match_enabled: boolean;
+  created_at: string;
+}
+

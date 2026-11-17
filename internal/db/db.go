@@ -624,28 +624,23 @@ func (db *DB) migrate() error {
 		}
 	}
 
-	// Seed default org
-	query := entsql.Dialect(db.dialect).Select(entsql.Count("*")).From(entsql.Table("organizations"))
-	selector, args := query.Query()
-	var orgCount int
-	_ = db.rawDB.QueryRow(selector, args...).Scan(&orgCount)
-	if orgCount == 0 {
-		_, _ = db.CreateOrganization("Default Beta Org", "default-beta")
-
-		// Only seed default admin/member users if explicitly requested via SEED_DEFAULT_USERS=true
-		// or in test/development environments (DISABLE_SEED_DEFAULT_USERS != "true")
-		if os.Getenv("APP_ENV") != "production" && os.Getenv("DISABLE_SEED_DEFAULT_USERS") != "true" {
-			adminHash := HashPassword("admin123")
-			memberHash := HashPassword("user123")
-			_, _ = db.CreateUser(1, "admin@company.com", adminHash, "Beta Admin", "owner")
-			_, _ = db.CreateUser(1, "user@company.com", memberHash, "Test Team Member", "member")
-			log.Printf("[db] NOTICE: Seeded initial default demo users in non-production environment")
-		} else if os.Getenv("SEED_DEFAULT_USERS") == "true" {
-			adminHash := HashPassword("admin123")
-			memberHash := HashPassword("user123")
-			_, _ = db.CreateUser(1, "admin@company.com", adminHash, "Beta Admin", "owner")
-			_, _ = db.CreateUser(1, "user@company.com", memberHash, "Test Team Member", "member")
-			log.Printf("[db] NOTICE: Seeded initial default demo users via SEED_DEFAULT_USERS=true")
+	// In production, do not auto-seed default organizations or users so that new
+	// registrations start cleanly as individual users. Seed only when explicitly requested
+	// via SEED_DEFAULT_USERS=true in local development.
+	if os.Getenv("SEED_DEFAULT_USERS") == "true" {
+		query := entsql.Dialect(db.dialect).Select(entsql.Count("*")).From(entsql.Table("organizations"))
+		selector, args := query.Query()
+		var orgCount int
+		_ = db.rawDB.QueryRow(selector, args...).Scan(&orgCount)
+		if orgCount == 0 {
+			org, _ := db.CreateOrganization("Default Beta Org", "default-beta")
+			if org != nil {
+				adminHash := HashPassword("admin123")
+				memberHash := HashPassword("user123")
+				_, _ = db.CreateUser(org.ID, "admin@company.com", adminHash, "Beta Admin", "owner")
+				_, _ = db.CreateUser(org.ID, "user@company.com", memberHash, "Test Team Member", "member")
+				log.Printf("[db] NOTICE: Seeded initial default demo users via SEED_DEFAULT_USERS=true")
+			}
 		}
 	}
 
@@ -838,6 +833,24 @@ func parseFlexibleBool(val interface{}) bool {
 	default:
 		return false
 	}
+}
+
+// AssignUserToOrg sets a user's organization and role.
+func (db *DB) AssignUserToOrg(userID, orgID int64, role string) error {
+	builder := entsql.Dialect(db.dialect).Update("users").
+		Set("org_id", orgID).
+		Set("role", role).
+		Where(entsql.EQ("id", userID))
+	query, args := builder.Query()
+	res, err := db.rawDB.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("assign user to org: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
 }
 
 // UpdateUserRole updates a user's role within an organization.

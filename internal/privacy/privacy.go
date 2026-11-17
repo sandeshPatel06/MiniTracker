@@ -35,6 +35,12 @@ type UserPrivacyRule struct {
 	IsBuiltIn bool          `json:"is_built_in"`
 }
 
+type compiledPrivacyRule struct {
+	UserPrivacyRule
+	patLower string
+	regex    *regexp.Regexp
+}
+
 // Engine coordinates sensitive window and token detection.
 type Engine struct {
 	mu          sync.RWMutex
@@ -42,6 +48,7 @@ type Engine struct {
 	blurStyle   string // "blur", "shield", "skip"
 	blurRadius  int
 	customRules []UserPrivacyRule
+	cachedRules []compiledPrivacyRule
 }
 
 // NewEngine creates a new privacy engine with default safety settings.
@@ -86,11 +93,24 @@ func (e *Engine) SetConfig(enabled bool, style string, radius int) {
 	}
 }
 
-// SetCustomRules replaces the active custom rules list.
+// SetCustomRules replaces the active custom rules list and compiles regex patterns.
 func (e *Engine) SetCustomRules(rules []UserPrivacyRule) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.customRules = rules
+	e.cachedRules = make([]compiledPrivacyRule, 0, len(rules))
+	for _, r := range rules {
+		cpr := compiledPrivacyRule{
+			UserPrivacyRule: r,
+			patLower:        strings.ToLower(r.Pattern),
+		}
+		if r.RuleType == "title_regex" || r.RuleType == "content_regex" {
+			if re, err := regexp.Compile(r.Pattern); err == nil {
+				cpr.regex = re
+			}
+		}
+		e.cachedRules = append(e.cachedRules, cpr)
+	}
 }
 
 // EvaluateWindow checks whether the focused window matches sensitive rules.
@@ -106,13 +126,13 @@ func (e *Engine) EvaluateWindow(appName, windowTitle string) EvaluationResult {
 	titleTrimmed := strings.TrimSpace(windowTitle)
 
 	// 1. Check Custom User Rules first
-	for _, rule := range e.customRules {
+	for _, rule := range e.cachedRules {
 		if !rule.IsActive {
 			continue
 		}
 		switch rule.RuleType {
 		case "app":
-			if strings.EqualFold(appLower, strings.ToLower(rule.Pattern)) || strings.Contains(appLower, strings.ToLower(rule.Pattern)) {
+			if appLower == rule.patLower || strings.Contains(appLower, rule.patLower) {
 				return EvaluationResult{
 					IsSensitive: true,
 					Action:      rule.Action,
@@ -121,7 +141,7 @@ func (e *Engine) EvaluateWindow(appName, windowTitle string) EvaluationResult {
 				}
 			}
 		case "title_regex":
-			if re, err := regexp.Compile(rule.Pattern); err == nil && re.MatchString(titleTrimmed) {
+			if rule.regex != nil && rule.regex.MatchString(titleTrimmed) {
 				return EvaluationResult{
 					IsSensitive: true,
 					Action:      rule.Action,

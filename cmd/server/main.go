@@ -1266,6 +1266,11 @@ func main() {
 			return
 		}
 
+		if user.OrgID == 0 {
+			jsonError(w, "Must belong to an organization to view organization usage metrics", http.StatusBadRequest)
+			return
+		}
+
 		if user.Role != "owner" && user.Role != "admin" {
 			jsonError(w, "Forbidden: Only Organization Admins or Owners can view organization-wide usage metrics", http.StatusForbidden)
 			return
@@ -1288,6 +1293,10 @@ func main() {
 		user := getSessionUser(r, database)
 		if user == nil {
 			jsonError(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if user.OrgID == 0 {
+			jsonError(w, "Must belong to an organization to reset organization usage", http.StatusBadRequest)
 			return
 		}
 		if user.Role != "owner" && user.Role != "admin" {
@@ -1322,7 +1331,7 @@ func main() {
 	})
 
 	// GET /api/org/plan — Query organization plan tier and status
-	// POST /api/org/plan — Admin-only endpoint to update organization plan (e.g. mock upgrade to 'pro'/'active')
+	// POST /api/org/plan — Admin-only endpoint to update organization plan (currently Coming Soon for paid tiers)
 	mux.HandleFunc("/api/org/plan", func(w http.ResponseWriter, r *http.Request) {
 		user := getSessionUser(r, database)
 		if user == nil {
@@ -1331,6 +1340,13 @@ func main() {
 		}
 
 		if r.Method == http.MethodGet {
+			if user.OrgID == 0 {
+				jsonResp(w, map[string]interface{}{
+					"plan_tier":   "free",
+					"plan_status": "inactive",
+				})
+				return
+			}
 			tier, status, err := database.GetOrgPlan(user.OrgID)
 			if err != nil {
 				jsonError(w, fmt.Sprintf("Failed to get org plan: %v", err), http.StatusInternalServerError)
@@ -1344,6 +1360,10 @@ func main() {
 		}
 
 		if r.Method == http.MethodPost {
+			if user.OrgID == 0 {
+				jsonError(w, "Must belong to an organization to configure organization plans", http.StatusBadRequest)
+				return
+			}
 			if user.Role != "owner" && user.Role != "admin" {
 				jsonError(w, "Forbidden: Only Org Admins or Owners can update plan", http.StatusForbidden)
 				return
@@ -1358,11 +1378,16 @@ func main() {
 				return
 			}
 
+			if payload.PlanTier != "free" && payload.PlanStatus == "active" {
+				jsonError(w, "Paid organization cloud plans are coming soon. Please use a custom Gemini API key for your organization.", http.StatusNotImplemented)
+				return
+			}
+
 			if payload.PlanTier == "" {
-				payload.PlanTier = "pro"
+				payload.PlanTier = "free"
 			}
 			if payload.PlanStatus == "" {
-				payload.PlanStatus = "active"
+				payload.PlanStatus = "inactive"
 			}
 
 			if err := database.UpdateOrgPlan(user.OrgID, payload.PlanTier, payload.PlanStatus); err != nil {
@@ -1387,6 +1412,19 @@ func main() {
 		user := getSessionUser(r, database)
 		if user == nil {
 			jsonError(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if user.OrgID == 0 {
+			if r.Method == http.MethodGet {
+				jsonResp(w, map[string]interface{}{
+					"gemini_api_key": "",
+					"has_custom_key": false,
+					"gemini_model":   "",
+				})
+				return
+			}
+			jsonError(w, "Must belong to an organization to configure organization settings", http.StatusBadRequest)
 			return
 		}
 
@@ -1609,8 +1647,8 @@ func main() {
 			return
 		}
 		var req RegistrationIntentPayload
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Email) == "" || strings.TrimSpace(req.Password) == "" {
-			jsonError(w, "Invalid request payload. Name, email, and password are required.", http.StatusBadRequest)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Email) == "" || strings.TrimSpace(req.Password) == "" {
+			jsonError(w, "Invalid request payload. Email and password are required.", http.StatusBadRequest)
 			return
 		}
 
@@ -1644,7 +1682,7 @@ func main() {
 		req.Password = hashPassword(req.Password)
 		req.Email = cleanEmail
 		if strings.TrimSpace(req.FullName) == "" {
-			req.FullName = "Admin"
+			req.FullName = "User"
 		}
 
 		payloadBytes, err := json.Marshal(req)
@@ -1673,7 +1711,7 @@ func main() {
 		})
 	})
 
-	// POST /api/auth/verify-registration — Verify 6-digit OTP and complete org + owner creation
+	// POST /api/auth/verify-registration — Verify 6-digit OTP and complete individual user creation (org_id = 0)
 	mux.HandleFunc("/api/auth/verify-registration", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1726,19 +1764,9 @@ func main() {
 			return
 		}
 
-		// Create organization
-		slug := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(pending.Name), " ", "-"))
-		org, err := database.CreateOrganization(pending.Name, slug)
-		if err != nil {
-			org, _ = database.GetOrganizationBySlug(slug)
-			if org == nil {
-				jsonError(w, fmt.Sprintf("Organization creation failed: %v", err), http.StatusBadRequest)
-				return
-			}
-		}
-
-		// Create user (password is already hashed)
-		user, err := database.CreateUser(org.ID, pending.Email, pending.Password, pending.FullName, "owner")
+		// Direct signup registers user as individual solo user (org_id = 0, role = "member")
+		// No organization is auto-created or auto-assigned unless the user creates one later or joins via invitation.
+		user, err := database.CreateUser(0, pending.Email, pending.Password, pending.FullName, "member")
 		if err != nil {
 			jsonError(w, fmt.Sprintf("User creation failed: %v", err), http.StatusBadRequest)
 			return
@@ -1747,6 +1775,63 @@ func main() {
 		// Delete verification entry once successfully created
 		_ = database.DeleteEmailVerification(cleanEmail)
 
+		token := setJWTTokenCookie(w, user, isSecureRequest(r))
+
+		jsonResp(w, map[string]interface{}{
+			"success": true,
+			"token":   token,
+			"org":     nil,
+			"user":    user,
+		})
+	})
+
+	// POST /api/org/create — Authenticated endpoint for solo users (org_id == 0) to create a new organization
+	mux.HandleFunc("/api/org/create", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		user := getSessionUser(r, database)
+		if user == nil {
+			jsonError(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if user.OrgID > 0 {
+			jsonError(w, "User already belongs to an organization", http.StatusConflict)
+			return
+		}
+
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
+			jsonError(w, "Organization name is required", http.StatusBadRequest)
+			return
+		}
+
+		orgName := strings.TrimSpace(req.Name)
+		slug := strings.ToLower(strings.ReplaceAll(orgName, " ", "-"))
+		org, err := database.CreateOrganization(orgName, slug)
+		if err != nil {
+			// If slug collision, append random suffix
+			slug = fmt.Sprintf("%s-%d", slug, time.Now().Unix()%10000)
+			org, err = database.CreateOrganization(orgName, slug)
+			if err != nil {
+				jsonError(w, fmt.Sprintf("Failed to create organization: %v", err), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		// Assign current user as owner of the newly created organization
+		if err := database.AssignUserToOrg(user.ID, org.ID, "owner"); err != nil {
+			jsonError(w, fmt.Sprintf("Failed to assign user to organization: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		user.OrgID = org.ID
+		user.Role = "owner"
 		token := setJWTTokenCookie(w, user, isSecureRequest(r))
 
 		jsonResp(w, map[string]interface{}{
@@ -2208,7 +2293,6 @@ func main() {
 	}
 
 	mux.HandleFunc("/api/auth/oauth/azure/callback", handleAzureCallback)
-	mux.HandleFunc("/api/auth/azure/callback", handleAzureCallback)
 
 	// GET /api/org/members — Get team roster and pending invitations
 	mux.HandleFunc("/api/org/members", func(w http.ResponseWriter, r *http.Request) {
@@ -2235,6 +2319,16 @@ func main() {
 				"org":         org,
 				"members":     members,
 				"invitations": invitations,
+			})
+			return
+		}
+
+		// Individual solo user (org_id == 0) has no organization roster
+		if sessUser.OrgID == 0 {
+			jsonResp(w, map[string]interface{}{
+				"org":         nil,
+				"members":     []interface{}{},
+				"invitations": []interface{}{},
 			})
 			return
 		}
@@ -2267,6 +2361,10 @@ func main() {
 		sessUser := getSessionUser(r, database)
 		if sessUser == nil && !isLoopbackRequest(r) {
 			jsonError(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if sessUser != nil && sessUser.OrgID == 0 {
+			jsonError(w, "Must belong to an organization to manage members", http.StatusBadRequest)
 			return
 		}
 		if sessUser != nil && sessUser.Role != "owner" && sessUser.Role != "admin" {
@@ -2341,6 +2439,10 @@ func main() {
 			jsonError(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
+		if sessUser != nil && sessUser.OrgID == 0 {
+			jsonError(w, "Must belong to an organization to revoke invitations", http.StatusBadRequest)
+			return
+		}
 		if sessUser != nil && sessUser.Role != "owner" && sessUser.Role != "admin" {
 			jsonError(w, "Forbidden: Only organization admins or owners can revoke invitations", http.StatusForbidden)
 			return
@@ -2374,6 +2476,10 @@ func main() {
 		sessUser := getSessionUser(r, database)
 		if sessUser == nil && !isLoopbackRequest(r) {
 			jsonError(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if sessUser != nil && sessUser.OrgID == 0 {
+			jsonError(w, "Must belong to an organization to send invitations", http.StatusBadRequest)
 			return
 		}
 		if sessUser != nil && sessUser.Role != "owner" && sessUser.Role != "admin" {

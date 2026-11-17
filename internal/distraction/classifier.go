@@ -37,22 +37,44 @@ var (
 	}
 )
 
+type compiledRule struct {
+	db.DistractionRule
+	patLower string
+	regex    *regexp.Regexp
+}
+
 // Classifier evaluates whether an active application/title is productive or distracting.
 type Classifier struct {
 	mu          sync.RWMutex
 	customRules []db.DistractionRule
+	cachedRules []compiledRule
 }
 
 // NewClassifier creates a classifier instance.
 func NewClassifier(rules []db.DistractionRule) *Classifier {
-	return &Classifier{customRules: rules}
+	c := &Classifier{}
+	c.SetRules(rules)
+	return c
 }
 
-// SetRules updates custom user whitelist/blacklist rules.
+// SetRules updates custom user whitelist/blacklist rules and compiles cached patterns.
 func (c *Classifier) SetRules(rules []db.DistractionRule) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.customRules = rules
+	c.cachedRules = make([]compiledRule, 0, len(rules))
+	for _, r := range rules {
+		cr := compiledRule{
+			DistractionRule: r,
+			patLower:        strings.ToLower(r.Pattern),
+		}
+		if r.Kind == "regex" || (r.Kind != "app" && r.Kind != "domain" && r.Kind != "keyword") {
+			if re, err := regexp.Compile("(?i)" + r.Pattern); err == nil {
+				cr.regex = re
+			}
+		}
+		c.cachedRules = append(c.cachedRules, cr)
+	}
 }
 
 // Classify determines the productivity classification of an application and window title.
@@ -61,25 +83,21 @@ func (c *Classifier) Classify(appName, windowTitle string) (Classification, stri
 	titleLower := strings.ToLower(strings.TrimSpace(windowTitle))
 
 	c.mu.RLock()
-	rules := make([]db.DistractionRule, len(c.customRules))
-	copy(rules, c.customRules)
+	rules := c.cachedRules
 	c.mu.RUnlock()
 
 	// 1. Check custom user rules first (Whitelist takes priority)
 	for _, rule := range rules {
-		patLower := strings.ToLower(rule.Pattern)
 		matched := false
 		switch rule.Kind {
 		case "app":
-			matched = strings.Contains(appLower, patLower)
-		case "domain":
-			matched = strings.Contains(titleLower, patLower) || strings.Contains(appLower, patLower)
-		case "keyword":
-			matched = strings.Contains(titleLower, patLower) || strings.Contains(appLower, patLower)
+			matched = strings.Contains(appLower, rule.patLower)
+		case "domain", "keyword":
+			matched = strings.Contains(titleLower, rule.patLower) || strings.Contains(appLower, rule.patLower)
 		default:
 			// "regex" or any custom pattern type
-			if re, err := regexp.Compile("(?i)" + rule.Pattern); err == nil {
-				matched = re.MatchString(titleLower) || re.MatchString(appLower)
+			if rule.regex != nil {
+				matched = rule.regex.MatchString(titleLower) || rule.regex.MatchString(appLower)
 			}
 		}
 

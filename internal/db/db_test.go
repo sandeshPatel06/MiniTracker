@@ -21,6 +21,14 @@ func setupTestDB(t *testing.T) (*DB, func()) {
 		t.Fatalf("failed to open database: %v", err)
 	}
 
+	// For tests, seed the default test organization and default user if not present
+	org, _ := database.GetOrganization(1)
+	if org == nil {
+		_, _ = database.CreateOrganization("Default Beta Org", "default-beta")
+		adminHash := HashPassword("admin123")
+		_, _ = database.CreateUser(1, "admin@company.com", adminHash, "Beta Admin", "owner")
+	}
+
 	cleanup := func() {
 		database.Close()
 		os.RemoveAll(tmpDir)

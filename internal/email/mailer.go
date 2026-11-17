@@ -162,6 +162,7 @@ func (m *Mailer) sendViaSMTP(toEmail string, msg []byte) error {
 			}
 		}
 	}
+	defer client.Close()
 	defer client.Quit()
 
 	// Authenticate if credentials are provided

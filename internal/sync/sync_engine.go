@@ -395,7 +395,7 @@ func (s *SyncEngine) PushTelemetry(ctx context.Context) (int, error) {
 	var confirmedLocalIDs []int64
 	var confirmedRemoteIDs []int64
 
-	// If results array provided, map validated items
+	// Security validation & mapping of confirmed items
 	if len(pushResp.Results) > 0 {
 		for _, item := range pushResp.Results {
 			// Security validation: verify returned local ID belongs to this batch and remote ID is non-zero
@@ -413,7 +413,7 @@ func (s *SyncEngine) PushTelemetry(ctx context.Context) (int, error) {
 	if len(confirmedLocalIDs) > 0 {
 		if err := s.database.MarkLogsSynced(confirmedLocalIDs, confirmedRemoteIDs); err != nil {
 			log.Printf("[sync] error updating sync status in db: %v", err)
-			return 0, err
+			return 0, fmt.Errorf("mark logs synced: %w", err)
 		}
 		log.Printf("[sync] successfully pushed %d/%d pending telemetry logs in batch to backend", len(confirmedLocalIDs), len(pendingLogs))
 	} else {
@@ -480,14 +480,17 @@ func (s *SyncEngine) PullAnalytics(ctx context.Context) (int, error) {
 	syncedCount := 0
 	for _, remoteLog := range remoteLogs {
 		if remoteLog.ID > 0 {
-			_ = s.database.UpdateAIResultByRemoteID(
+			if err := s.database.UpdateAIResultByRemoteID(
 				remoteLog.ID,
 				remoteLog.AICategory,
 				remoteLog.IsProductive,
 				remoteLog.ProductiveScore,
 				remoteLog.AIConfidence,
 				remoteLog.AIReason,
-			)
+			); err != nil {
+				log.Printf("[sync] warning: failed to update AI result for remote ID %d: %v", remoteLog.ID, err)
+				continue
+			}
 			syncedCount++
 		}
 	}

@@ -199,7 +199,11 @@ func (g *GeminiClient) ensureContextCache(ctx context.Context, model, staticProm
 	previous := g.cacheName
 	g.cacheMu.Unlock()
 
-	cacheURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/cachedContents?key=%s", g.apiKey)
+	apiKey := g.GetAPIKey()
+	if apiKey == "" {
+		return ""
+	}
+	cacheURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/cachedContents?key=%s", apiKey)
 	body, err := json.Marshal(map[string]interface{}{
 		"model":       "models/" + cleanModel,
 		"displayName": "get-hike-analysis-context",
@@ -281,9 +285,13 @@ func (g *GeminiClient) clearContextCache() {
 
 // deleteCachedContent removes a cachedContents resource to stop storage billing.
 func (g *GeminiClient) deleteCachedContent(name string) {
+	apiKey := g.GetAPIKey()
+	if apiKey == "" {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	deleteURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/%s?key=%s", name, g.apiKey)
+	deleteURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/%s?key=%s", name, apiKey)
 	req, err := http.NewRequestWithContext(ctx, "DELETE", deleteURL, nil)
 	if err != nil {
 		return
@@ -315,6 +323,13 @@ func (g *GeminiClient) HasKey() bool {
 	return g.apiKey != ""
 }
 
+// GetAPIKey returns the current API key safely.
+func (g *GeminiClient) GetAPIKey() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.apiKey
+}
+
 // GetModel returns current active model name.
 func (g *GeminiClient) GetModel() string {
 	g.mu.Lock()
@@ -339,11 +354,12 @@ func (g *GeminiClient) GetDataDir() string {
 // FetchAvailableModels queries Gemini API for models supporting generateContent,
 // ordered by cheapness and efficiency (preferring Flash models).
 func (g *GeminiClient) FetchAvailableModels(ctx context.Context) ([]string, error) {
-	if g.apiKey == "" {
+	apiKey := g.GetAPIKey()
+	if apiKey == "" {
 		return nil, fmt.Errorf("no API key set")
 	}
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models?key=%s", g.apiKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models?key=%s", apiKey)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -855,8 +871,12 @@ const modelQuotaDisableThreshold = 5 * time.Minute
 // so later batches start from a healthy candidate. Models that answer with
 // empty text under a schema (gemma-class) still get a free-form retry.
 func (g *GeminiClient) postGenerateContentWithRetry(ctx context.Context, model string, reqPayload map[string]interface{}) (string, UsageMetadata, error) {
+	apiKey := g.GetAPIKey()
+	if apiKey == "" {
+		return "", UsageMetadata{}, fmt.Errorf("no API key set")
+	}
 	cleanModel := strings.TrimPrefix(model, "models/")
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", cleanModel, g.apiKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", cleanModel, apiKey)
 
 	policy := RetryPolicy{MaxAttempts: 3, BaseDelay: 2 * time.Second, MaxDelay: 15 * time.Second}
 	variants := buildPayloadVariants(model, reqPayload)

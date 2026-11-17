@@ -75,6 +75,31 @@ export default function App() {
     return (localStorage.getItem('mini_theme') as 'dark' | 'light' | 'auto') || 'auto';
   });
 
+  // Collapsible Sidebar State (persisted to localStorage)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    return localStorage.getItem('mini_sidebar_collapsed') === 'true';
+  });
+
+  const toggleSidebarCollapse = useCallback(() => {
+    setIsSidebarCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('mini_sidebar_collapsed', String(next));
+      return next;
+    });
+  }, []);
+
+  // Keyboard shortcut Ctrl+B or Cmd+B to toggle sidebar
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        toggleSidebarCollapse();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [toggleSidebarCollapse]);
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('mini_theme', theme);
@@ -973,7 +998,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell ${isMobileMenuOpen ? 'mobile-nav-active' : ''}`}>
+    <div className={`app-shell ${isMobileMenuOpen ? 'mobile-nav-active' : ''} ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <a href="#main-content" className="skip-link" style={{ position: 'absolute' }}>
         Skip to content
       </a>
@@ -983,6 +1008,8 @@ export default function App() {
         page={page}
         isMobileMenuOpen={isMobileMenuOpen}
         setIsMobileMenuOpen={setIsMobileMenuOpen}
+        isSidebarCollapsed={isSidebarCollapsed}
+        onToggleSidebarCollapse={toggleSidebarCollapse}
         currentUser={currentUser}
         currentOrg={currentOrg}
         isGuestMode={isGuestMode}

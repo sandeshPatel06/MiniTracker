@@ -9,6 +9,8 @@ interface SidebarProps {
   page: Page;
   isMobileMenuOpen: boolean;
   setIsMobileMenuOpen: (open: boolean) => void;
+  isSidebarCollapsed?: boolean;
+  onToggleSidebarCollapse?: () => void;
   currentUser: User | null;
   currentOrg?: Organization | null;
   isGuestMode: boolean;
@@ -40,6 +42,8 @@ export function Sidebar({
   page,
   isMobileMenuOpen,
   setIsMobileMenuOpen,
+  isSidebarCollapsed = false,
+  onToggleSidebarCollapse,
   currentUser,
   currentOrg,
   isGuestMode,
@@ -129,22 +133,21 @@ export function Sidebar({
 
       {/* Sidebar Drawer */}
       <aside className={`sidebar ${isMobileMenuOpen ? 'open' : ''}`} id="sidebar" aria-label="Sidebar navigation">
-        {/* Brand Header */}
-        <div
-          className="sidebar-logo"
-          onClick={() => dev.registerTap()}
-          style={{ cursor: 'pointer' }}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              dev.registerTap();
-            }
-          }}
-          title="get-Hike — Click to inspect"
-        >
-          <div className="sidebar-logo-brand">
+        {/* Brand Header & Collapse Toggle */}
+        <div className="sidebar-logo">
+          <div
+            className="sidebar-logo-brand"
+            onClick={() => dev.registerTap()}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                dev.registerTap();
+              }
+            }}
+            title="get-Hike Productivity"
+          >
             <img
               src={logoAsset}
               alt="get-Hike brand logo"
@@ -154,8 +157,20 @@ export function Sidebar({
               <div className="sidebar-logo-text">get-Hike</div>
               <div className="sidebar-logo-sub">Productivity</div>
             </div>
+            <span className="sidebar-brand-pill">v1</span>
           </div>
-          <span className="sidebar-brand-pill">v1</span>
+
+          {onToggleSidebarCollapse && (
+            <button
+              type="button"
+              className="sidebar-collapse-btn"
+              onClick={onToggleSidebarCollapse}
+              aria-label={isSidebarCollapsed ? 'Expand sidebar menu' : 'Collapse sidebar menu'}
+              title={isSidebarCollapsed ? 'Expand sidebar (Ctrl+B)' : 'Collapse sidebar (Ctrl+B)'}
+            >
+              <Icon name={isSidebarCollapsed ? 'chevron-right' : 'chevron-left'} size={14} />
+            </button>
+          )}
         </div>
 
         {/* Workspace / Organization Switcher Info */}
@@ -280,11 +295,10 @@ export function Sidebar({
                   setIsMobileMenuOpen(false);
                 }}
                 aria-current={active ? 'page' : undefined}
+                title={isSidebarCollapsed ? item.label : undefined}
                 style={{
-                  textAlign: 'left',
                   fontFamily: 'inherit',
                   cursor: 'pointer',
-                  width: 'calc(100% - 16px)',
                 }}
               >
                 <Icon name={item.iconName} size={16} className="nav-icon" />

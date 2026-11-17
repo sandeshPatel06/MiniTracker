@@ -7,6 +7,7 @@ primary_region = 'sin'
 [env]
   PORT = '8080'
   DATA_DIR = '/data'
+  FRONTEND_URL = 'https://minitracker.pages.dev'
 
 [http_service]
   internal_port = 8080

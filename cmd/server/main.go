@@ -2100,7 +2100,26 @@ func main() {
 			fileServer.ServeHTTP(w, r)
 		})
 	} else {
-		log.Printf("[server] WARNING: frontend static directory not found in candidates!")
+		log.Printf("[server] WARNING: frontend static directory not found in candidates, redirecting non-API routes to frontend portal")
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				http.NotFound(w, r)
+				return
+			}
+			frontendBase := os.Getenv("FRONTEND_URL")
+			if frontendBase == "" {
+				frontendBase = "https://minitracker.pages.dev"
+			}
+			frontendBase = strings.TrimRight(frontendBase, "/")
+			target := frontendBase
+			if r.URL.Path != "" && r.URL.Path != "/" {
+				target = fmt.Sprintf("%s/#%s", frontendBase, r.URL.Path)
+				if r.URL.RawQuery != "" {
+					target = fmt.Sprintf("%s?%s", target, r.URL.RawQuery)
+				}
+			}
+			http.Redirect(w, r, target, http.StatusTemporaryRedirect)
+		})
 	}
 
 	port := os.Getenv("PORT")

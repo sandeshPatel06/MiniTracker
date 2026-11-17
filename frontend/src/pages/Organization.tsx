@@ -5,6 +5,7 @@ import { Modal } from '../components/Modal';
 import { EmptyState } from '../components/EmptyState';
 import { Alert } from '../components/Alert';
 import { StatCard } from '../components/StatCard';
+import { Icon } from '../components/Icon';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -25,24 +26,12 @@ const getInitials = (name?: string, email?: string): string => {
 const renderRoleBadge = (role: string = 'member') => {
   const normalized = role.toLowerCase();
   if (normalized === 'owner') {
-    return (
-      <span className="badge badge-role-owner" title="Organization Owner">
-        👑 OWNER
-      </span>
-    );
+    return <span className="badge badge-role-owner">Owner</span>;
   }
   if (normalized === 'admin') {
-    return (
-      <span className="badge badge-role-admin" title="Organization Administrator">
-        🛡️ ADMIN
-      </span>
-    );
+    return <span className="badge badge-role-admin">Admin</span>;
   }
-  return (
-    <span className="badge badge-role-member" title="Standard Workspace Member">
-      MEMBER
-    </span>
-  );
+  return <span className="badge badge-role-member">Member</span>;
 };
 
 const fmtDateOrDash = (ts: string | undefined, mode: 'date' | 'datetime' = 'date') => {
@@ -161,7 +150,7 @@ export const OrganizationPage: React.FC = () => {
   };
 
   const handleResetUsage = async () => {
-    if (!window.confirm('Reset organization API usage counters? This is recommended after Google resets your API key quota.')) {
+    if (!window.confirm('Reset organization API usage counters?')) {
       return;
     }
     setResettingUsage(true);
@@ -169,9 +158,9 @@ export const OrganizationPage: React.FC = () => {
     try {
       const res = await apiFetch('/api/org/usage/reset', { method: 'POST' });
       if (res.ok) {
-        setPageSuccess('Usage counters successfully reset.');
+        setPageSuccess('Usage counters reset.');
         await fetchUsageData();
-        setTimeout(() => setPageSuccess(null), 4000);
+        setTimeout(() => setPageSuccess(null), 3000);
       } else {
         const errData = await readJsonSafe<{ error?: string; message?: string }>(res);
         setPageError(errData?.message || errData?.error || 'Failed to reset usage counters.');
@@ -239,7 +228,7 @@ export const OrganizationPage: React.FC = () => {
   // Handle Role Change
   const handleUpdateRole = async (userId: number, currentRole: string, newRole: 'admin' | 'member') => {
     if (currentRole === newRole) return;
-    if (!window.confirm(`Are you sure you want to change this member's role to ${newRole.toUpperCase()}?`)) {
+    if (!window.confirm(`Change member role to ${newRole.toUpperCase()}?`)) {
       return;
     }
 
@@ -254,11 +243,11 @@ export const OrganizationPage: React.FC = () => {
 
       if (!res.ok) {
         const err = await readJsonSafe<{ error?: string; message?: string }>(res);
-        throw new Error(err?.message || err?.error || 'Role change is not yet supported on this backend.');
+        throw new Error(err?.message || err?.error || 'Role change is not supported on this server.');
       }
 
       setMembers((prev) => prev.map((m) => (m.id === userId ? { ...m, role: newRole } : m)));
-      setPageSuccess('Member role updated successfully.');
+      setPageSuccess('Member role updated.');
       setTimeout(() => setPageSuccess(null), 3000);
     } catch (err: any) {
       setPageError(err.message || 'Failed to update member role.');
@@ -269,7 +258,7 @@ export const OrganizationPage: React.FC = () => {
 
   // Handle Member Removal
   const handleRemoveMember = async (userId: number, memberName: string) => {
-    if (!window.confirm(`Are you sure you want to remove ${memberName} from the organization? This will revoke their workspace access.`)) {
+    if (!window.confirm(`Remove ${memberName} from the organization? Workspace access will be revoked.`)) {
       return;
     }
 
@@ -282,14 +271,14 @@ export const OrganizationPage: React.FC = () => {
 
       if (!res.ok) {
         const err = await readJsonSafe<{ error?: string; message?: string }>(res);
-        throw new Error(err?.message || err?.error || 'Member removal is not supported on this backend.');
+        throw new Error(err?.message || err?.error || 'Member removal is not supported on this server.');
       }
 
       setMembers((prev) => prev.filter((m) => m.id !== userId));
       setPageSuccess(`Removed ${memberName} from the organization.`);
       setTimeout(() => setPageSuccess(null), 3000);
     } catch (err: any) {
-      setPageError(err.message || 'Failed to remove team member.');
+      setPageError(err.message || 'Failed to remove member.');
     } finally {
       setActionLoadingId(null);
     }
@@ -297,7 +286,7 @@ export const OrganizationPage: React.FC = () => {
 
   // Handle Invitation Revocation
   const handleRevokeInvitation = async (invId: number, email: string) => {
-    if (!window.confirm(`Revoke pending invitation for ${email}?`)) {
+    if (!window.confirm(`Revoke invitation for ${email}?`)) {
       return;
     }
 
@@ -332,13 +321,13 @@ export const OrganizationPage: React.FC = () => {
       return;
     }
     if (!EMAIL_REGEX.test(cleanEmail)) {
-      setModalError('Please enter a valid email address (e.g., name@company.com).');
+      setModalError('Please enter a valid email address.');
       return;
     }
 
     const effectiveOrgId = org?.id || currentUser?.org_id;
     if (!effectiveOrgId) {
-      setModalError('Organization ID is missing. Please refresh the page and try again.');
+      setModalError('Organization ID is missing. Please refresh and try again.');
       return;
     }
 
@@ -359,71 +348,46 @@ export const OrganizationPage: React.FC = () => {
 
       const data = await readJsonSafe<any>(res);
       if (!res.ok || !data) {
-        throw new Error(data?.message || data?.error || 'Failed to send invitation.');
+        throw new Error(data?.message || data?.error || 'Failed to create invitation.');
       }
 
       const generatedUrl = data.invite_url || (data.invitation?.token ? buildInvitationLink(data.invitation.token) : null);
       setInviteUrl(generatedUrl);
       await fetchTeamData();
     } catch (err: any) {
-      setModalError(err.message || 'Error sending invitation.');
+      setModalError(err.message || 'Error creating invitation.');
     } finally {
       setSending(false);
     }
   };
 
-  // Standalone desktop offline warning
+  // Standalone desktop offline / server unreachable
   if (isStandaloneDesktop || (loadFailed && !org && isDesktop)) {
     return (
-      <div className="fade-in-up">
-        <div className="page-header" style={{ marginBottom: 16 }}>
-          <div>
-            <h1 className="page-title">Team &amp; Organization</h1>
-            <p className="page-subtitle">Manage members, permissions and invitations.</p>
+      <EmptyState
+        minHeight={380}
+        icon={<Icon name="desktop" size={28} />}
+        title={isStandaloneDesktop ? 'Offline Local Mode' : 'Backend Unreachable'}
+        description="Team rosters and member invitations require an active server connection."
+        action={
+          <div className="flex gap-8">
+            {!isStandaloneDesktop && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => { setLoadFailed(false); fetchTeamData(); }}
+              >
+                <Icon name="refresh" size={14} />
+                <span>Retry</span>
+              </button>
+            )}
+            <a href="#/settings" className="btn btn-primary btn-sm">
+              <Icon name="settings" size={14} />
+              <span>Server Settings</span>
+            </a>
           </div>
-        </div>
-        <div
-          className="card"
-          role="status"
-          style={{ border: '1px solid color-mix(in srgb, var(--accent-purple) 35%, transparent)', marginBottom: 16 }}
-        >
-          <div className="card-body" style={{ padding: '28px 22px', textAlign: 'center' }}>
-            <div style={{ fontSize: 34, marginBottom: 10 }}>🔌</div>
-            <div className="empty-state-title" style={{ fontSize: 17 }}>
-              {isStandaloneDesktop
-                ? 'Local Mode — Team features require the Get-Hike server'
-                : 'Server Unreachable — Team features offline'}
-            </div>
-            <div className="empty-state-desc" style={{ maxWidth: 540, margin: '10px auto 0', lineHeight: 1.5 }}>
-              Your desktop application is currently running in offline local mode. Local tracking,
-              screenshots, and analytics are saved to your local database, but organization management,
-              team member rosters, and invitations require an active server connection.
-            </div>
-            <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-              <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                Please check that your backend server is running and reachable, or configure the server URL in Settings.
-              </div>
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
-                {!isStandaloneDesktop && (
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => { setLoadFailed(false); fetchTeamData(); }}
-                  >
-                    🔄 Retry Connection
-                  </button>
-                )}
-                <a href="#/settings" className="btn btn-primary btn-sm">
-                  ⚙️ Configure Settings
-                </a>
-              </div>
-              <span className="badge badge-pending" style={{ fontSize: 11 }}>
-                Requires active server connection
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
+        }
+      />
     );
   }
 
@@ -431,12 +395,13 @@ export const OrganizationPage: React.FC = () => {
   if (authExpired && !org) {
     return (
       <EmptyState
-        minHeight={400}
+        minHeight={380}
+        icon={<Icon name="lock" size={28} />}
         title="Session Expired"
-        description="Your login session has expired or is invalid. Please sign in again to access your organization."
+        description="Your session has expired. Sign in again to access the organization."
         action={
-          <a href="#/auth" className="btn btn-primary">
-            Sign In Again
+          <a href="#/auth" className="btn btn-primary btn-sm">
+            Sign In
           </a>
         }
       />
@@ -446,32 +411,17 @@ export const OrganizationPage: React.FC = () => {
   // Member Role Forbidden (403)
   if (memberForbidden && !org) {
     return (
-      <div className="fade-in-up">
-        <div className="page-header" style={{ marginBottom: 16 }}>
-          <div>
-            <h1 className="page-title">Team &amp; Organization</h1>
-            <p className="page-subtitle">Manage members, permissions and invitations.</p>
-          </div>
-        </div>
-        <div className="card">
-          <div className="card-body" style={{ padding: '28px 22px', textAlign: 'center' }}>
-            <div style={{ fontSize: 34, marginBottom: 10 }}>🔒</div>
-            <div className="empty-state-title" style={{ fontSize: 17 }}>
-              Admin Access Required
-            </div>
-            <div className="empty-state-desc" style={{ maxWidth: 520, margin: '10px auto 0' }}>
-              Your account has the <strong>member</strong> role. Team rosters, permissions, and organization
-              settings are accessible to owners and administrators only. Your personal activity and analytics
-              remain fully accessible.
-            </div>
-            <div style={{ marginTop: 20, display: 'flex', justifyContent: 'center', gap: 12 }}>
-              <a href="#/dashboard" className="btn btn-primary btn-sm">
-                Return to Dashboard
-              </a>
-            </div>
-          </div>
-        </div>
-      </div>
+      <EmptyState
+        minHeight={380}
+        icon={<Icon name="shield" size={28} />}
+        title="Admin Access Required"
+        description="Organization settings and member management are restricted to administrators."
+        action={
+          <a href="#/dashboard" className="btn btn-secondary btn-sm">
+            Back to Dashboard
+          </a>
+        }
+      />
     );
   }
 
@@ -481,20 +431,16 @@ export const OrganizationPage: React.FC = () => {
       <div className="fade-in-up org-page">
         <div className="org-header">
           <div className="org-header-left">
-            <div className="skeleton" style={{ width: 220, height: 28, borderRadius: 6, marginBottom: 8 }} />
-            <div className="skeleton" style={{ width: 340, height: 14, borderRadius: 4 }} />
+            <div className="skeleton" style={{ width: 180, height: 26, borderRadius: 6, marginBottom: 8 }} />
+            <div className="skeleton" style={{ width: 260, height: 14, borderRadius: 4 }} />
           </div>
-          <div className="skeleton" style={{ width: 170, height: 38, borderRadius: 8 }} />
+          <div className="skeleton" style={{ width: 130, height: 34, borderRadius: 6 }} />
         </div>
-        <div className="card" style={{ padding: '24px 20px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div className="skeleton" style={{ width: 150, height: 20, borderRadius: 4 }} />
-              <div className="skeleton" style={{ width: 80, height: 16, borderRadius: 4 }} />
-            </div>
-            <div className="skeleton" style={{ width: '100%', height: 56, borderRadius: 8 }} />
-            <div className="skeleton" style={{ width: '100%', height: 56, borderRadius: 8 }} />
-            <div className="skeleton" style={{ width: '100%', height: 56, borderRadius: 8 }} />
+        <div className="card">
+          <div className="card-body" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="skeleton" style={{ width: '100%', height: 48, borderRadius: 6 }} />
+            <div className="skeleton" style={{ width: '100%', height: 48, borderRadius: 6 }} />
+            <div className="skeleton" style={{ width: '100%', height: 48, borderRadius: 6 }} />
           </div>
         </div>
       </div>
@@ -505,24 +451,23 @@ export const OrganizationPage: React.FC = () => {
   if (loadFailed && !org) {
     return (
       <EmptyState
-        minHeight={400}
-        title="Couldn't load your team"
-        description="Check your network connection or sign in again, then retry."
+        minHeight={380}
+        icon={<Icon name="refresh" size={28} />}
+        title="Failed to Load Organization"
+        description="Could not load organization data. Check your network connection and retry."
         action={
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button type="button" className="btn btn-primary" onClick={fetchTeamData}>
+          <div className="flex gap-8">
+            <button type="button" className="btn btn-primary btn-sm" onClick={fetchTeamData}>
               Retry
             </button>
-            <a href="#/dashboard" className="btn btn-secondary">
-              Back to Dashboard
+            <a href="#/dashboard" className="btn btn-secondary btn-sm">
+              Dashboard
             </a>
           </div>
         }
       />
     );
   }
-
-  const cellPad: React.CSSProperties = { padding: '8px 12px' };
 
   return (
     <div className="fade-in-up org-page">
@@ -532,17 +477,14 @@ export const OrganizationPage: React.FC = () => {
           <div className="org-title-group">
             <h1
               className="page-title"
-              style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-              title={org?.name || 'Company Organization'}
+              title={org?.name || 'Organization'}
             >
-              {org?.name || 'Company Workspace'}
+              {org?.name || 'Organization'}
             </h1>
-            <span className="badge badge-productive" style={{ flexShrink: 0 }}>
-              Active Workspace
-            </span>
+            <span className="badge badge-productive">Active</span>
           </div>
-          <p className="page-subtitle" style={{ marginTop: 4 }}>
-            Manage team members, access roles, and onboarding invitations for your organization.
+          <p className="page-subtitle">
+            Manage members, roles, and pending invitations.
           </p>
         </div>
 
@@ -555,12 +497,11 @@ export const OrganizationPage: React.FC = () => {
               setInviteUrl(null);
               setModalError(null);
             }}
-            className="btn btn-primary"
-            style={{ padding: '9px 18px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 8 }}
-            aria-label="Invite new team member"
+            className="btn btn-primary btn-sm"
+            aria-label="Invite member"
           >
-            <span style={{ fontSize: 16, lineHeight: 1 }} aria-hidden="true">+</span>
-            <span>Invite Team Member</span>
+            <Icon name="plus" size={14} />
+            <span>Invite Member</span>
           </button>
         </div>
       </div>
@@ -581,27 +522,29 @@ export const OrganizationPage: React.FC = () => {
         />
       )}
 
-      {/* Admin Usage Tracking */}
+      {/* API Usage (Admin) */}
       {!usageForbidden && orgUsage && (
-        <div className="card" style={{ border: '1px solid color-mix(in srgb, var(--accent-purple) 30%, transparent)' }}>
-          <div className="card-header">
-            <span className="card-title" style={{ color: 'var(--text-secondary)' }}>
-              ⚡ Organization API Usage <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>(Admin View)</span>
-            </span>
+        <div className="card org-usage-card">
+          <div className="card-header org-usage-header">
+            <div className="org-card-title-group">
+              <Icon name="zap" size={16} />
+              <span className="card-title">API Usage</span>
+              <span className="org-card-header-badge">Admin</span>
+            </div>
             <button
               type="button"
               onClick={handleResetUsage}
               disabled={resettingUsage}
               className="btn btn-secondary btn-sm"
-              title="Recommended after Google resets your API key quota"
-              style={{ opacity: resettingUsage ? 0.6 : undefined, cursor: resettingUsage ? 'not-allowed' : undefined, flexShrink: 0 }}
+              title="Reset usage counters after quota renewal"
             >
-              {resettingUsage ? 'Resetting…' : '🔄 Reset Usage'}
+              <Icon name="refresh" size={13} />
+              <span>{resettingUsage ? 'Resetting…' : 'Reset Counters'}</span>
             </button>
           </div>
 
           <div className="card-body">
-            <div className="stats-grid" style={{ marginBottom: orgUsage.user_breakdown && orgUsage.user_breakdown.length > 0 ? 16 : 0 }}>
+            <div className="stats-grid">
               <StatCard label="Total Requests" value={orgUsage.total_requests || 0} />
               <StatCard label="Prompt Tokens" value={(orgUsage.prompt_tokens || 0).toLocaleString()} valueClass="text-cyan" />
               <StatCard label="Candidate Tokens" value={(orgUsage.candidate_tokens || 0).toLocaleString()} valueClass="text-amber" />
@@ -609,39 +552,45 @@ export const OrganizationPage: React.FC = () => {
             </div>
 
             {orgUsage.user_breakdown && orgUsage.user_breakdown.length > 0 && (
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.7px', marginBottom: 8 }}>
-                  Member API Usage Breakdown
+              <div className="org-usage-breakdown">
+                <div className="org-usage-breakdown-title">
+                  Usage by Member
                 </div>
-                <div className="table-container" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-                  <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <div className="org-usage-table-wrap">
+                  <table className="org-usage-table">
                     <thead>
                       <tr>
-                        <th style={cellPad}>Member</th>
-                        <th style={cellPad}>Email</th>
-                        <th style={cellPad}>Role</th>
-                        <th style={cellPad}>API Requests</th>
-                        <th style={cellPad}>Prompt Tokens</th>
-                        <th style={cellPad}>Output Tokens</th>
-                        <th style={cellPad}>Total Tokens</th>
+                        <th>Member</th>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th style={{ textAlign: 'right' }}>Requests</th>
+                        <th style={{ textAlign: 'right' }}>Prompt Tokens</th>
+                        <th style={{ textAlign: 'right' }}>Candidate Tokens</th>
+                        <th style={{ textAlign: 'right' }}>Total Tokens</th>
                       </tr>
                     </thead>
                     <tbody>
                       {orgUsage.user_breakdown.map((u: any) => (
                         <tr key={u.user_id}>
-                          <td style={{ ...cellPad, fontWeight: 600, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={u.full_name}>
-                            {u.full_name}
+                          <td className="org-cell-name" title={u.full_name}>
+                            {u.full_name || '—'}
                           </td>
-                          <td className="text-muted" style={{ ...cellPad, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={u.email}>
+                          <td className="org-cell-email" title={u.email}>
                             {u.email}
                           </td>
-                          <td style={cellPad}>
+                          <td>
                             {renderRoleBadge(u.role)}
                           </td>
-                          <td style={cellPad}>{u.total_requests || 0}</td>
-                          <td className="text-muted" style={cellPad}>{(u.prompt_tokens ?? 0).toLocaleString()}</td>
-                          <td className="text-muted" style={cellPad}>{(u.candidate_tokens ?? 0).toLocaleString()}</td>
-                          <td style={{ ...cellPad, fontWeight: 700, color: 'var(--teal-text)' }}>
+                          <td className="org-cell-num" style={{ textAlign: 'right' }}>
+                            {u.total_requests || 0}
+                          </td>
+                          <td className="org-cell-num text-muted" style={{ textAlign: 'right' }}>
+                            {(u.prompt_tokens ?? 0).toLocaleString()}
+                          </td>
+                          <td className="org-cell-num text-muted" style={{ textAlign: 'right' }}>
+                            {(u.candidate_tokens ?? 0).toLocaleString()}
+                          </td>
+                          <td className="org-cell-num" style={{ textAlign: 'right', fontWeight: 700, color: 'var(--teal-text)' }}>
                             {(u.total_tokens ?? 0).toLocaleString()}
                           </td>
                         </tr>
@@ -657,26 +606,25 @@ export const OrganizationPage: React.FC = () => {
 
       {/* Team Members List */}
       <div className="card">
-        <div className="card-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span className="card-title">👥 Team Members</span>
+        <div className="card-header org-card-header">
+          <div className="org-card-title-group">
+            <Icon name="users" size={16} />
+            <span className="card-title">Members</span>
             <span className="org-card-header-badge">
-              {members.length} {members.length === 1 ? 'member' : 'members'}
+              {members.length}
             </span>
           </div>
           {invitations.length > 0 && (
-            <span
-              style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500, flexShrink: 0 }}
-            >
-              {invitations.length} {invitations.length === 1 ? 'invite pending' : 'invites pending'}
+            <span className="text-muted" style={{ fontSize: 12 }}>
+              {invitations.length} {invitations.length === 1 ? 'invitation pending' : 'invitations pending'}
             </span>
           )}
         </div>
 
         <div className="card-body" style={{ padding: 0 }}>
           {members.length === 0 ? (
-            <div style={{ padding: '24px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-              No team members found. Invite your colleagues to get started.
+            <div className="org-empty-list">
+              No members found.
             </div>
           ) : (
             members.map((u) => {
@@ -697,10 +645,10 @@ export const OrganizationPage: React.FC = () => {
                     <div className="org-member-details">
                       <div className="org-member-name-row">
                         <span className="org-member-name" title={u.full_name}>
-                          {u.full_name}
+                          {u.full_name || u.email}
                         </span>
                         {isSelf && (
-                          <span className="badge badge-cyan" style={{ fontSize: 10, padding: '2px 6px' }}>
+                          <span className="badge badge-cyan org-self-badge">
                             You
                           </span>
                         )}
@@ -718,7 +666,7 @@ export const OrganizationPage: React.FC = () => {
                       Joined {fmtDateOrDash(u.created_at)}
                     </span>
 
-                    {/* Member Actions (Promote / Demote / Remove) */}
+                    {/* Member Actions */}
                     {!isOwner && !isSelf && (
                       <div className="org-member-btn-group">
                         {u.role === 'member' ? (
@@ -727,10 +675,11 @@ export const OrganizationPage: React.FC = () => {
                             disabled={isLoading}
                             onClick={() => handleUpdateRole(u.id, u.role, 'admin')}
                             className="btn btn-secondary btn-sm"
-                            title="Promote to organization administrator"
+                            title="Promote to administrator"
                             aria-label={`Promote ${u.full_name} to administrator`}
                           >
-                            {isLoading ? 'Updating…' : '🛡️ Make Admin'}
+                            <Icon name="shield" size={13} />
+                            <span>{isLoading ? 'Updating…' : 'Make Admin'}</span>
                           </button>
                         ) : (
                           <button
@@ -738,10 +687,11 @@ export const OrganizationPage: React.FC = () => {
                             disabled={isLoading}
                             onClick={() => handleUpdateRole(u.id, u.role, 'member')}
                             className="btn btn-secondary btn-sm"
-                            title="Demote to regular member"
+                            title="Demote to member"
                             aria-label={`Demote ${u.full_name} to member`}
                           >
-                            {isLoading ? 'Updating…' : '👤 Demote'}
+                            <Icon name="user" size={13} />
+                            <span>{isLoading ? 'Updating…' : 'Demote'}</span>
                           </button>
                         )}
                         <button
@@ -752,7 +702,8 @@ export const OrganizationPage: React.FC = () => {
                           title="Remove user from organization"
                           aria-label={`Remove ${u.full_name} from organization`}
                         >
-                          {isLoading ? 'Removing…' : '✕ Remove'}
+                          <Icon name="trash" size={13} />
+                          <span>{isLoading ? 'Removing…' : 'Remove'}</span>
                         </button>
                       </div>
                     )}
@@ -766,9 +717,10 @@ export const OrganizationPage: React.FC = () => {
         {/* Pending Invitations Section */}
         {invitations.length > 0 && (
           <>
-            <div className="card-header" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span className="card-title">📨 Pending Invitations</span>
+            <div className="card-header org-card-header" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+              <div className="org-card-title-group">
+                <Icon name="mail" size={16} />
+                <span className="card-title">Pending Invitations</span>
                 <span className="org-card-header-badge">
                   {invitations.length}
                 </span>
@@ -784,7 +736,7 @@ export const OrganizationPage: React.FC = () => {
                   <div key={inv.id} className="org-member-row">
                     <div className="org-member-primary">
                       <div className="org-avatar invite" aria-hidden="true">
-                        ✉️
+                        <Icon name="mail" size={16} />
                       </div>
                       <div className="org-member-details">
                         <span className="org-member-name" title={inv.email}>
@@ -797,38 +749,31 @@ export const OrganizationPage: React.FC = () => {
                     </div>
 
                     <div className="org-member-meta-actions">
-                      <span className="badge badge-amber" style={{ flexShrink: 0 }}>
-                        PENDING
+                      <span className="badge badge-amber">
+                        Pending
                       </span>
-                      {inv.role === 'admin' ? (
-                        <span className="badge badge-role-admin" style={{ flexShrink: 0 }}>
-                          🛡️ ADMIN
-                        </span>
-                      ) : (
-                        <span className="badge badge-role-member" style={{ flexShrink: 0 }}>
-                          MEMBER
-                        </span>
-                      )}
+                      {renderRoleBadge(inv.role)}
+
                       <div className="org-member-btn-group">
                         <button
                           type="button"
                           onClick={() => copyToClipboard(inviteLink, inv.token)}
                           className={`btn btn-secondary btn-sm btn-copy-feedback ${isCopied ? 'copied' : ''}`}
-                          style={{ flexShrink: 0 }}
                           aria-label={isCopied ? 'Invitation link copied' : `Copy invitation link for ${inv.email}`}
                         >
-                          {isCopied ? '✓ Copied!' : '📋 Copy Link'}
+                          <Icon name={isCopied ? 'check' : 'copy'} size={13} />
+                          <span>{isCopied ? 'Copied' : 'Copy Link'}</span>
                         </button>
                         <button
                           type="button"
                           disabled={isLoading}
                           onClick={() => handleRevokeInvitation(inv.id, inv.email)}
                           className="btn btn-danger btn-sm"
-                          style={{ flexShrink: 0 }}
-                          title="Cancel this pending invitation"
+                          title="Revoke invitation"
                           aria-label={`Revoke invitation for ${inv.email}`}
                         >
-                          {isLoading ? 'Revoking…' : 'Revoke'}
+                          <Icon name="trash" size={13} />
+                          <span>{isLoading ? 'Revoking…' : 'Revoke'}</span>
                         </button>
                       </div>
                     </div>
@@ -849,8 +794,8 @@ export const OrganizationPage: React.FC = () => {
             setModalError(null);
           }
         }}
-        title="Invite Team Member"
-        description="Send an onboarding invitation link to add a colleague to your workspace."
+        title="Invite Member"
+        description="Generate an invitation link to add a colleague to this workspace."
       >
         {modalError && (
           <Alert
@@ -864,35 +809,34 @@ export const OrganizationPage: React.FC = () => {
           <div className="flex flex-col gap-16">
             <Alert
               type="success"
-              message="Invitation created successfully! Share the direct onboarding link below with your team member."
+              message="Invitation created. Share the link below to let your colleague join."
             />
             <div className="form-group">
-              <label className="form-label" htmlFor="direct-invite-link">Direct Onboarding Link</label>
-              <div className="flex gap-8">
+              <label className="form-label" htmlFor="direct-invite-link">Invite Link</label>
+              <div className="org-link-input-row">
                 <input
                   id="direct-invite-link"
                   type="text"
                   readOnly
                   value={inviteUrl}
-                  className="form-input"
+                  className="form-input org-mono-input"
                   title="Click to select entire link"
                   onFocus={(e) => e.target.select()}
-                  style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: 12, minWidth: 0 }}
                 />
                 <button
                   type="button"
                   onClick={() => copyToClipboard(inviteUrl, 'modal')}
                   className={`btn btn-primary btn-sm btn-copy-feedback ${copiedToken === 'modal' ? 'copied' : ''}`}
-                  style={{ whiteSpace: 'nowrap', minWidth: 95 }}
                 >
-                  {copiedToken === 'modal' ? '✓ Copied!' : 'Copy Link'}
+                  <Icon name={copiedToken === 'modal' ? 'check' : 'copy'} size={14} />
+                  <span>{copiedToken === 'modal' ? 'Copied' : 'Copy Link'}</span>
                 </button>
               </div>
-              <span style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 4, display: 'block' }}>
-                This single-use onboarding link allows your colleague to set up their account and join.
+              <span className="text-muted" style={{ fontSize: 11.5, marginTop: 4, display: 'block' }}>
+                Single-use onboarding link.
               </span>
             </div>
-            <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+            <div className="org-modal-footer-actions">
               <button
                 type="button"
                 onClick={() => {
@@ -901,9 +845,8 @@ export const OrganizationPage: React.FC = () => {
                   setModalError(null);
                 }}
                 className="btn btn-secondary"
-                style={{ flex: 1 }}
               >
-                Invite Another Member
+                Invite Another
               </button>
               <button
                 type="button"
@@ -913,7 +856,6 @@ export const OrganizationPage: React.FC = () => {
                   setInviteEmail('');
                 }}
                 className="btn btn-primary"
-                style={{ flex: 1 }}
               >
                 Done
               </button>
@@ -922,7 +864,7 @@ export const OrganizationPage: React.FC = () => {
         ) : (
           <form onSubmit={handleSendInvite}>
             <div className="form-group">
-              <label className="form-label" htmlFor="invite-email-input">Work Email Address</label>
+              <label className="form-label" htmlFor="invite-email-input">Email Address</label>
               <input
                 id="invite-email-input"
                 type="email"
@@ -934,13 +876,13 @@ export const OrganizationPage: React.FC = () => {
                 onChange={(e) => setInviteEmail(e.target.value)}
                 className="form-input"
               />
-              <span style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 4, display: 'block' }}>
-                The recipient must use this email address when accepting the invitation.
+              <span className="text-muted" style={{ fontSize: 11.5, marginTop: 4, display: 'block' }}>
+                The recipient will sign up or sign in using this email address.
               </span>
             </div>
 
             <div className="form-group" style={{ marginBottom: 20 }}>
-              <label className="form-label">Role &amp; Permissions</label>
+              <label className="form-label">Role</label>
               <div
                 role="radiogroup"
                 aria-label="Select member role"
@@ -949,15 +891,15 @@ export const OrganizationPage: React.FC = () => {
                 {[
                   {
                     id: 'member' as const,
-                    icon: '👤',
+                    icon: 'user' as const,
                     title: 'Member',
-                    desc: 'Standard workspace access to track activity and view personal metrics.',
+                    desc: 'Record activity and view personal metrics.',
                   },
                   {
                     id: 'admin' as const,
-                    icon: '🛡️',
+                    icon: 'shield' as const,
                     title: 'Admin',
-                    desc: 'Full workspace management: invite team members, adjust roles, and review usage.',
+                    desc: 'Invite members, adjust roles, and review usage.',
                   },
                 ].map((r) => {
                   const isSelected = inviteRole === r.id;
@@ -973,7 +915,7 @@ export const OrganizationPage: React.FC = () => {
                     >
                       <div className="role-picker-header">
                         <span className="role-picker-title">
-                          <span>{r.icon}</span>
+                          <Icon name={r.icon} size={15} />
                           <span>{r.title}</span>
                         </span>
                         <span className="role-picker-radio" aria-hidden="true" />
@@ -985,7 +927,7 @@ export const OrganizationPage: React.FC = () => {
               </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, paddingTop: 14, borderTop: '1px solid var(--border-subtle)' }}>
+            <div className="org-modal-actions">
               <button
                 type="button"
                 disabled={sending}
@@ -999,16 +941,19 @@ export const OrganizationPage: React.FC = () => {
                 disabled={sending}
                 className="btn btn-primary"
                 style={{
-                  opacity: sending ? 0.7 : undefined,
-                  cursor: sending ? 'not-allowed' : undefined,
-                  minWidth: 130,
+                  minWidth: 120,
                   display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: 8,
+                  gap: 6,
                 }}
               >
-                {sending ? 'Sending…' : 'Send Invitation'}
+                {sending ? 'Sending…' : (
+                  <>
+                    <Icon name="mail" size={14} />
+                    <span>Send Invite</span>
+                  </>
+                )}
               </button>
             </div>
           </form>

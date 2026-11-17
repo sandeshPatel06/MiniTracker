@@ -789,27 +789,39 @@ html, body, #root {
   border: 1px solid color-mix(in srgb, var(--accent-purple) 28%, transparent);
 }
 
+.badge-role-owner,
+.badge-role-admin,
+.badge-role-member {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-radius: var(--radius-sm);
+  line-height: 1.4;
+  white-space: nowrap;
+  user-select: none;
+}
+
 .badge-role-owner {
   background: color-mix(in srgb, var(--accent-purple) 16%, transparent);
   color: var(--purple-text);
   border: 1px solid color-mix(in srgb, var(--accent-purple) 32%, transparent);
-  font-weight: 700;
-  letter-spacing: 0.3px;
 }
 
 .badge-role-admin {
   background: color-mix(in srgb, var(--accent-teal) 16%, transparent);
   color: var(--teal-text);
   border: 1px solid color-mix(in srgb, var(--accent-teal) 32%, transparent);
-  font-weight: 700;
-  letter-spacing: 0.3px;
 }
 
 .badge-role-member {
   background: color-mix(in srgb, var(--text-muted) 12%, transparent);
   color: var(--text-secondary);
   border: 1px solid var(--border-medium);
-  font-weight: 600;
 }
 
 /* ============================================================
@@ -5837,7 +5849,7 @@ img.app-icon {
 .org-page {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
 }
 
 .org-header {
@@ -5846,7 +5858,7 @@ img.app-icon {
   align-items: flex-start;
   flex-wrap: wrap;
   gap: 16px;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .org-header-left {
@@ -5861,6 +5873,10 @@ img.app-icon {
   flex-wrap: wrap;
 }
 
+.org-title-group .page-title {
+  margin: 0;
+}
+
 .org-header-actions {
   display: flex;
   align-items: center;
@@ -5869,14 +5885,29 @@ img.app-icon {
   flex-shrink: 0;
 }
 
+.org-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.org-card-title-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .org-card-header-badge {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--text-muted);
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
-  padding: 3px 9px;
+  padding: 2px 8px;
   border-radius: 99px;
+  letter-spacing: 0.2px;
 }
 
 .org-member-row {
@@ -5884,9 +5915,10 @@ img.app-icon {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 20px;
+  padding: 12px 20px;
   border-bottom: 1px solid var(--border-subtle);
   transition: background var(--transition);
+  min-height: 56px;
 }
 
 .org-member-row:last-child {
@@ -5906,13 +5938,13 @@ img.app-icon {
 }
 
 .org-avatar {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 700;
   flex-shrink: 0;
   text-transform: uppercase;
@@ -5951,7 +5983,7 @@ img.app-icon {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
 .org-member-name-row {
@@ -5962,7 +5994,7 @@ img.app-icon {
 }
 
 .org-member-name {
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--text-primary);
   overflow: hidden;
@@ -5971,11 +6003,20 @@ img.app-icon {
 }
 
 .org-member-email {
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.org-self-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 99px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
 }
 
 .org-member-meta-actions {
@@ -5999,6 +6040,114 @@ img.app-icon {
   gap: 6px;
 }
 
+.org-member-btn-group .btn-sm {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* API Usage Breakdown */
+.org-usage-card {
+  border: 1px solid color-mix(in srgb, var(--accent-purple) 25%, var(--border-medium));
+}
+
+.org-usage-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.org-usage-breakdown {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.org-usage-breakdown-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+}
+
+.org-usage-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.org-usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.org-usage-table th {
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.org-usage-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+.org-usage-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.org-usage-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--bg-card-hover) 50%, transparent);
+}
+
+.org-usage-table .org-cell-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.org-usage-table .org-cell-email {
+  color: var(--text-muted);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.org-usage-table .org-cell-num {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+}
+
+.org-empty-list {
+  padding: 24px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 /* Role Selector Radio Cards in Invite Modal */
 .role-picker-grid {
   display: grid;
@@ -6012,13 +6161,13 @@ img.app-icon {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  padding: 12px 14px;
+  padding: 11px 13px;
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
   border: 1px solid var(--border-medium);
   cursor: pointer;
   text-align: left;
-  transition: all var(--transition);
+  transition: border-color var(--transition), background-color var(--transition);
   outline: none;
   user-select: none;
 }
@@ -6026,7 +6175,6 @@ img.app-icon {
 .role-picker-card:hover:not(:disabled) {
   border-color: var(--accent-primary);
   background: var(--bg-card-hover);
-  transform: translateY(-1px);
 }
 
 .role-picker-card:focus-visible {
@@ -6055,9 +6203,9 @@ img.app-icon {
 
 .role-picker-title {
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-primary);
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
 }
@@ -6093,11 +6241,46 @@ img.app-icon {
   line-height: 1.35;
 }
 
+.org-link-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.org-mono-input {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.org-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.org-modal-footer-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.org-modal-footer-actions > * {
+  flex: 1;
+}
+
 /* Copy Link Feedback */
 .btn-copy-feedback {
   transition: all var(--transition);
-  min-width: 105px;
+  min-width: 100px;
   font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
 }
 
 .btn-copy-feedback.copied {
@@ -6180,7 +6363,7 @@ img.app-icon {
     flex-direction: column;
     align-items: flex-start;
     padding: 12px 16px;
-    gap: 12px;
+    gap: 10px;
   }
 
   .org-member-primary {
@@ -6204,6 +6387,19 @@ img.app-icon {
 
   .role-picker-grid {
     grid-template-columns: 1fr;
+  }
+
+  .org-modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .org-modal-actions .btn {
+    width: 100%;
+  }
+
+  .org-link-input-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .accept-invite-card {

@@ -2207,17 +2207,46 @@ func isLoopbackOrigin(origin string) bool {
 	return strings.Contains(origin, "://localhost") || strings.Contains(origin, "://127.") || strings.Contains(origin, "://[::1]")
 }
 
+func isAllowedOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	// Allow localhost / loopback ports
+	if isLoopbackOrigin(origin) {
+		return true
+	}
+	// Allow Cloudflare Pages and custom frontend domains
+	lower := strings.ToLower(origin)
+	if strings.HasSuffix(lower, ".pages.dev") ||
+		strings.Contains(lower, "minitracker.pages.dev") ||
+		strings.Contains(lower, "get-hike.pages.dev") {
+		return true
+	}
+	// Allow frontend URL configured via env var if set
+	if frontendURL := strings.TrimSpace(os.Getenv("FRONTEND_URL")); frontendURL != "" {
+		if strings.EqualFold(strings.TrimRight(frontendURL, "/"), strings.TrimRight(origin, "/")) {
+			return true
+		}
+	}
+	return false
+}
+
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" && isLoopbackOrigin(origin) {
+		if origin != "" && isAllowedOrigin(origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Vary", "Origin")
+		} else if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Vary", "Origin")
 		} else {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept, Origin")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
 			return

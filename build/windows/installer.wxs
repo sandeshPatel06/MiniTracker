@@ -1,12 +1,12 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="get-Hike"
-           Manufacturer="REAK INFOTECH"
+           Manufacturer="MiniTracker"
            Version="$(var.Version)"
            UpgradeCode="4a14f44c-cb16-4d57-9d62-793db5f86c8d"
            Scope="perMachine">
 
     <SummaryInformation Description="get-Hike Desktop Work Tracker"
-                        Manufacturer="REAK INFOTECH" />
+                        Manufacturer="MiniTracker" />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of get-Hike is already installed." />
 
@@ -51,7 +51,7 @@
                       Directory="ApplicationProgramsFolder"
                       On="uninstall" />
         <RegistryValue Root="HKLM"
-                       Key="Software\REAK INFOTECH\get-Hike"
+                       Key="Software\MiniTracker\get-Hike"
                        Name="Installed"
                        Type="integer"
                        Value="1" />

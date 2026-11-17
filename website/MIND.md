@@ -32,4 +32,4 @@ Persistent notes of decisions, state and pitfalls. Read this first when resuming
 
 ## Open threads (ideas, not commitments)
 - Optional testimonials/carousel section if user provides quotes (pattern already researched).
-- `get-hike.reakinfotech.com` custom domain: DNS still NXDOMAIN — only worth revisiting if user configures DNS.
+- `minitracker.pages.dev` production domain configured on Cloudflare.

@@ -192,7 +192,7 @@ Configuration file `~/.config/get-hike/config.json` example:
 
 ## 📜 License
 
-This project is **open source** and released under the [MIT License](LICENSE) © 2026 REAK INFOTECH LLP.
+This project is **open source** and released under the [MIT License](LICENSE) © 2026 MiniTracker Project.
 
 You are free to use get-Hike for **personal use** (and any other purpose): run it, modify it, self-host it and share it. See the [LICENSE](LICENSE) file for the full text.
 

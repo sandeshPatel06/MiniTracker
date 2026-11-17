@@ -16,7 +16,7 @@
     "time-tracker",
     "gemini-ai"
   ],
-  "author": "REAK INFOTECH LLP",
+  "author": "MiniTracker Project",
   "license": "MIT",
   "dependencies": {
     "@astrojs/sitemap": "^3.7.4",

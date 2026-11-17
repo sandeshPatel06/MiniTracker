@@ -1,6 +1,6 @@
 # get-Hike Marketing Website
 
-This directory contains the production marketing website for **get-Hike**, an open-source, privacy-first Linux productivity tracker with optional Gemini AI analysis and optional team features (MIT License, © REAK INFOTECH LLP).
+This directory contains the production marketing website for **get-Hike**, an open-source, privacy-first Linux productivity tracker with optional Gemini AI analysis and optional team features (MIT License, © MiniTracker Project).
 
 Built with **Astro 5**, **TypeScript**, and **Tailwind CSS**.
 

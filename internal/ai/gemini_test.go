@@ -46,3 +46,41 @@ func TestBuildGeminiRequest(t *testing.T) {
 		t.Fatalf("invalid request contents structure")
 	}
 }
+
+func TestRedactAPIKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "query param key at start",
+			input:    "https://generativelanguage.googleapis.com/v1beta/models?key=AIzaSyD-abc1234XYZ",
+			expected: "https://generativelanguage.googleapis.com/v1beta/models?key=REDACTED",
+		},
+		{
+			name:     "query param key in middle",
+			input:    "https://example.com/api?foo=bar&key=secret123&baz=qux",
+			expected: "https://example.com/api?foo=bar&key=REDACTED&baz=qux",
+		},
+		{
+			name:     "x-goog-api-key header format",
+			input:    `Request failed: x-goog-api-key: "AIzaSyD_XYZ987" with 403 Forbidden`,
+			expected: `Request failed: x-goog-api-key: "REDACTED" with 403 Forbidden`,
+		},
+		{
+			name:     "no key present",
+			input:    "connection refused: 127.0.0.1:8080",
+			expected: "connection refused: 127.0.0.1:8080",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := redactAPIKey(tt.input)
+			if got != tt.expected {
+				t.Errorf("redactAPIKey(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}

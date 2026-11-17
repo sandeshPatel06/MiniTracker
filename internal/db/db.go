@@ -107,7 +107,19 @@ type User struct {
 	FullName             string    `json:"full_name"`
 	Role                 string    `json:"role"`
 	PersonalGeminiAPIKey string    `json:"personal_gemini_api_key,omitempty"`
+	IsVerified           bool      `json:"is_verified"`
 	CreatedAt            time.Time `json:"created_at"`
+}
+
+// EmailVerification stores pending registration OTP verification and payload data.
+type EmailVerification struct {
+	ID        int64     `json:"id"`
+	Email     string    `json:"email"`
+	OTPHash   string    `json:"-"`
+	Payload   string    `json:"payload"`
+	Attempts  int       `json:"attempts"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Invitation represents an email invite to join an organization.
@@ -285,6 +297,7 @@ func (db *DB) migrate() error {
 		"ALTER TABLE organizations ADD COLUMN gemini_api_key TEXT DEFAULT ''",
 		"ALTER TABLE organizations ADD COLUMN gemini_model TEXT DEFAULT ''",
 		"ALTER TABLE users ADD COLUMN personal_gemini_api_key TEXT DEFAULT ''",
+		"ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT TRUE",
 		"ALTER TABLE logs ADD COLUMN sync_status TEXT DEFAULT 'pending_upload'",
 		"ALTER TABLE logs ADD COLUMN remote_id INTEGER DEFAULT 0",
 		"ALTER TABLE logs ADD COLUMN synced_at DATETIME",
@@ -307,6 +320,7 @@ func (db *DB) migrate() error {
 			"ALTER TABLE organizations ADD COLUMN IF NOT EXISTS gemini_api_key TEXT DEFAULT ''",
 			"ALTER TABLE organizations ADD COLUMN IF NOT EXISTS gemini_model TEXT DEFAULT ''",
 			"ALTER TABLE users ADD COLUMN IF NOT EXISTS personal_gemini_api_key TEXT DEFAULT ''",
+			"ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT TRUE",
 			"ALTER TABLE logs ADD COLUMN IF NOT EXISTS sync_status TEXT DEFAULT 'pending_upload'",
 			"ALTER TABLE logs ADD COLUMN IF NOT EXISTS remote_id INTEGER DEFAULT 0",
 			"ALTER TABLE logs ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ",
@@ -342,8 +356,19 @@ func (db *DB) migrate() error {
 			full_name               TEXT NOT NULL,
 			role                    TEXT CHECK(role IN ('owner', 'admin', 'member')) DEFAULT 'member',
 			personal_gemini_api_key TEXT DEFAULT '',
+			is_verified             BOOLEAN DEFAULT TRUE,
 			created_at              TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 		);`,
+		`CREATE TABLE IF NOT EXISTS email_verifications (
+			id          SERIAL PRIMARY KEY,
+			email       TEXT NOT NULL UNIQUE,
+			otp_hash    TEXT NOT NULL,
+			payload     TEXT DEFAULT '',
+			attempts    INTEGER DEFAULT 0,
+			expires_at  TIMESTAMPTZ NOT NULL,
+			created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+		);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_email_verifications_email ON email_verifications(email);`,
 		`CREATE TABLE IF NOT EXISTS invitations (
 			id          SERIAL PRIMARY KEY,
 			org_id      INTEGER NOT NULL REFERENCES organizations(id),
@@ -444,9 +469,20 @@ func (db *DB) migrate() error {
 				full_name               TEXT NOT NULL,
 				role                    TEXT CHECK(role IN ('owner', 'admin', 'member')) DEFAULT 'member',
 				personal_gemini_api_key TEXT DEFAULT '',
+				is_verified             INTEGER DEFAULT 1,
 				created_at              DATETIME DEFAULT CURRENT_TIMESTAMP,
 				FOREIGN KEY(org_id) REFERENCES organizations(id)
 			);`,
+			`CREATE TABLE IF NOT EXISTS email_verifications (
+				id          INTEGER PRIMARY KEY AUTOINCREMENT,
+				email       TEXT NOT NULL UNIQUE,
+				otp_hash    TEXT NOT NULL,
+				payload     TEXT DEFAULT '',
+				attempts    INTEGER DEFAULT 0,
+				expires_at  DATETIME NOT NULL,
+				created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+			);`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_email_verifications_email ON email_verifications(email);`,
 			`CREATE TABLE IF NOT EXISTS invitations (
 				id          INTEGER PRIMARY KEY AUTOINCREMENT,
 				org_id      INTEGER NOT NULL,
@@ -552,6 +588,7 @@ func (db *DB) migrate() error {
 	}
 
 	if db.dialect == dialect.SQLite {
+		safeAddColumn("users", "is_verified", "INTEGER DEFAULT 1")
 		safeAddColumn("logs", "total_clicks", "INTEGER DEFAULT 0")
 		safeAddColumn("logs", "mouse_distance", "REAL DEFAULT 0")
 		safeAddColumn("logs", "ai_retry_count", "INTEGER DEFAULT 0")
@@ -695,7 +732,7 @@ func (db *DB) GetOrganizationBySlug(slug string) (*Organization, error) {
 
 // CreateUser creates a team member account using Ent SQL Builder.
 func (db *DB) CreateUser(orgID int64, email, passwordHash, fullName, role string) (*User, error) {
-	builder := entsql.Dialect(db.dialect).Insert("users").Columns("org_id", "email", "password_hash", "full_name", "role").Values(orgID, email, passwordHash, fullName, role)
+	builder := entsql.Dialect(db.dialect).Insert("users").Columns("org_id", "email", "password_hash", "full_name", "role", "is_verified").Values(orgID, email, passwordHash, fullName, role, true)
 	if db.dialect == dialect.Postgres {
 		builder.Returning("id")
 		query, args := builder.Query()
@@ -703,7 +740,7 @@ func (db *DB) CreateUser(orgID int64, email, passwordHash, fullName, role string
 		if err := db.rawDB.QueryRow(query, args...).Scan(&id); err != nil {
 			return nil, fmt.Errorf("create user: %w", err)
 		}
-		return &User{ID: id, OrgID: orgID, Email: email, PasswordHash: passwordHash, FullName: fullName, Role: role, CreatedAt: time.Now()}, nil
+		return &User{ID: id, OrgID: orgID, Email: email, PasswordHash: passwordHash, FullName: fullName, Role: role, IsVerified: true, CreatedAt: time.Now()}, nil
 	}
 
 	query, args := builder.Query()
@@ -712,33 +749,62 @@ func (db *DB) CreateUser(orgID int64, email, passwordHash, fullName, role string
 		return nil, fmt.Errorf("create user: %w", err)
 	}
 	id, _ := res.LastInsertId()
-	return &User{ID: id, OrgID: orgID, Email: email, PasswordHash: passwordHash, FullName: fullName, Role: role, CreatedAt: time.Now()}, nil
+	return &User{ID: id, OrgID: orgID, Email: email, PasswordHash: passwordHash, FullName: fullName, Role: role, IsVerified: true, CreatedAt: time.Now()}, nil
 }
 
 // GetUserByEmail finds a user by email using Ent SQL Builder.
 func (db *DB) GetUserByEmail(email string) (*User, error) {
-	builder := entsql.Dialect(db.dialect).Select("id", "org_id", "email", "password_hash", "full_name", "role", "created_at").From(entsql.Table("users")).Where(entsql.EQ("email", email))
+	builder := entsql.Dialect(db.dialect).Select("id", "org_id", "email", "password_hash", "full_name", "role", "is_verified", "created_at").From(entsql.Table("users")).Where(entsql.EQ("email", email))
 	query, args := builder.Query()
 	var u User
 	var ts interface{}
-	if err := db.rawDB.QueryRow(query, args...).Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role, &ts); err != nil {
+	var isVerified interface{}
+	if err := db.rawDB.QueryRow(query, args...).Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role, &isVerified, &ts); err != nil {
 		return nil, err
 	}
+	u.IsVerified = parseFlexibleBool(isVerified)
 	u.CreatedAt = parseFlexibleTime(ts)
 	return &u, nil
 }
 
 // GetUserByID finds a user by ID using Ent SQL Builder.
 func (db *DB) GetUserByID(id int64) (*User, error) {
-	builder := entsql.Dialect(db.dialect).Select("id", "org_id", "email", "password_hash", "full_name", "role", "created_at").From(entsql.Table("users")).Where(entsql.EQ("id", id))
+	builder := entsql.Dialect(db.dialect).Select("id", "org_id", "email", "password_hash", "full_name", "role", "is_verified", "created_at").From(entsql.Table("users")).Where(entsql.EQ("id", id))
 	query, args := builder.Query()
 	var u User
 	var ts interface{}
-	if err := db.rawDB.QueryRow(query, args...).Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role, &ts); err != nil {
+	var isVerified interface{}
+	if err := db.rawDB.QueryRow(query, args...).Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role, &isVerified, &ts); err != nil {
 		return nil, err
 	}
+	u.IsVerified = parseFlexibleBool(isVerified)
 	u.CreatedAt = parseFlexibleTime(ts)
 	return &u, nil
+}
+
+// parseFlexibleBool handles boolean values scanned from Postgres (bool) or SQLite (int64/bool/int).
+func parseFlexibleBool(val interface{}) bool {
+	if val == nil {
+		return false
+	}
+	switch v := val.(type) {
+	case bool:
+		return v
+	case int64:
+		return v != 0
+	case int:
+		return v != 0
+	case int32:
+		return v != 0
+	case []byte:
+		s := strings.ToLower(strings.TrimSpace(string(v)))
+		return s == "1" || s == "true" || s == "t"
+	case string:
+		s := strings.ToLower(strings.TrimSpace(v))
+		return s == "1" || s == "true" || s == "t"
+	default:
+		return false
+	}
 }
 
 // UpdateUserRole updates a user's role within an organization.
@@ -841,30 +907,216 @@ func (db *DB) GetInvitationByToken(token string) (*Invitation, error) {
 	return &inv, nil
 }
 
-// AcceptInvitation completes invitation onboarding and creates the user.
+// AcceptInvitation completes invitation onboarding and creates the user within a transaction.
 func (db *DB) AcceptInvitation(token, fullName, passwordHash string) (*User, error) {
-	inv, err := db.GetInvitationByToken(token)
+	tx, err := db.rawDB.Begin()
 	if err != nil {
+		return nil, fmt.Errorf("begin accept invitation tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 1. Fetch invitation record
+	invQ := entsql.Dialect(db.dialect).Select("id", "org_id", "email", "role", "token", "status", "expires_at", "created_at").
+		From(entsql.Table("invitations")).
+		Where(entsql.EQ("token", token))
+	query, args := invQ.Query()
+
+	var inv Invitation
+	var expTs, crTs interface{}
+	if err := tx.QueryRow(query, args...).Scan(&inv.ID, &inv.OrgID, &inv.Email, &inv.Role, &inv.Token, &inv.Status, &expTs, &crTs); err != nil {
 		return nil, fmt.Errorf("invalid token: %w", err)
 	}
+	inv.ExpiresAt = parseFlexibleTime(expTs)
+	inv.CreatedAt = parseFlexibleTime(crTs)
+
 	if inv.Status != "pending" {
 		return nil, fmt.Errorf("invitation is %s", inv.Status)
 	}
-
-	user, err := db.CreateUser(inv.OrgID, inv.Email, passwordHash, fullName, inv.Role)
-	if err != nil {
-		return nil, err
+	if time.Now().After(inv.ExpiresAt) {
+		// Mark expired in tx and return error
+		upExp := entsql.Dialect(db.dialect).Update("invitations").Set("status", "expired").Where(entsql.EQ("id", inv.ID))
+		eq, ea := upExp.Query()
+		_, _ = tx.Exec(eq, ea...)
+		_ = tx.Commit()
+		return nil, fmt.Errorf("invitation is expired")
 	}
 
+	// 2. Insert User within transaction
+	userBuilder := entsql.Dialect(db.dialect).Insert("users").
+		Columns("org_id", "email", "password_hash", "full_name", "role", "is_verified").
+		Values(inv.OrgID, inv.Email, passwordHash, fullName, inv.Role, true)
+
+	var userID int64
+	if db.dialect == dialect.Postgres {
+		userBuilder.Returning("id")
+		uQuery, uArgs := userBuilder.Query()
+		if err := tx.QueryRow(uQuery, uArgs...).Scan(&userID); err != nil {
+			return nil, fmt.Errorf("create user: %w", err)
+		}
+	} else {
+		uQuery, uArgs := userBuilder.Query()
+		res, err := tx.Exec(uQuery, uArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("create user: %w", err)
+		}
+		userID, _ = res.LastInsertId()
+	}
+
+	// 3. Mark invitation as accepted
 	upQ := entsql.Dialect(db.dialect).Update("invitations").Set("status", "accepted").Where(entsql.EQ("id", inv.ID))
-	uQuery, uArgs := upQ.Query()
-	_, _ = db.rawDB.Exec(uQuery, uArgs...)
-	return user, nil
+	upQuery, upArgs := upQ.Query()
+	if _, err := tx.Exec(upQuery, upArgs...); err != nil {
+		return nil, fmt.Errorf("update invitation status: %w", err)
+	}
+
+	// 4. Clean pending email_verifications for this email if any exist
+	delVerif := entsql.Dialect(db.dialect).Delete("email_verifications").Where(entsql.EQ("email", strings.ToLower(strings.TrimSpace(inv.Email))))
+	dvQuery, dvArgs := delVerif.Query()
+	_, _ = tx.Exec(dvQuery, dvArgs...)
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit accept invitation tx: %w", err)
+	}
+
+	return &User{
+		ID:           userID,
+		OrgID:        inv.OrgID,
+		Email:        inv.Email,
+		PasswordHash: passwordHash,
+		FullName:     fullName,
+		Role:         inv.Role,
+		IsVerified:   true,
+		CreatedAt:    time.Now(),
+	}, nil
+}
+
+// -------------------------------------------------------------
+// Email Verification Persistence Methods
+// -------------------------------------------------------------
+
+// StoreEmailVerification stores or updates an email verification challenge.
+// Alias for SaveEmailVerification.
+func (db *DB) StoreEmailVerification(email, otpHash, payloadJSON string, expiresAt time.Time) error {
+	return db.SaveEmailVerification(email, otpHash, payloadJSON, expiresAt)
+}
+
+// SaveEmailVerification stores or updates an email verification challenge.
+// If a record already exists for the email, it resets attempts and updates the otp_hash, payload, and expires_at.
+func (db *DB) SaveEmailVerification(email, otpHash, payloadJSON string, expiresAt time.Time) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return errors.New("email cannot be empty")
+	}
+	if otpHash == "" {
+		return errors.New("otp hash cannot be empty")
+	}
+	if expiresAt.IsZero() {
+		return errors.New("expires_at cannot be zero")
+	}
+
+	expStr := expiresAt.UTC().Format(time.RFC3339)
+	nowStr := time.Now().UTC().Format(time.RFC3339)
+
+	if db.dialect == dialect.Postgres {
+		query := `INSERT INTO email_verifications (email, otp_hash, payload, attempts, expires_at, created_at)
+			VALUES ($1, $2, $3, 0, $4, $5)
+			ON CONFLICT (email) DO UPDATE SET
+				otp_hash = EXCLUDED.otp_hash,
+				payload = EXCLUDED.payload,
+				attempts = 0,
+				expires_at = EXCLUDED.expires_at,
+				created_at = EXCLUDED.created_at`
+		_, err := db.rawDB.Exec(query, email, otpHash, payloadJSON, expiresAt.UTC(), time.Now().UTC())
+		if err != nil {
+			return fmt.Errorf("save email verification pg: %w", err)
+		}
+		return nil
+	}
+
+	// SQLite dialect
+	query := `INSERT INTO email_verifications (email, otp_hash, payload, attempts, expires_at, created_at)
+		VALUES (?, ?, ?, 0, ?, ?)
+		ON CONFLICT(email) DO UPDATE SET
+			otp_hash = excluded.otp_hash,
+			payload = excluded.payload,
+			attempts = 0,
+			expires_at = excluded.expires_at,
+			created_at = excluded.created_at`
+	_, err := db.rawDB.Exec(query, email, otpHash, payloadJSON, expStr, nowStr)
+	if err != nil {
+		return fmt.Errorf("save email verification sqlite: %w", err)
+	}
+	return nil
+}
+
+// GetEmailVerification fetches an existing email verification record by email.
+// Returns sql.ErrNoRows wrapped error if not found.
+func (db *DB) GetEmailVerification(email string) (*EmailVerification, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return nil, errors.New("email cannot be empty")
+	}
+
+	builder := entsql.Dialect(db.dialect).
+		Select("id", "email", "otp_hash", "payload", "attempts", "expires_at", "created_at").
+		From(entsql.Table("email_verifications")).
+		Where(entsql.EQ("email", email))
+	query, args := builder.Query()
+
+	var ev EmailVerification
+	var expTs, crTs interface{}
+	if err := db.rawDB.QueryRow(query, args...).Scan(&ev.ID, &ev.Email, &ev.OTPHash, &ev.Payload, &ev.Attempts, &expTs, &crTs); err != nil {
+		return nil, err
+	}
+	ev.ExpiresAt = parseFlexibleTime(expTs)
+	ev.CreatedAt = parseFlexibleTime(crTs)
+	return &ev, nil
+}
+
+// IncrementVerificationAttempts atomically increments the attempt counter for an email verification.
+func (db *DB) IncrementVerificationAttempts(email string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return errors.New("email cannot be empty")
+	}
+
+	var query string
+	if db.dialect == dialect.Postgres {
+		query = "UPDATE email_verifications SET attempts = attempts + 1 WHERE email = $1"
+	} else {
+		query = "UPDATE email_verifications SET attempts = attempts + 1 WHERE email = ?"
+	}
+
+	res, err := db.rawDB.Exec(query, email)
+	if err != nil {
+		return fmt.Errorf("increment verification attempts: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// DeleteEmailVerification deletes the pending verification record for an email.
+func (db *DB) DeleteEmailVerification(email string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return errors.New("email cannot be empty")
+	}
+
+	builder := entsql.Dialect(db.dialect).Delete("email_verifications").Where(entsql.EQ("email", email))
+	query, args := builder.Query()
+	_, err := db.rawDB.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("delete email verification: %w", err)
+	}
+	return nil
 }
 
 // GetOrgMembers lists all members of an organization using Ent SQL Builder.
 func (db *DB) GetOrgMembers(orgID int64) ([]User, error) {
-	builder := entsql.Dialect(db.dialect).Select("id", "org_id", "email", "full_name", "role", "created_at").From(entsql.Table("users")).Where(entsql.EQ("org_id", orgID)).OrderBy(entsql.Asc("id"))
+	builder := entsql.Dialect(db.dialect).Select("id", "org_id", "email", "full_name", "role", "is_verified", "created_at").From(entsql.Table("users")).Where(entsql.EQ("org_id", orgID)).OrderBy(entsql.Asc("id"))
 	query, args := builder.Query()
 	rows, err := db.rawDB.Query(query, args...)
 	if err != nil {
@@ -876,9 +1128,11 @@ func (db *DB) GetOrgMembers(orgID int64) ([]User, error) {
 	for rows.Next() {
 		var u User
 		var ts interface{}
-		if err := rows.Scan(&u.ID, &u.OrgID, &u.Email, &u.FullName, &u.Role, &ts); err != nil {
+		var isVerified interface{}
+		if err := rows.Scan(&u.ID, &u.OrgID, &u.Email, &u.FullName, &u.Role, &isVerified, &ts); err != nil {
 			return nil, err
 		}
+		u.IsVerified = parseFlexibleBool(isVerified)
 		u.CreatedAt = parseFlexibleTime(ts)
 		users = append(users, u)
 	}

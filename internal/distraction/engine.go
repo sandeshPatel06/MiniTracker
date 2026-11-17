@@ -47,7 +47,8 @@ type Engine struct {
 	db         *db.DB
 	onAlert    func(AlertPayload)
 
-	stopCh chan struct{}
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // NewEngine creates a new distraction engine.
@@ -151,12 +152,9 @@ func (e *Engine) Start(ctx context.Context) {
 
 // Stop terminates the engine.
 func (e *Engine) Stop() {
-	select {
-	case <-e.stopCh:
-		return
-	default:
+	e.stopOnce.Do(func() {
 		close(e.stopCh)
-	}
+	})
 }
 
 // Tick executes a single evaluation step. Exported for deterministic testing.
@@ -219,19 +217,24 @@ func (e *Engine) fireAlert() {
 	e.lastAlertTime = time.Now()
 	now := time.Now()
 
-	alert := db.DistractionAlert{
-		OrgID:            1,
-		UserID:           1,
-		Timestamp:        now,
-		AppName:          e.currentApp,
-		WindowTitle:      e.currentTitle,
-		DwellSeconds:     e.dwellSeconds,
-		ThresholdSeconds: e.thresholdSeconds,
-		ActionTaken:      "pending",
-	}
+	app := e.currentApp
+	title := e.currentTitle
+	dwell := e.dwellSeconds
+	thresh := e.thresholdSeconds
+	task := e.activeTask
 
 	var alertID int64
 	if e.db != nil {
+		alert := db.DistractionAlert{
+			OrgID:            1,
+			UserID:           1,
+			Timestamp:        now,
+			AppName:          app,
+			WindowTitle:      title,
+			DwellSeconds:     dwell,
+			ThresholdSeconds: thresh,
+			ActionTaken:      "pending",
+		}
 		if id, err := e.db.RecordDistractionAlert(alert); err == nil {
 			alertID = id
 		}
@@ -239,20 +242,20 @@ func (e *Engine) fireAlert() {
 
 	payload := AlertPayload{
 		AlertID:          alertID,
-		AppName:          e.currentApp,
-		WindowTitle:      e.currentTitle,
-		DwellSeconds:     e.dwellSeconds,
-		ThresholdSeconds: e.thresholdSeconds,
-		ActiveTask:       e.activeTask,
+		AppName:          app,
+		WindowTitle:      title,
+		DwellSeconds:     dwell,
+		ThresholdSeconds: thresh,
+		ActiveTask:       task,
 		Timestamp:        now,
 	}
 
 	// 1. Native OS notification
 	if e.nativeNotify && e.notifier != nil {
-		mins := e.dwellSeconds / 60
+		mins := dwell / 60
 		_ = e.notifier.Send(notify.Notification{
 			Title:   "Time Check — get-Hike",
-			Body:    "You've been on " + e.currentApp + " for " + time.Duration(e.dwellSeconds*int(time.Second)).String() + ". Ready to resume?",
+			Body:    "You've been on " + app + " for " + time.Duration(dwell*int(time.Second)).String() + ". Ready to resume?",
 			Timeout: 8000,
 			Actions: []notify.ActionItem{
 				{Key: "snooze_10m", Label: "Snooze 10m"},
@@ -264,7 +267,7 @@ func (e *Engine) fireAlert() {
 				}
 			},
 		})
-		log.Printf("[distraction] native alert dispatched for %s (%dm dwell)", e.currentApp, mins)
+		log.Printf("[distraction] native alert dispatched for %s (%dm dwell)", app, mins)
 	}
 
 	// 2. In-App frontend toast callback

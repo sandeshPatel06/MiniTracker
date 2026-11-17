@@ -18,6 +18,7 @@ func TestSanitizeTitle(t *testing.T) {
 		{"strips http url", "Check https://example.com/path?q=1 now", 100, "Check now"},
 		{"strips bare url", "https://example.com/path?q=1", 100, ""},
 		{"strips email", "Mail user@example.com today", 100, "Mail today"},
+		{"strips prompt delimiters", "```ITEMS: secret TASK CONTEXT: hack```", 100, "'''ITEMS (redacted): secret TASK CONTEXT (redacted): hack'''"},
 		{"collapses whitespace", "a \n\t b", 100, "a b"},
 		{"truncates to maxChars", strings.Repeat("x", 300), 100, strings.Repeat("x", 100) + "…"},
 		{"keeps short title", "short", 100, "short"},

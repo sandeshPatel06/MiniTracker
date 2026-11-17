@@ -473,10 +473,40 @@ func (db *DB) AllocateIdleBlock(params RetroactiveAllocationParams) (int64, erro
 	}
 
 	// 2. Inject synthetic discrete log entries across [StartTime, EndTime)
+	// Query existing tracked non-retroactive timestamps within [StartTime, EndTime)
+	// to ensure synthetic idle logs never overlap real tracked minutes.
+	overlapQuery := db.rebindPlaceholders("SELECT timestamp FROM logs WHERE user_id = ? AND timestamp >= ? AND timestamp < ? AND (is_retroactive = 0 OR is_retroactive IS NULL)")
+	rows, err := tx.Query(overlapQuery, params.UserID, params.StartTime.UTC().Format(time.RFC3339), params.EndTime.UTC().Format(time.RFC3339))
+	if err != nil {
+		return 0, fmt.Errorf("check overlapping logs: %w", err)
+	}
+	defer rows.Close()
+
+	trackedTimestamps := make(map[string]bool)
+	for rows.Next() {
+		var tsStr string
+		if err := rows.Scan(&tsStr); err == nil {
+			// Normalize to RFC3339 for lookup
+			if t, err := time.Parse(time.RFC3339, tsStr); err == nil {
+				trackedTimestamps[t.UTC().Truncate(time.Minute).Format(time.RFC3339)] = true
+			} else {
+				trackedTimestamps[tsStr] = true
+			}
+		}
+	}
+	rows.Close()
+
 	curr := params.StartTime
 	step := time.Duration(params.IntervalSec) * time.Second
 
 	for curr.Before(params.EndTime) {
+		currTrunc := curr.UTC().Truncate(time.Minute).Format(time.RFC3339)
+		if trackedTimestamps[currTrunc] {
+			// Skip this timestamp slot as real tracking already covers this minute
+			curr = curr.Add(step)
+			continue
+		}
+
 		logBuilder := entsql.Dialect(db.dialect).Insert("logs").
 			Columns(
 				"org_id", "user_id", "timestamp", "image_path",

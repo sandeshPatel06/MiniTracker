@@ -33,6 +33,9 @@ func DoWithRetry(ctx context.Context, policy RetryPolicy, fn RetryableFunc) erro
 	if policy.MaxDelay <= 0 {
 		policy.MaxDelay = 20 * time.Second
 	}
+	if policy.BaseDelay > policy.MaxDelay {
+		policy.BaseDelay = policy.MaxDelay
+	}
 
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
@@ -51,24 +54,29 @@ func DoWithRetry(ctx context.Context, policy RetryPolicy, fn RetryableFunc) erro
 			return err
 		}
 
-		backoff := policy.BaseDelay
-		for i := 1; i < attempt; i++ {
-			if backoff >= policy.MaxDelay {
-				break
-			}
-			backoff *= 2
+		// Exponential backoff: BaseDelay * 2^(attempt-1)
+		// Shift bounded to avoid integer overflow
+		shift := attempt - 1
+		if shift > 30 {
+			shift = 30
 		}
-		if backoff > policy.MaxDelay {
+		multiplier := time.Duration(1) << shift
+		backoff := policy.BaseDelay * multiplier
+		if backoff <= 0 || backoff > policy.MaxDelay {
 			backoff = policy.MaxDelay
 		}
 
-		jitter := 1 + 0.2*(rng.Float64()*2-1)
-		delay := time.Duration(float64(backoff) * jitter)
+		// Apply +/- 20% jitter
+		jitterFactor := 0.8 + 0.4*rng.Float64() // uniformly distributed in [0.8, 1.2)
+		delay := time.Duration(float64(backoff) * jitterFactor)
 		if delay < 0 {
 			delay = 0
 		}
 		if retryAfter > delay {
 			delay = retryAfter
+		}
+		if delay > policy.MaxDelay && retryAfter <= policy.MaxDelay {
+			delay = policy.MaxDelay
 		}
 
 		timer := time.NewTimer(delay)

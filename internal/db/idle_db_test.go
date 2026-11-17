@@ -313,3 +313,86 @@ func TestAllocateIdleBlockConcurrent(t *testing.T) {
 		t.Errorf("expected %d idle_intervals, got %d", numGoroutines, count)
 	}
 }
+
+// TestAllocateIdleBlockNoOverlap verifies that synthetic logs skip minutes where real tracked logs already exist.
+func TestAllocateIdleBlockNoOverlap(t *testing.T) {
+	database, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	baseTime := time.Now().UTC().Truncate(time.Minute)
+	startTime := baseTime.Add(-10 * time.Minute)
+	endTime := baseTime
+
+	// Pre-insert real tracked logs at minute -5 and minute -4
+	realLog1Time := baseTime.Add(-5 * time.Minute)
+	realLog2Time := baseTime.Add(-4 * time.Minute)
+
+	_, err := database.InsertLog(&LogEntry{
+		OrgID:         1,
+		UserID:        1,
+		Timestamp:     realLog1Time,
+		AppName:       "Code",
+		WindowTitle:   "main.go",
+		IsRetroactive: false,
+	})
+	if err != nil {
+		t.Fatalf("failed to insert realLog1: %v", err)
+	}
+
+	_, err = database.InsertLog(&LogEntry{
+		OrgID:         1,
+		UserID:        1,
+		Timestamp:     realLog2Time,
+		AppName:       "Code",
+		WindowTitle:   "main.go",
+		IsRetroactive: false,
+	})
+	if err != nil {
+		t.Fatalf("failed to insert realLog2: %v", err)
+	}
+
+	params := RetroactiveAllocationParams{
+		OrgID:           1,
+		UserID:          1,
+		StartTime:       startTime,
+		EndTime:         endTime,
+		ActionType:      "meeting",
+		Category:        "Meeting",
+		TaskTag:         "Sprint Discussion",
+		IsProductive:    true,
+		ProductiveScore: 85.0,
+		IntervalSec:     60, // 1 log per minute: total 10 minutes, but 2 are already tracked -> expected 8 synthetic logs
+	}
+
+	intervalID, err := database.AllocateIdleBlock(params)
+	if err != nil {
+		t.Fatalf("AllocateIdleBlock failed: %v", err)
+	}
+
+	var syntheticCount int
+	err = database.rawDB.QueryRow("SELECT COUNT(*) FROM logs WHERE idle_interval_id = ?", intervalID).Scan(&syntheticCount)
+	if err != nil {
+		t.Fatalf("query synthetic logs failed: %v", err)
+	}
+
+	if syntheticCount != 8 {
+		t.Errorf("expected 8 synthetic logs (10 minus 2 overlapping), got %d", syntheticCount)
+	}
+
+	// Verify that none of the synthetic logs have timestamps matching the real logs' minute
+	rows, err := database.rawDB.Query("SELECT timestamp FROM logs WHERE idle_interval_id = ?", intervalID)
+	if err != nil {
+		t.Fatalf("query timestamps failed: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var tsStr string
+		if err := rows.Scan(&tsStr); err == nil {
+			parsed, _ := time.Parse(time.RFC3339, tsStr)
+			if parsed.Truncate(time.Minute).Equal(realLog1Time) || parsed.Truncate(time.Minute).Equal(realLog2Time) {
+				t.Errorf("synthetic log generated at overlapping timestamp minute: %s", tsStr)
+			}
+		}
+	}
+}

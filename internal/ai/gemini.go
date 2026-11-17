@@ -18,12 +18,16 @@ import (
 	"time"
 )
 
-// redactAPIKey removes the ?key=... query parameter from URLs embedded in error
-// messages so API keys never leak into logs.
-var redactKeyPattern = regexp.MustCompile(`key=[^&\s"']+`)
+// redactKeyPattern matches API keys in query parameters (e.g. ?key=..., &key=...).
+var redactKeyPattern = regexp.MustCompile(`(?i)([\?&]key=)[^&\s"']+`)
+
+// redactAuthHeaderPattern matches API keys in authorization or x-goog-api-key headers / logs.
+var redactAuthHeaderPattern = regexp.MustCompile(`(?i)(x-goog-api-key["':\s=]+)[a-zA-Z0-9_\-]+`)
 
 func redactAPIKey(s string) string {
-	return redactKeyPattern.ReplaceAllLiteralString(s, "key=REDACTED")
+	s = redactKeyPattern.ReplaceAllString(s, "${1}REDACTED")
+	s = redactAuthHeaderPattern.ReplaceAllString(s, "${1}REDACTED")
+	return s
 }
 
 // UsageMetadata represents token usage returned from Gemini REST API.
@@ -233,7 +237,7 @@ func (g *GeminiClient) ensureContextCache(ctx context.Context, model, staticProm
 			g.cacheMu.Unlock()
 			log.Printf("[ai/gemini] context cache not supported by %s — continuing uncached", cleanModel)
 		default:
-			log.Printf("[ai/gemini] context cache create error %d: %s", resp.StatusCode, truncateString(string(respData), 200))
+			log.Printf("[ai/gemini] context cache create error %d: %s", resp.StatusCode, redactAPIKey(truncateString(string(respData), 200)))
 		}
 		return ""
 	}
@@ -353,7 +357,7 @@ func (g *GeminiClient) FetchAvailableModels(ctx context.Context) ([]string, erro
 
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("list models API error %d: %s", resp.StatusCode, string(data))
+		return nil, fmt.Errorf("list models API error %d: %s", resp.StatusCode, redactAPIKey(string(data)))
 	}
 
 	var listResp listModelsResponse
@@ -895,17 +899,17 @@ func (g *GeminiClient) postGenerateContentWithRetry(ctx context.Context, model s
 			}
 
 			if resp.StatusCode == http.StatusBadRequest && looksLikeAuthError(respData) {
-				return fmt.Errorf("gemini error %d: %s", resp.StatusCode, truncateString(string(respData), 300)), false, 0
+				return fmt.Errorf("gemini error %d: %s", resp.StatusCode, redactAPIKey(truncateString(string(respData), 300))), false, 0
 			}
 
 			if resp.StatusCode == http.StatusNotFound && isHardUnavailable(respData) {
 				g.DisableModel(model)
 				log.Printf("[ai/gemini] model %s is retired/unavailable — disabled for this session", model)
-				return fmt.Errorf("gemini error %d: %s", resp.StatusCode, truncateString(string(respData), 300)), false, 0
+				return fmt.Errorf("gemini error %d: %s", resp.StatusCode, redactAPIKey(truncateString(string(respData), 300))), false, 0
 			}
 
 			if isPayloadRejection(resp.StatusCode, respData, payload) {
-				return fmt.Errorf("%w: gemini error %d: %s", errPayloadRejected, resp.StatusCode, truncateString(string(respData), 300)), false, 0
+				return fmt.Errorf("%w: gemini error %d: %s", errPayloadRejected, resp.StatusCode, redactAPIKey(truncateString(string(respData), 300))), false, 0
 			}
 
 			if resp.StatusCode == http.StatusTooManyRequests {
@@ -916,7 +920,7 @@ func (g *GeminiClient) postGenerateContentWithRetry(ctx context.Context, model s
 				}
 			}
 
-			return fmt.Errorf("gemini error %d: %s", resp.StatusCode, truncateString(string(respData), 300)),
+			return fmt.Errorf("gemini error %d: %s", resp.StatusCode, redactAPIKey(truncateString(string(respData), 300))),
 				IsRetryableStatus(resp.StatusCode),
 				RetryAfterFromHeader(resp.Header)
 		})
@@ -1059,11 +1063,18 @@ func extractResponseText(respData []byte) (string, UsageMetadata, error) {
 					Thought bool   `json:"thought"`
 				} `json:"parts"`
 			} `json:"content"`
+			FinishReason string `json:"finishReason"`
 		} `json:"candidates"`
+		PromptFeedback struct {
+			BlockReason string `json:"blockReason"`
+		} `json:"promptFeedback"`
 		UsageMetadata UsageMetadata `json:"usageMetadata"`
 	}
 	if err := json.Unmarshal(respData, &geminiResp); err != nil {
 		return "", UsageMetadata{}, fmt.Errorf("decode gemini response: %w", err)
+	}
+	if geminiResp.PromptFeedback.BlockReason != "" {
+		return "", geminiResp.UsageMetadata, fmt.Errorf("gemini prompt blocked: %s", geminiResp.PromptFeedback.BlockReason)
 	}
 	if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
 		return "", geminiResp.UsageMetadata, fmt.Errorf("invalid gemini response format")
@@ -1112,16 +1123,21 @@ func mapChunkResults(items []BatchAnalysisItem, parsed []AnalysisResultItem, usa
 			score = 100
 		}
 
+		cat := normalizeCategory(r.Category)
+		if cat == "Idle" && score > 25 {
+			score = 25
+		}
+
 		resItem := BatchAnalysisResult{
 			LogID:           item.LogID,
-			Category:        r.Category,
-			AppName:         r.AppName,
-			AppCategory:     r.AppCategory,
-			WindowTitle:     item.WindowTitle,
+			Category:        cat,
+			AppName:         SanitizeTitle(r.AppName, 60),
+			AppCategory:     SanitizeTitle(r.AppCategory, 60),
+			WindowTitle:     SanitizeTitle(item.WindowTitle, 100),
 			Productive:      score >= 50,
 			ProductiveScore: score,
 			Confidence:      r.Confidence,
-			Reason:          r.Reason,
+			Reason:          SanitizeTitle(r.Reason, 120),
 		}
 		if resItem.Category == "" {
 			resItem.Category = "Unknown"
@@ -1213,7 +1229,7 @@ func (g *GeminiClient) executeAnalysis(ctx context.Context, modelName string, re
 
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("gemini error %d: %s", resp.StatusCode, string(data))
+		return nil, fmt.Errorf("gemini error %d: %s", resp.StatusCode, redactAPIKey(string(data)))
 	}
 
 	return parseGeminiResponse(resp.Body)
@@ -1281,6 +1297,22 @@ func parseGeminiResponse(body io.Reader) (*AnalysisResult, error) {
 		// 1. Direct unmarshal attempt
 		var direct AnalysisResult
 		if err := json.Unmarshal([]byte(rawText), &direct); err == nil && direct.Category != "" {
+			direct.Category = normalizeCategory(direct.Category)
+			direct.AppName = SanitizeTitle(direct.AppName, 60)
+			direct.AppCategory = SanitizeTitle(direct.AppCategory, 60)
+			direct.WindowTitle = SanitizeTitle(direct.WindowTitle, 100)
+			direct.Reason = SanitizeTitle(direct.Reason, 120)
+			if direct.ProductiveScore < 0 {
+				direct.ProductiveScore = 0
+			} else if direct.ProductiveScore > 100 {
+				direct.ProductiveScore = 100
+			}
+			if direct.Category == "Idle" && direct.ProductiveScore > 25 {
+				direct.ProductiveScore = 25
+			}
+			if !(direct.Confidence > 0 && direct.Confidence <= 1) {
+				direct.Confidence = 0.5
+			}
 			direct.Usage = resp.UsageMetadata
 			return &direct, nil
 		}
@@ -1299,6 +1331,22 @@ func parseGeminiResponse(body io.Reader) (*AnalysisResult, error) {
 			}
 			var res AnalysisResult
 			if err := json.Unmarshal([]byte(candidate), &res); err == nil && res.Category != "" {
+				res.Category = normalizeCategory(res.Category)
+				res.AppName = SanitizeTitle(res.AppName, 60)
+				res.AppCategory = SanitizeTitle(res.AppCategory, 60)
+				res.WindowTitle = SanitizeTitle(res.WindowTitle, 100)
+				res.Reason = SanitizeTitle(res.Reason, 120)
+				if res.ProductiveScore < 0 {
+					res.ProductiveScore = 0
+				} else if res.ProductiveScore > 100 {
+					res.ProductiveScore = 100
+				}
+				if res.Category == "Idle" && res.ProductiveScore > 25 {
+					res.ProductiveScore = 25
+				}
+				if !(res.Confidence > 0 && res.Confidence <= 1) {
+					res.Confidence = 0.5
+				}
 				res.Usage = resp.UsageMetadata
 				return &res, nil
 			}

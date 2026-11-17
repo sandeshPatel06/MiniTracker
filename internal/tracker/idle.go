@@ -239,7 +239,16 @@ func (d *IdleDetector) checkIdle() {
 		if idleDur < 10*time.Second {
 			d.state = StateAwaitingCategorization
 			d.idleEndedAt = time.Now()
+
+			// Defensive boundary check: EndTime must never be before StartTime
+			if d.idleEndedAt.Before(d.idleStartedAt) {
+				d.idleEndedAt = d.idleStartedAt
+			}
 			awayDuration := d.idleEndedAt.Sub(d.idleStartedAt)
+			durationSeconds := int64(awayDuration.Seconds())
+			if durationSeconds < 0 {
+				durationSeconds = 0
+			}
 
 			log.Printf("[idle] user returned after %v away (from %s to %s)",
 				awayDuration.Round(time.Second),
@@ -250,7 +259,7 @@ func (d *IdleDetector) checkIdle() {
 				ID:              time.Now().UnixNano(),
 				StartTime:       d.idleStartedAt,
 				EndTime:         d.idleEndedAt,
-				DurationSeconds: int64(awayDuration.Seconds()),
+				DurationSeconds: durationSeconds,
 				Resolved:        false,
 			}
 

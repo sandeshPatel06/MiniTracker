@@ -137,12 +137,24 @@ func TestInvitationFlow(t *testing.T) {
 	}
 
 	// Accept Invitation
+	// Pre-seed an email_verification record to verify it gets cleaned up on accept
+	_ = database.SaveEmailVerification("newmember@invitecorp.com", "hash_temp", "{}", time.Now().Add(10*time.Minute))
+
 	user, err := database.AcceptInvitation("token_abc123", "Bob Member", "hashedpass456")
 	if err != nil {
 		t.Fatalf("failed to accept invitation: %v", err)
 	}
 	if user.Email != "newmember@invitecorp.com" || user.OrgID != org.ID {
 		t.Errorf("unexpected accepted user: %+v", user)
+	}
+	if !user.IsVerified {
+		t.Errorf("expected accepted user to have IsVerified = true")
+	}
+
+	// Verify pending email_verifications record was cleaned up
+	pendingEV, _ := database.GetEmailVerification("newmember@invitecorp.com")
+	if pendingEV != nil {
+		t.Errorf("expected pending email verification to be deleted after AcceptInvitation, found: %+v", pendingEV)
 	}
 
 	// Verify status updated to accepted
@@ -158,6 +170,61 @@ func TestInvitationFlow(t *testing.T) {
 	_, err = database.AcceptInvitation("token_abc123", "Bob Member", "hashedpass456")
 	if err == nil {
 		t.Errorf("expected error accepting already accepted invitation")
+	}
+}
+
+func TestEmailVerificationCRUD(t *testing.T) {
+	database, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	email := "verify-test@example.com"
+	otpHash := "hash123456"
+	payload := `{"name":"Acme","password":"pass","full_name":"Alice"}`
+	expiresAt := time.Now().Add(10 * time.Minute)
+
+	// Store verification
+	err := database.StoreEmailVerification(email, otpHash, payload, expiresAt)
+	if err != nil {
+		t.Fatalf("failed to store email verification: %v", err)
+	}
+
+	// Fetch verification
+	ev, err := database.GetEmailVerification(email)
+	if err != nil {
+		t.Fatalf("failed to get email verification: %v", err)
+	}
+	if ev.Email != email || ev.OTPHash != otpHash || ev.Payload != payload {
+		t.Errorf("unexpected ev record: %+v", ev)
+	}
+
+	// Increment attempts
+	err = database.IncrementVerificationAttempts(email)
+	if err != nil {
+		t.Fatalf("failed to increment attempts: %v", err)
+	}
+	evAfterInc, _ := database.GetEmailVerification(email)
+	if evAfterInc.Attempts != 1 {
+		t.Errorf("expected 1 attempt, got %d", evAfterInc.Attempts)
+	}
+
+	// Overwrite verification with new OTP
+	newExpires := time.Now().Add(10 * time.Minute)
+	err = database.StoreEmailVerification(email, "newhash999", payload, newExpires)
+	if err != nil {
+		t.Fatalf("failed to update email verification: %v", err)
+	}
+	ev2, _ := database.GetEmailVerification(email)
+	if ev2.OTPHash != "newhash999" || ev2.Attempts != 0 {
+		t.Errorf("expected updated otp hash and reset attempts, got: %+v", ev2)
+	}
+
+	// Delete verification
+	if err := database.DeleteEmailVerification(email); err != nil {
+		t.Fatalf("failed to delete email verification: %v", err)
+	}
+	ev3, err := database.GetEmailVerification(email)
+	if err == nil || ev3 != nil {
+		t.Errorf("expected not found error after deletion, got ev: %+v, err: %v", ev3, err)
 	}
 }
 

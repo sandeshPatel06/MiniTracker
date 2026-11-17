@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net/http"
 	"net/url"
 	"os"
@@ -1009,8 +1010,8 @@ func main() {
 		})
 	})
 
-	// POST /api/telemetry/push — Authenticated telemetry upload endpoint
-	mux.HandleFunc("/api/telemetry/push", func(w http.ResponseWriter, r *http.Request) {
+	// POST /api/telemetry/push & /api/telemetry/push-batch — Authenticated telemetry upload endpoint
+	handleTelemetryPush := func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -1030,7 +1031,7 @@ func main() {
 			return
 		}
 
-		var payload struct {
+		type telemetryItem struct {
 			LocalID      int64   `json:"local_id"`
 			Timestamp    string  `json:"timestamp"`
 			ImageBase64  string  `json:"image_base64"`
@@ -1041,101 +1042,169 @@ func main() {
 			AppName      string  `json:"app_name"`
 			WindowTitle  string  `json:"window_title"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			jsonError(w, "Invalid telemetry payload", http.StatusBadRequest)
+
+		// Read entire body (with a reasonable limit to prevent memory exhaustion, e.g. 64MB)
+		bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 64*1024*1024))
+		if err != nil {
+			jsonError(w, "Failed to read request body", http.StatusBadRequest)
 			return
 		}
 
-		ts, err := time.Parse(time.RFC3339, payload.Timestamp)
-		if err != nil {
-			ts = time.Now()
+		var items []telemetryItem
+		// Try parsing as batch wrapper: {"logs": [...]}
+		var batchPayload struct {
+			Logs []telemetryItem `json:"logs"`
+		}
+		if err := json.Unmarshal(bodyBytes, &batchPayload); err == nil && len(batchPayload.Logs) > 0 {
+			items = batchPayload.Logs
+		} else {
+			// Try parsing as JSON array: [...]
+			var arrayPayload []telemetryItem
+			if err := json.Unmarshal(bodyBytes, &arrayPayload); err == nil && len(arrayPayload) > 0 {
+				items = arrayPayload
+			} else {
+				// Fallback to single item payload
+				var singlePayload telemetryItem
+				if err := json.Unmarshal(bodyBytes, &singlePayload); err == nil && (singlePayload.LocalID != 0 || singlePayload.Timestamp != "" || singlePayload.AppName != "" || singlePayload.WindowTitle != "") {
+					items = []telemetryItem{singlePayload}
+				} else {
+					jsonError(w, "Invalid telemetry payload", http.StatusBadRequest)
+					return
+				}
+			}
 		}
 
-		filePath := ""
-		if payload.ImageBase64 != "" {
-			if rawImg, err := base64.StdEncoding.DecodeString(payload.ImageBase64); err == nil && len(rawImg) > 0 {
-				if tgStorage != nil {
-					tgPath, err := tgStorage.UploadPhoto(r.Context(), rawImg, fmt.Sprintf("MiniTracker screenshot %s - user %d", ts.Format("2006-01-02 15:04:05"), userID))
-					if err != nil {
-						log.Printf("[server] telegram upload failed, falling back to disk: %v", err)
-					} else {
-						filePath = tgPath
+		type itemResult struct {
+			LocalID  int64 `json:"local_id"`
+			RemoteID int64 `json:"remote_id"`
+		}
+		var insertedResults []itemResult
+		var batchAnalysisItems []ai.BatchAnalysisItem
+
+		for _, item := range items {
+			ts, err := time.Parse(time.RFC3339, item.Timestamp)
+			if err != nil {
+				ts = time.Now()
+			}
+
+			filePath := ""
+			if item.ImageBase64 != "" {
+				if rawImg, err := base64.StdEncoding.DecodeString(item.ImageBase64); err == nil && len(rawImg) > 0 {
+					if tgStorage != nil {
+						tgPath, err := tgStorage.UploadPhoto(r.Context(), rawImg, fmt.Sprintf("MiniTracker screenshot %s - user %d", ts.Format("2006-01-02 15:04:05"), userID))
+						if err != nil {
+							log.Printf("[server] telegram upload failed, falling back to disk: %v", err)
+						} else {
+							filePath = tgPath
+						}
+					}
+
+					// Fallback to local disk if telegram storage not configured or failed
+					if filePath == "" {
+						todayDir := filepath.Join(cfg.DataDir, "images", ts.Format("2006-01-02"))
+						_ = os.MkdirAll(todayDir, 0755)
+						filePath = filepath.Join(todayDir, fmt.Sprintf("ss_%d.jpg", time.Now().UnixNano()))
+						_ = os.WriteFile(filePath, rawImg, 0644)
 					}
 				}
-
-				// Fallback to local disk if telegram storage not configured or failed
-				if filePath == "" {
-					todayDir := filepath.Join(cfg.DataDir, "images", ts.Format("2006-01-02"))
-					_ = os.MkdirAll(todayDir, 0755)
-					filePath = filepath.Join(todayDir, fmt.Sprintf("ss_%d.jpg", time.Now().UnixNano()))
-					_ = os.WriteFile(filePath, rawImg, 0644)
-				}
 			}
+
+			entropy := item.EntropyScore
+			if entropy == 0 && item.TotalKeys > 0 {
+				entropy = tracker.ComputeEntropyScore(item.TotalKeys, item.UniqueKeys)
+			}
+
+			entry := &db.LogEntry{
+				OrgID:        orgID,
+				UserID:       userID,
+				Timestamp:    ts,
+				ImagePath:    filePath,
+				TotalKeys:    item.TotalKeys,
+				UniqueKeys:   item.UniqueKeys,
+				EntropyScore: entropy,
+				TotalClicks:  item.TotalClicks,
+				AppName:      item.AppName,
+				WindowTitle:  item.WindowTitle,
+			}
+
+			logID, err := database.InsertLog(entry)
+			if err != nil {
+				log.Printf("[server] database error saving telemetry item (local_id: %d): %v", item.LocalID, err)
+				continue
+			}
+
+			insertedResults = append(insertedResults, itemResult{
+				LocalID:  item.LocalID,
+				RemoteID: logID,
+			})
+
+			batchAnalysisItems = append(batchAnalysisItems, ai.BatchAnalysisItem{
+				LogID:        logID,
+				WindowTitle:  item.WindowTitle,
+				EntropyScore: entropy,
+				ImagePath:    filePath,
+				TotalClicks:  item.TotalClicks,
+			})
 		}
 
-		entropy := payload.EntropyScore
-		if entropy == 0 && payload.TotalKeys > 0 {
-			entropy = tracker.ComputeEntropyScore(payload.TotalKeys, payload.UniqueKeys)
-		}
-
-		entry := &db.LogEntry{
-			OrgID:        orgID,
-			UserID:       userID,
-			Timestamp:    ts,
-			ImagePath:    filePath,
-			TotalKeys:    payload.TotalKeys,
-			UniqueKeys:   payload.UniqueKeys,
-			EntropyScore: entropy,
-			TotalClicks:  payload.TotalClicks,
-			AppName:      payload.AppName,
-			WindowTitle:  payload.WindowTitle,
-		}
-
-		logID, err := database.InsertLog(entry)
-		if err != nil {
-			jsonError(w, "Database error saving telemetry", http.StatusInternalServerError)
+		if len(insertedResults) == 0 {
+			jsonError(w, "Failed to persist any telemetry logs", http.StatusInternalServerError)
 			return
 		}
 
-		// Resolve effective Gemini API Key based on Hierarchy:
-		// 1. Org Admin Key in DB -> 2. User Personal Key in DB -> 3. Global System Key
-		go func(id int64, imgPath, title string, score float64, clicks int, uID, oID int64) {
-			effKey, effModel, keySource, err := database.ResolveEffectiveGeminiKey(uID, oID, cfg.GeminiAPIKey, cfg.GeminiModel)
-			if err != nil || effKey == "" {
-				log.Printf("[server] telemetry AI processing skipped for log #%d (no valid key found, source=%s)", id, keySource)
-				return
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-			defer cancel()
-
-			tempGemini := ai.NewGeminiClient(effKey, effModel)
-			results, err := tempGemini.AnalyzeBatch(ctx, []ai.BatchAnalysisItem{{
-				LogID:        id,
-				WindowTitle:  title,
-				EntropyScore: score,
-				ImagePath:    imgPath,
-				TotalClicks:  clicks,
-			}})
-			if err == nil && len(results) > 0 {
-				res := results[0]
-				_ = database.UpdateLogAnalysis(id, res.Category, res.AppName, res.AppCategory, res.WindowTitle, 0, "", res.Productive, res.ProductiveScore, res.Confidence, res.Reason)
-				_ = database.RecordAPIUsage(oID, uID, keySource, res.Usage.PromptTokenCount, res.Usage.CandidatesTokenCount, res.Usage.TotalTokenCount, effModel)
-				log.Printf("[server] processed telemetry #%d via AI key source [%s] — category=%s productive=%v tokens=%d", id, keySource, res.Category, res.Productive, res.Usage.TotalTokenCount)
-			} else {
-				if err == nil {
-					err = fmt.Errorf("no batch analysis result returned")
+		// Asynchronous AI analysis batch processing
+		if len(batchAnalysisItems) > 0 {
+			go func(itemsToAnalyze []ai.BatchAnalysisItem, uID, oID int64) {
+				effKey, effModel, keySource, err := database.ResolveEffectiveGeminiKey(uID, oID, cfg.GeminiAPIKey, cfg.GeminiModel)
+				if err != nil || effKey == "" {
+					log.Printf("[server] telemetry AI processing skipped for %d logs (no valid key found, source=%s)", len(itemsToAnalyze), keySource)
+					return
 				}
-				log.Printf("[server] telemetry AI error for log #%d (source=%s): %v", id, keySource, err)
-			}
-		}(logID, filePath, payload.WindowTitle, entropy, payload.TotalClicks, userID, orgID)
+
+				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+				defer cancel()
+
+				tempGemini := ai.NewGeminiClient(effKey, effModel)
+				results, err := tempGemini.AnalyzeBatch(ctx, itemsToAnalyze)
+				if err == nil && len(results) > 0 {
+					var totalTokens int
+					for _, res := range results {
+						_ = database.UpdateLogAnalysis(res.LogID, res.Category, res.AppName, res.AppCategory, res.WindowTitle, 0, "", res.Productive, res.ProductiveScore, res.Confidence, res.Reason)
+						totalTokens += res.Usage.TotalTokenCount
+					}
+					if totalTokens > 0 {
+						_ = database.RecordAPIUsage(oID, uID, keySource, 0, 0, totalTokens, effModel)
+					}
+					log.Printf("[server] processed telemetry batch (%d items) via AI key source [%s] — tokens=%d", len(results), keySource, totalTokens)
+				} else {
+					if err == nil {
+						err = fmt.Errorf("no batch analysis results returned")
+					}
+					log.Printf("[server] telemetry batch AI error (%d items, source=%s): %v", len(itemsToAnalyze), keySource, err)
+				}
+			}(batchAnalysisItems, userID, orgID)
+		}
+
+		// Return single-item format if request was a single item, else batch response
+		if len(insertedResults) == 1 && len(items) == 1 {
+			jsonResp(w, map[string]interface{}{
+				"success":      true,
+				"local_id":     insertedResults[0].LocalID,
+				"remote_id":    insertedResults[0].RemoteID,
+				"synced_count": 1,
+				"results":      insertedResults,
+			})
+			return
+		}
 
 		jsonResp(w, map[string]interface{}{
-			"success":   true,
-			"local_id":  payload.LocalID,
-			"remote_id": logID,
+			"success":      true,
+			"synced_count": len(insertedResults),
+			"results":      insertedResults,
 		})
-	})
+	}
+	mux.HandleFunc("/api/telemetry/push", handleTelemetryPush)
+	mux.HandleFunc("/api/telemetry/push-batch", handleTelemetryPush)
 
 	// GET /api/telemetry/pull — Download newly analyzed AI logs for desktop client sync
 	mux.HandleFunc("/api/telemetry/pull", func(w http.ResponseWriter, r *http.Request) {
@@ -1310,9 +1379,9 @@ func main() {
 	mailer := email.NewMailer()
 
 	// Helper to set session cookie securely via signed JWT
-	setSessionCookie := func(w http.ResponseWriter, userID int64) {
+	setSessionCookie := func(w http.ResponseWriter, r *http.Request, userID int64) {
 		if u, err := database.GetUserByID(userID); err == nil && u != nil {
-			setJWTTokenCookie(w, u)
+			setJWTTokenCookie(w, u, isSecureRequest(r))
 			o, _ := database.GetOrganization(u.OrgID)
 			setRecentOAuth(u, o)
 		}
@@ -1422,7 +1491,171 @@ func main() {
 		return user, nil
 	}
 
-	// POST /api/org/register — Create a new organization & owner user
+	// Registration payload stored in pending email_verifications table
+	type RegistrationIntentPayload struct {
+		Name     string `json:"name"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		FullName string `json:"full_name"`
+	}
+
+	// POST /api/auth/register-intent — Initiate email verification for registration
+	mux.HandleFunc("/api/auth/register-intent", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req RegistrationIntentPayload
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Email) == "" || strings.TrimSpace(req.Password) == "" {
+			jsonError(w, "Invalid request payload. Name, email, and password are required.", http.StatusBadRequest)
+			return
+		}
+
+		cleanEmail := strings.ToLower(strings.TrimSpace(req.Email))
+		if err := email.ValidateEmail(cleanEmail); err != nil {
+			jsonError(w, fmt.Sprintf("Invalid email address: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		if len(req.Password) < 8 {
+			jsonError(w, "Password must be at least 8 characters long", http.StatusBadRequest)
+			return
+		}
+
+		// Check if user already exists
+		existingUser, err := database.GetUserByEmail(cleanEmail)
+		if err == nil && existingUser != nil {
+			jsonError(w, "An account with this email already exists", http.StatusConflict)
+			return
+		}
+
+		// Generate 6-digit OTP
+		otpCode, err := generateNumericOTP()
+		if err != nil {
+			jsonError(w, "Failed to generate verification code", http.StatusInternalServerError)
+			return
+		}
+		otpHash := hashOTP(otpCode)
+
+		// Store password as hash inside the pending verification payload for security
+		req.Password = hashPassword(req.Password)
+		req.Email = cleanEmail
+		if strings.TrimSpace(req.FullName) == "" {
+			req.FullName = "Admin"
+		}
+
+		payloadBytes, err := json.Marshal(req)
+		if err != nil {
+			jsonError(w, "Failed to serialize registration intent", http.StatusInternalServerError)
+			return
+		}
+
+		expiresAt := time.Now().Add(10 * time.Minute)
+		if err := database.StoreEmailVerification(cleanEmail, otpHash, string(payloadBytes), expiresAt); err != nil {
+			jsonError(w, fmt.Sprintf("Failed to store verification record: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Send verification email via mailer
+		emailErr := mailer.SendVerificationEmail(cleanEmail, otpCode)
+		if emailErr != nil {
+			log.Printf("[server] Failed to send verification email to %s: %v", cleanEmail, emailErr)
+		}
+
+		jsonResp(w, map[string]interface{}{
+			"success":    true,
+			"message":    "Verification code sent to " + cleanEmail,
+			"email":      cleanEmail,
+			"expires_in": 600,
+		})
+	})
+
+	// POST /api/auth/verify-registration — Verify 6-digit OTP and complete org + owner creation
+	mux.HandleFunc("/api/auth/verify-registration", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Email string `json:"email"`
+			OTP   string `json:"otp"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Email) == "" || strings.TrimSpace(req.OTP) == "" {
+			jsonError(w, "Email and 6-digit verification code are required", http.StatusBadRequest)
+			return
+		}
+
+		cleanEmail := strings.ToLower(strings.TrimSpace(req.Email))
+		cleanOTP := strings.TrimSpace(req.OTP)
+
+		ev, err := database.GetEmailVerification(cleanEmail)
+		if err != nil || ev == nil {
+			jsonError(w, "No pending verification found for this email. Please request a new verification code.", http.StatusBadRequest)
+			return
+		}
+
+		// Check expiry
+		if time.Now().After(ev.ExpiresAt) {
+			_ = database.DeleteEmailVerification(cleanEmail)
+			jsonError(w, "Verification code has expired. Please request a new one.", http.StatusBadRequest)
+			return
+		}
+
+		// Brute force protection: max 5 failed attempts
+		if ev.Attempts >= 5 {
+			_ = database.DeleteEmailVerification(cleanEmail)
+			jsonError(w, "Too many failed attempts. This code has been invalidated. Please register again.", http.StatusTooManyRequests)
+			return
+		}
+
+		// Verify OTP hash
+		expectedHash := hashOTP(cleanOTP)
+		if ev.OTPHash != expectedHash {
+			_ = database.IncrementVerificationAttempts(cleanEmail)
+			jsonError(w, "Invalid verification code. Please check and try again.", http.StatusBadRequest)
+			return
+		}
+
+		// Deserialize pending registration payload
+		var pending RegistrationIntentPayload
+		if err := json.Unmarshal([]byte(ev.Payload), &pending); err != nil {
+			jsonError(w, "Corrupted registration intent. Please register again.", http.StatusInternalServerError)
+			return
+		}
+
+		// Create organization
+		slug := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(pending.Name), " ", "-"))
+		org, err := database.CreateOrganization(pending.Name, slug)
+		if err != nil {
+			org, _ = database.GetOrganizationBySlug(slug)
+			if org == nil {
+				jsonError(w, fmt.Sprintf("Organization creation failed: %v", err), http.StatusBadRequest)
+				return
+			}
+		}
+
+		// Create user (password is already hashed)
+		user, err := database.CreateUser(org.ID, pending.Email, pending.Password, pending.FullName, "owner")
+		if err != nil {
+			jsonError(w, fmt.Sprintf("User creation failed: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		// Delete verification entry once successfully created
+		_ = database.DeleteEmailVerification(cleanEmail)
+
+		token := setJWTTokenCookie(w, user, isSecureRequest(r))
+
+		jsonResp(w, map[string]interface{}{
+			"success": true,
+			"token":   token,
+			"org":     org,
+			"user":    user,
+		})
+	})
+
+	// POST /api/org/register — Backward-compatible endpoint: creates organization & owner user.
+	// In production, users should complete OTP verification via register-intent + verify-registration.
 	mux.HandleFunc("/api/org/register", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1433,10 +1666,38 @@ func main() {
 			Email    string `json:"email"`
 			Password string `json:"password"`
 			FullName string `json:"full_name"`
+			OTP      string `json:"otp"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.Email == "" || req.Password == "" {
 			jsonError(w, "Invalid request payload. Name, email, and password are required.", http.StatusBadRequest)
 			return
+		}
+
+		cleanEmail := strings.ToLower(strings.TrimSpace(req.Email))
+
+		// If OTP is provided, verify it first
+		if strings.TrimSpace(req.OTP) != "" {
+			ev, err := database.GetEmailVerification(cleanEmail)
+			if err != nil || ev == nil {
+				jsonError(w, "No pending verification found for this email", http.StatusBadRequest)
+				return
+			}
+			if time.Now().After(ev.ExpiresAt) {
+				_ = database.DeleteEmailVerification(cleanEmail)
+				jsonError(w, "Verification code has expired", http.StatusBadRequest)
+				return
+			}
+			if ev.Attempts >= 5 {
+				_ = database.DeleteEmailVerification(cleanEmail)
+				jsonError(w, "Too many failed attempts", http.StatusTooManyRequests)
+				return
+			}
+			if ev.OTPHash != hashOTP(strings.TrimSpace(req.OTP)) {
+				_ = database.IncrementVerificationAttempts(cleanEmail)
+				jsonError(w, "Invalid verification code", http.StatusBadRequest)
+				return
+			}
+			_ = database.DeleteEmailVerification(cleanEmail)
 		}
 
 		slug := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(req.Name), " ", "-"))
@@ -1454,13 +1715,13 @@ func main() {
 		if fullName == "" {
 			fullName = "Admin"
 		}
-		user, err := database.CreateUser(org.ID, req.Email, passHash, fullName, "owner")
+		user, err := database.CreateUser(org.ID, cleanEmail, passHash, fullName, "owner")
 		if err != nil {
 			jsonError(w, fmt.Sprintf("User creation failed (email may already exist): %v", err), http.StatusBadRequest)
 			return
 		}
 
-		token := setJWTTokenCookie(w, user)
+		token := setJWTTokenCookie(w, user, isSecureRequest(r))
 
 		jsonResp(w, map[string]interface{}{
 			"success": true,
@@ -1505,7 +1766,7 @@ func main() {
 			log.Printf("[server] upgraded legacy password hash for user #%d to bcrypt", user.ID)
 		}
 
-		token := setJWTTokenCookie(w, user)
+		token := setJWTTokenCookie(w, user, isSecureRequest(r))
 
 		org, _ := database.GetOrganization(user.OrgID)
 		jsonResp(w, map[string]interface{}{
@@ -1524,6 +1785,8 @@ func main() {
 			Value:    "",
 			Path:     "/",
 			HttpOnly: true,
+			Secure:   isSecureRequest(r),
+			SameSite: http.SameSiteLaxMode,
 			MaxAge:   -1,
 			Expires:  time.Unix(0, 0),
 		})
@@ -1579,7 +1842,7 @@ func main() {
 				return
 			}
 
-			setSessionCookie(w, user.ID)
+			setSessionCookie(w, r, user.ID)
 			http.Redirect(w, r, redirectTarget, http.StatusFound)
 			return
 		}
@@ -1678,7 +1941,7 @@ func main() {
 			return
 		}
 
-		setSessionCookie(w, user.ID)
+		setSessionCookie(w, r, user.ID)
 		http.Redirect(w, r, stateTarget, http.StatusFound)
 	}
 
@@ -1719,7 +1982,7 @@ func main() {
 				return
 			}
 
-			setSessionCookie(w, user.ID)
+			setSessionCookie(w, r, user.ID)
 			http.Redirect(w, r, redirectTarget, http.StatusFound)
 			return
 		}
@@ -1837,7 +2100,7 @@ func main() {
 			return
 		}
 
-		setSessionCookie(w, user.ID)
+		setSessionCookie(w, r, user.ID)
 		http.Redirect(w, r, stateTarget, http.StatusFound)
 	}
 
@@ -1873,8 +2136,8 @@ func main() {
 			return
 		}
 
-		if sessUser.Role == "member" {
-			jsonError(w, "Forbidden: Only organization admins can access member roster", http.StatusForbidden)
+		if sessUser.Role != "owner" && sessUser.Role != "admin" {
+			jsonError(w, "Forbidden: Only organization admins or owners can access member roster", http.StatusForbidden)
 			return
 		}
 
@@ -1903,8 +2166,8 @@ func main() {
 			jsonError(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if sessUser != nil && sessUser.Role == "member" {
-			jsonError(w, "Forbidden: Only organization admins can manage members", http.StatusForbidden)
+		if sessUser != nil && sessUser.Role != "owner" && sessUser.Role != "admin" {
+			jsonError(w, "Forbidden: Only organization admins or owners can manage members", http.StatusForbidden)
 			return
 		}
 
@@ -1975,8 +2238,8 @@ func main() {
 			jsonError(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if sessUser != nil && sessUser.Role == "member" {
-			jsonError(w, "Forbidden", http.StatusForbidden)
+		if sessUser != nil && sessUser.Role != "owner" && sessUser.Role != "admin" {
+			jsonError(w, "Forbidden: Only organization admins or owners can revoke invitations", http.StatusForbidden)
 			return
 		}
 
@@ -2010,8 +2273,8 @@ func main() {
 			jsonError(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if sessUser != nil && sessUser.Role == "member" {
-			jsonError(w, "Forbidden: Only organization admins can send invitations", http.StatusForbidden)
+		if sessUser != nil && sessUser.Role != "owner" && sessUser.Role != "admin" {
+			jsonError(w, "Forbidden: Only organization admins or owners can send invitations", http.StatusForbidden)
 			return
 		}
 		var req struct {
@@ -2124,7 +2387,7 @@ func main() {
 		}
 
 		// Sign the new member in immediately so no separate login step is needed.
-		token := setJWTTokenCookie(w, user)
+		token := setJWTTokenCookie(w, user, isSecureRequest(r))
 
 		org, _ := database.GetOrganization(user.OrgID)
 		jsonResp(w, map[string]interface{}{
@@ -2262,6 +2525,38 @@ func generateToken() string {
 	return hex.EncodeToString(b)
 }
 
+// generateNumericOTP generates a cryptographically secure 6-digit numeric OTP code.
+func generateNumericOTP() (string, error) {
+	max := big.NewInt(1000000)
+	n, err := rand.Int(rand.Reader, max)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%06d", n.Int64()), nil
+}
+
+// hashOTP returns the SHA-256 hex digest of an OTP combined with a server salt.
+func hashOTP(otp string) string {
+	sum := sha256.Sum256([]byte("otp-salt-" + strings.TrimSpace(otp)))
+	return hex.EncodeToString(sum[:])
+}
+
+// isSecureRequest checks whether the request arrived over HTTPS (directly or via trusted reverse proxy).
+func isSecureRequest(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	proto := strings.ToLower(r.Header.Get("X-Forwarded-Proto"))
+	if proto == "https" {
+		return true
+	}
+	cfVisitor := r.Header.Get("Cf-Visitor")
+	if strings.Contains(cfVisitor, `"https"`) {
+		return true
+	}
+	return false
+}
+
 func jsonResp(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
@@ -2299,6 +2594,21 @@ func jsonError(w http.ResponseWriter, msg string, status int) {
 }
 
 func isLoopbackRequest(r *http.Request) bool {
+	// If the server is deployed behind a reverse proxy (e.g. Fly.io, Cloudflare, AWS),
+	// incoming client connections reach the proxy which forwards via loopback/internal IP.
+	// In that case, headers like Fly-Client-IP, CF-Connecting-IP, or X-Forwarded-For represent
+	// the actual remote client and must NEVER be treated as a loopback bypass.
+	if r.Header.Get("Fly-Client-IP") != "" || r.Header.Get("CF-Connecting-IP") != "" {
+		return false
+	}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// If there is an external forwarded IP, verify it is genuinely loopback
+		clientIP := strings.TrimSpace(strings.Split(xff, ",")[0])
+		if clientIP != "" && clientIP != "127.0.0.1" && clientIP != "::1" && !strings.HasPrefix(clientIP, "127.") {
+			return false
+		}
+	}
+
 	host := r.RemoteAddr
 	if i := strings.LastIndex(host, ":"); i >= 0 {
 		host = host[:i]
@@ -2515,16 +2825,53 @@ func encodingBase64(data []byte) string {
 var jwtSecret = loadJWTSecret()
 
 // loadJWTSecret returns the JWT signing key: JWT_SECRET env var when set,
-// otherwise an unpredictable per-process key (sessions invalidate on restart).
+// otherwise reads or generates a persistent secret in cfg.DataDir or ~/.config/get-hike/jwt.secret.
 func loadJWTSecret() []byte {
 	if s := os.Getenv("JWT_SECRET"); s != "" {
 		return []byte(s)
 	}
-	host, _ := os.Hostname()
-	seed := fmt.Sprintf("get-hike-jwt-%s-%d", host, time.Now().UnixNano())
-	sum := sha256.Sum256([]byte(seed))
-	log.Printf("[server] WARNING: JWT_SECRET not set — using an ephemeral signing key; web sessions will expire on server restart")
-	return sum[:]
+
+	// Try reading persistent secret from disk
+	paths := []string{}
+	if dataDir := os.Getenv("DATA_DIR"); dataDir != "" {
+		paths = append(paths, filepath.Join(dataDir, "jwt.secret"))
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		paths = append(paths, filepath.Join(home, ".local", "share", "get-hike", "jwt.secret"))
+		paths = append(paths, filepath.Join(home, ".config", "get-hike", "jwt.secret"))
+	}
+	paths = append(paths, "jwt.secret")
+
+	for _, p := range paths {
+		if data, err := os.ReadFile(p); err == nil && len(strings.TrimSpace(string(data))) >= 32 {
+			return []byte(strings.TrimSpace(string(data)))
+		}
+	}
+
+	// Generate a 32-byte cryptographically secure random secret
+	randBytes := make([]byte, 32)
+	if _, err := rand.Read(randBytes); err != nil {
+		// Fallback to time/host hash if crypto rand completely failed
+		host, _ := os.Hostname()
+		seed := fmt.Sprintf("get-hike-jwt-%s-%d", host, time.Now().UnixNano())
+		sum := sha256.Sum256([]byte(seed))
+		copy(randBytes, sum[:])
+	}
+	secretHex := hex.EncodeToString(randBytes)
+
+	// Persist the generated secret to the first writable location
+	for _, p := range paths {
+		dir := filepath.Dir(p)
+		if err := os.MkdirAll(dir, 0700); err == nil {
+			if err := os.WriteFile(p, []byte(secretHex), 0600); err == nil {
+				log.Printf("[server] Initialized persistent JWT secret in %s", p)
+				return []byte(secretHex)
+			}
+		}
+	}
+
+	log.Printf("[server] WARNING: Could not persist JWT secret to disk; using in-memory random signing key")
+	return []byte(secretHex)
 }
 
 type JWTClaims struct {
@@ -2578,13 +2925,14 @@ func parseJWT(tokenStr string) *JWTClaims {
 	return &claims
 }
 
-func setJWTTokenCookie(w http.ResponseWriter, user *db.User) string {
+func setJWTTokenCookie(w http.ResponseWriter, user *db.User, isSecure bool) string {
 	jwtToken := generateJWT(user)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "mini_session_jwt",
 		Value:    jwtToken,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   isSecure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   7 * 24 * 3600,
 	})

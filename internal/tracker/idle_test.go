@@ -273,3 +273,45 @@ func TestIdleDetectorConcurrency(t *testing.T) {
 
 	wg.Wait()
 }
+
+// TestIdleDetectorInvertedTimeProtection verifies boundary safety when clock skews or idleStartedAt is corrupted.
+func TestIdleDetectorInvertedTimeProtection(t *testing.T) {
+	var blockReceived IdleBlock
+	var resumedCalled atomic.Bool
+
+	d := NewIdleDetector(
+		true,
+		30*time.Second,
+		nil,
+		func(block IdleBlock) {
+			blockReceived = block
+			resumedCalled.Store(true)
+		},
+	)
+	defer d.Stop()
+
+	// 1. Force into StateIdle
+	d.mu.Lock()
+	d.state = StateIdle
+	// Set an impossible future start time (clock jumped backwards or corrupt)
+	d.idleStartedAt = time.Now().Add(10 * time.Minute)
+	d.mu.Unlock()
+
+	// 2. Simulate return
+	d.SetDurationFunc(func() time.Duration {
+		return 2 * time.Second
+	})
+	d.CheckIdleNow()
+
+	time.Sleep(20 * time.Millisecond)
+
+	if !resumedCalled.Load() {
+		t.Fatalf("expected onIdleResumed to be called")
+	}
+	if blockReceived.DurationSeconds < 0 {
+		t.Fatalf("expected non-negative duration_seconds, got %d", blockReceived.DurationSeconds)
+	}
+	if blockReceived.EndTime.Before(blockReceived.StartTime) {
+		t.Fatalf("expected EndTime >= StartTime, got EndTime=%v, StartTime=%v", blockReceived.EndTime, blockReceived.StartTime)
+	}
+}

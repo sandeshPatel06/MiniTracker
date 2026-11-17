@@ -52,13 +52,42 @@ var (
 	titleEmailPattern = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
 )
 
-// SanitizeTitle strips http(s) URLs and emails, collapses whitespace, trims, and
+// sanitizeDelimiters strips prompt injection patterns and special delimiters that adversarial window
+// titles or active tasks might use to escape prompt sections or mimic system instructions.
+func sanitizeDelimiters(s string) string {
+	// Strip control characters / invisible directional override characters / zero-width characters
+	s = strings.Map(func(r rune) rune {
+		if (r >= 0 && r < 32 && r != '\t' && r != '\n' && r != '\r') || r == 0x7f {
+			return -1
+		}
+		// Zero-width spaces, directional marks, and invisibles
+		if r == 0x200B || r == 0x200C || r == 0x200D || r == 0xFEFF ||
+			(r >= 0x202A && r <= 0x202E) || (r >= 0x2066 && r <= 0x2069) {
+			return -1
+		}
+		return r
+	}, s)
+
+	// Replace structural delimiters often used to break out of prompt sections
+	s = strings.ReplaceAll(s, "```", "'''")
+	s = strings.ReplaceAll(s, "ITEMS:", "ITEMS (redacted):")
+	s = strings.ReplaceAll(s, "WINDOW:", "WINDOW (redacted):")
+	s = strings.ReplaceAll(s, "TASK CONTEXT:", "TASK CONTEXT (redacted):")
+	s = strings.ReplaceAll(s, "SESSION CONTEXT:", "SESSION CONTEXT (redacted):")
+	s = strings.ReplaceAll(s, "DATA BOUNDARY:", "DATA BOUNDARY (redacted):")
+	s = strings.ReplaceAll(s, "JSON OUTPUT CONTRACT:", "OUTPUT CONTRACT (redacted):")
+	s = strings.ReplaceAll(s, "SCORING RUBRIC:", "RUBRIC (redacted):")
+	return s
+}
+
+// SanitizeTitle strips http(s) URLs and emails, removes adversarial delimiters, collapses whitespace, trims, and
 // truncates rune-safely to maxChars with "…".
 func SanitizeTitle(title string, maxChars int) string {
 	if maxChars <= 0 {
 		return ""
 	}
-	clean := titleURLPattern.ReplaceAllString(title, " ")
+	clean := sanitizeDelimiters(title)
+	clean = titleURLPattern.ReplaceAllString(clean, " ")
 	clean = titleEmailPattern.ReplaceAllString(clean, " ")
 	clean = strings.Join(strings.Fields(clean), " ")
 	runes := []rune(clean)
@@ -116,7 +145,7 @@ func encodePromptItems(items []PromptItem) string {
 			E:   json.Number(strconv.FormatFloat(entropy, 'f', 1, 64)),
 			K:   item.TotalKeys,
 			C:   item.TotalClicks,
-			A:   item.AppName,
+			A:   SanitizeTitle(item.AppName, 40),
 			TS:  item.Timestamp.Format("15:04"),
 			Img: item.HasImage,
 		})
@@ -306,6 +335,29 @@ func ParseAnalysisJSON(raw string, expectedItems int) ([]AnalysisResultItem, err
 	if len(results) == 0 {
 		return nil, fmt.Errorf("parse analysis JSON: empty array (expected %d items)", expectedItems)
 	}
+
+	for i := range results {
+		results[i].Category = normalizeCategory(results[i].Category)
+		if results[i].Score < 0 {
+			results[i].Score = 0
+		} else if results[i].Score > 100 {
+			results[i].Score = 100
+		}
+		if results[i].Category == "Idle" && results[i].Score > 25 {
+			results[i].Score = 25
+		}
+		if !(results[i].Confidence > 0 && results[i].Confidence <= 1) {
+			results[i].Confidence = 0.5
+		}
+		results[i].AppName = SanitizeTitle(results[i].AppName, 60)
+		results[i].AppCategory = SanitizeTitle(results[i].AppCategory, 60)
+		results[i].Title = SanitizeTitle(results[i].Title, 100)
+		results[i].Reason = SanitizeTitle(results[i].Reason, 120)
+		if results[i].Reason == "" {
+			results[i].Reason = "AI classification completed"
+		}
+	}
+
 	return results, nil
 }
 

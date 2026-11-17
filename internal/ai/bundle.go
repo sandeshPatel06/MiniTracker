@@ -192,6 +192,9 @@ func ParseBundleJSON(raw string) (*SessionBundleResult, error) {
 	if strings.TrimSpace(result.Reason) == "" {
 		result.Reason = "no reason provided"
 	}
+	result.Reason = SanitizeTitle(result.Reason, 120)
+	result.AppName = SanitizeTitle(result.AppName, 60)
+	result.AppCategory = SanitizeTitle(result.AppCategory, 60)
 	if !(result.Confidence > 0 && result.Confidence <= 1) {
 		// Covers missing (0), negative, >1 and any NaN a non-JSON path could
 		// smuggle in (NaN fails both comparisons above, so it lands here too).

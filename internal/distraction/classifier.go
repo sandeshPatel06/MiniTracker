@@ -72,9 +72,12 @@ func (c *Classifier) Classify(appName, windowTitle string) (Classification, stri
 		switch rule.Kind {
 		case "app":
 			matched = strings.Contains(appLower, patLower)
-		case "domain", "keyword":
-			matched = strings.Contains(titleLower, patLower)
+		case "domain":
+			matched = strings.Contains(titleLower, patLower) || strings.Contains(appLower, patLower)
+		case "keyword":
+			matched = strings.Contains(titleLower, patLower) || strings.Contains(appLower, patLower)
 		default:
+			// "regex" or any custom pattern type
 			if re, err := regexp.Compile("(?i)" + rule.Pattern); err == nil {
 				matched = re.MatchString(titleLower) || re.MatchString(appLower)
 			}

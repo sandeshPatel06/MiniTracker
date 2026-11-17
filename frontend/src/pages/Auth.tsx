@@ -25,9 +25,15 @@ export function AuthPage({ onAuthSuccess, onSkip, backendUnavailable = false, on
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<'google' | 'azure' | null>(null);
   const [error, setError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
   const [retryingConnection, setRetryingConnection] = useState(false);
   const [retryFailed, setRetryFailed] = useState(false);
   const [pollCount, setPollCount] = useState(0);
+
+  // OTP Verification state for two-step registration
+  const [isOtpStep, setIsOtpStep] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
 
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const oauthTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -62,6 +68,15 @@ export function AuthPage({ onAuthSuccess, onSkip, backendUnavailable = false, on
       stopAuthPolling();
     };
   }, []);
+
+  // Countdown timer for OTP resend button
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((c) => Math.max(0, c - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
   const stopAuthPolling = () => {
     if (pollTimerRef.current) {
@@ -134,13 +149,51 @@ export function AuthPage({ onAuthSuccess, onSkip, backendUnavailable = false, on
     e.preventDefault();
     if (loading || oauthLoading !== null) return;
     setError('');
+    setSuccessMsg('');
 
     const trimmedEmail = email.trim();
     const trimmedPassword = password;
     const trimmedFullName = fullName.trim();
     const trimmedOrgName = orgName.trim();
+    const trimmedOtp = otpCode.trim();
 
-    // 1. Validation checks
+    // 1. If currently on OTP verification step during registration
+    if (!isLogin && isOtpStep) {
+      if (!trimmedOtp || trimmedOtp.length < 6) {
+        setError('Please enter the 6-digit verification code sent to your email.');
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const res = await apiFetch('/api/auth/verify-registration', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: trimmedEmail, otp: trimmedOtp }),
+        });
+
+        const raw = await res.text();
+        let data: any = {};
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          data = raw ? { error: raw.trim() } : {};
+        }
+
+        if (res.ok && data.success) {
+          onAuthSuccess(data.user, data.org || null, data.token);
+        } else {
+          setError(data.error || data.message || 'Invalid or expired verification code.');
+        }
+      } catch {
+        setError('Network error. Unable to reach authentication server.');
+      } finally {
+        if (isMountedRef.current) setLoading(false);
+      }
+      return;
+    }
+
+    // 2. Validation checks
     if (!trimmedEmail) {
       setError('Email address is required.');
       return;
@@ -179,43 +232,97 @@ export function AuthPage({ onAuthSuccess, onSkip, backendUnavailable = false, on
 
     setLoading(true);
 
-    const endpoint = isLogin ? '/api/auth/login' : '/api/org/register';
-    const payload = isLogin
-      ? { email: trimmedEmail, password: trimmedPassword }
-      : { name: trimmedOrgName || 'My Workspace', email: trimmedEmail, password: trimmedPassword, full_name: trimmedFullName };
-
-    try {
-      const res = await apiFetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      const raw = await res.text();
-      let data: any = {};
+    // If login, call /api/auth/login directly. If register, initiate OTP verification flow via /api/auth/register-intent
+    if (isLogin) {
       try {
-        data = JSON.parse(raw);
-      } catch {
-        // Guard against HTML error pages leaking into error text
-        if (raw.includes('<html') || raw.includes('<!DOCTYPE')) {
-          data = { error: `Server error (${res.status}). Please try again later.` };
-        } else {
+        const res = await apiFetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: trimmedEmail, password: trimmedPassword }),
+        });
+
+        const raw = await res.text();
+        let data: any = {};
+        try {
+          data = JSON.parse(raw);
+        } catch {
           data = raw ? { error: raw.trim() } : {};
         }
-      }
 
+        if (res.ok && data.success) {
+          onAuthSuccess(data.user, data.org || null, data.token);
+        } else {
+          setError(data.error || data.message || 'Invalid email or password.');
+        }
+      } catch {
+        setError('Network error. Unable to reach authentication server.');
+      } finally {
+        if (isMountedRef.current) setLoading(false);
+      }
+    } else {
+      // Registration: Call /api/auth/register-intent
+      try {
+        const res = await apiFetch('/api/auth/register-intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            org_name: trimmedOrgName || 'My Workspace',
+            email: trimmedEmail,
+            password: trimmedPassword,
+            name: trimmedFullName,
+          }),
+        });
+
+        const raw = await res.text();
+        let data: any = {};
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          data = raw ? { error: raw.trim() } : {};
+        }
+
+        if (res.ok && data.success) {
+          setIsOtpStep(true);
+          setResendCooldown(60);
+          setSuccessMsg(`Verification code sent to ${trimmedEmail}. Please check your inbox.`);
+        } else {
+          setError(data.error || data.message || 'Failed to start registration.');
+        }
+      } catch {
+        setError('Network error. Unable to reach authentication server.');
+      } finally {
+        if (isMountedRef.current) setLoading(false);
+      }
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (resendCooldown > 0 || loading) return;
+    setError('');
+    setSuccessMsg('');
+    setLoading(true);
+    try {
+      const res = await apiFetch('/api/auth/register-intent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          org_name: orgName.trim() || 'My Workspace',
+          email: email.trim(),
+          password: password,
+          name: fullName.trim(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
-        onAuthSuccess(data.user, data.org || null, data.token);
+        setResendCooldown(60);
+        setSuccessMsg(`New code sent to ${email.trim()}.`);
       } else {
-        const errorMsg = data.error || data.message || (res.status === 401 ? 'Invalid email or password.' : 'Authentication failed.');
-        setError(errorMsg);
+        setError(data.error || 'Failed to resend code.');
       }
     } catch {
-      setError('Network error. Unable to reach authentication server.');
+      setError('Network error.');
     } finally {
-      if (isMountedRef.current) {
-        setLoading(false);
-      }
+      if (isMountedRef.current) setLoading(false);
     }
   };
 
@@ -374,7 +481,7 @@ export function AuthPage({ onAuthSuccess, onSkip, backendUnavailable = false, on
               disabled={isFormDisabled}
               className={isLogin ? 'btn btn-primary' : 'btn btn-secondary'}
               style={{ flex: 1, padding: '8px 10px', fontSize: 13, fontWeight: isLogin ? 700 : 500 }}
-              onClick={() => { setIsLogin(true); setError(''); }}
+              onClick={() => { setIsLogin(true); setIsOtpStep(false); setError(''); setSuccessMsg(''); }}
             >
               Sign in
             </button>
@@ -387,14 +494,15 @@ export function AuthPage({ onAuthSuccess, onSkip, backendUnavailable = false, on
               disabled={isFormDisabled}
               className={!isLogin ? 'btn btn-primary' : 'btn btn-secondary'}
               style={{ flex: 1, padding: '8px 10px', fontSize: 13, fontWeight: !isLogin ? 700 : 500 }}
-              onClick={() => { setIsLogin(false); setError(''); }}
+              onClick={() => { setIsLogin(false); setIsOtpStep(false); setError(''); setSuccessMsg(''); }}
             >
               Register
             </button>
           </div>
 
-          {/* Error Alert */}
+          {/* Success / Error Alerts */}
           {error && <Alert type="error" message={error} style={{ marginBottom: 14 }} />}
+          {successMsg && <Alert type="success" message={successMsg} style={{ marginBottom: 14 }} />}
 
           {/* Social SSO OAuth Buttons */}
           <div className="oauth-button-group">
@@ -465,115 +573,208 @@ export function AuthPage({ onAuthSuccess, onSkip, backendUnavailable = false, on
 
           {/* Email & Password Form */}
           <form id="auth-form-panel" onSubmit={handleSubmit} noValidate>
-            {!isLogin && (
+            {!isLogin && isOtpStep ? (
               <>
-                <div className="form-group">
-                  <label className="form-label" htmlFor="auth-fullname">Full Name</label>
-                  <input
-                    id="auth-fullname"
-                    type="text"
-                    className="form-input"
-                    placeholder="John Doe"
-                    autoComplete="name"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    disabled={isFormDisabled}
-                    required={!isLogin}
-                  />
+                <div style={{ textAlign: 'center', marginBottom: 18 }}>
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    Enter the 6-digit verification code sent to:
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent-primary)', wordBreak: 'break-all' }}>
+                    {email}
+                  </div>
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label" htmlFor="auth-orgname">Organization / Workspace Name</label>
+                <div className="form-group" style={{ marginBottom: 16 }}>
+                  <label className="form-label" htmlFor="auth-otp" style={{ textAlign: 'center', display: 'block' }}>
+                    Verification Code (OTP)
+                  </label>
                   <input
-                    id="auth-orgname"
+                    id="auth-otp"
                     type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
                     className="form-input"
-                    placeholder="Acme Corp"
-                    value={orgName}
-                    onChange={(e) => setOrgName(e.target.value)}
+                    placeholder="123456"
+                    value={otpCode}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '');
+                      setOtpCode(val);
+                      if (error) setError('');
+                    }}
                     disabled={isFormDisabled}
-                    required={!isLogin}
+                    autoFocus
+                    required
+                    style={{
+                      fontSize: 22,
+                      letterSpacing: 6,
+                      textAlign: 'center',
+                      fontWeight: 700,
+                      padding: '12px 16px',
+                    }}
                   />
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', marginTop: 6 }}>
+                    Code expires in 10 minutes.
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="btn btn-primary w-full"
+                  disabled={isFormDisabled || otpCode.length < 6}
+                  style={{ padding: '10px 16px', fontWeight: 700, marginBottom: 10 }}
+                >
+                  {loading ? (
+                    <>
+                      <span className="spinner-sm" /> Verifying…
+                    </>
+                  ) : (
+                    'Verify & Create Account'
+                  )}
+                </button>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, marginTop: 10 }}>
+                  <button
+                    type="button"
+                    className="btn-link"
+                    onClick={() => { setIsOtpStep(false); setOtpCode(''); setError(''); setSuccessMsg(''); }}
+                    disabled={isFormDisabled}
+                    style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                  >
+                    ← Edit details
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn-link"
+                    onClick={handleResendOtp}
+                    disabled={isFormDisabled || resendCooldown > 0}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: resendCooldown > 0 ? 'var(--text-muted)' : 'var(--accent-primary)',
+                      cursor: resendCooldown > 0 ? 'not-allowed' : 'pointer',
+                      padding: 0,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Resend code'}
+                  </button>
                 </div>
               </>
-            )}
+            ) : (
+              <>
+                {!isLogin && (
+                  <>
+                    <div className="form-group">
+                      <label className="form-label" htmlFor="auth-fullname">Full Name</label>
+                      <input
+                        id="auth-fullname"
+                        type="text"
+                        className="form-input"
+                        placeholder="John Doe"
+                        autoComplete="name"
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        disabled={isFormDisabled}
+                        required={!isLogin}
+                      />
+                    </div>
 
-            <div className="form-group">
-              <label className="form-label" htmlFor="auth-email">Work Email</label>
-              <input
-                id="auth-email"
-                type="email"
-                className="form-input"
-                placeholder="you@company.com"
-                autoComplete="email"
-                value={email}
-                onChange={(e) => { setEmail(e.target.value); if (error) setError(''); }}
-                disabled={isFormDisabled}
-                required
-              />
-            </div>
+                    <div className="form-group">
+                      <label className="form-label" htmlFor="auth-orgname">Organization / Workspace Name</label>
+                      <input
+                        id="auth-orgname"
+                        type="text"
+                        className="form-input"
+                        placeholder="Acme Corp"
+                        value={orgName}
+                        onChange={(e) => setOrgName(e.target.value)}
+                        disabled={isFormDisabled}
+                        required={!isLogin}
+                      />
+                    </div>
+                  </>
+                )}
 
-            <div className="form-group" style={{ marginBottom: 14 }}>
-              <label className="form-label" htmlFor="auth-password">Password</label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  id="auth-password"
-                  type={showPassword ? 'text' : 'password'}
-                  className="form-input"
-                  placeholder="••••••••••••"
-                  autoComplete={isLogin ? 'current-password' : 'new-password'}
-                  value={password}
-                  onChange={(e) => { setPassword(e.target.value); if (error) setError(''); }}
-                  disabled={isFormDisabled}
-                  maxLength={MAX_PASSWORD_LENGTH}
-                  required
-                  style={{ paddingRight: 44, width: '100%' }}
-                />
-                <button
-                  type="button"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  aria-pressed={showPassword}
-                  disabled={isFormDisabled}
-                  onClick={() => setShowPassword((v) => !v)}
-                  style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: isFormDisabled ? 'not-allowed' : 'pointer', padding: 4, fontSize: 12 }}
-                >
-                  {showPassword ? 'Hide' : 'Show'}
-                </button>
-              </div>
-
-              {!isLogin && password && (
-                <div style={{ marginTop: 6, fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <div
-                    role="progressbar"
-                    aria-valuenow={passwordStrength.score}
-                    aria-valuemin={0}
-                    aria-valuemax={3}
-                    aria-label="Password strength"
-                    style={{ flex: '0 0 48px', height: 4, background: 'var(--border-subtle)', borderRadius: 2, overflow: 'hidden' }}
-                  >
-                    <div style={{ width: `${(passwordStrength.score / 3) * 100}%`, height: '100%', background: passwordStrength.color, transition: 'all 0.2s ease' }} />
-                  </div>
-                  <span style={{ color: passwordStrength.color, fontWeight: 500 }}>
-                    {passwordStrength.text}
-                  </span>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="auth-email">Work Email</label>
+                  <input
+                    id="auth-email"
+                    type="email"
+                    className="form-input"
+                    placeholder="you@company.com"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(e) => { setEmail(e.target.value); if (error) setError(''); }}
+                    disabled={isFormDisabled}
+                    required
+                  />
                 </div>
-              )}
-            </div>
 
-            <button
-              type="submit"
-              className="btn btn-primary w-full"
-              disabled={isFormDisabled}
-              style={{ padding: '10px 16px', fontWeight: 700, opacity: isFormDisabled ? 0.6 : undefined, cursor: isFormDisabled ? 'not-allowed' : undefined }}
-            >
-              {loading ? (
-                <>
-                  <span className="spinner-sm" /> {isLogin ? 'Signing in…' : 'Creating account…'}
-                </>
-              ) : (
-                isLogin ? 'Sign In' : 'Create Account'
-              )}
-            </button>
+                <div className="form-group" style={{ marginBottom: 14 }}>
+                  <label className="form-label" htmlFor="auth-password">Password</label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      id="auth-password"
+                      type={showPassword ? 'text' : 'password'}
+                      className="form-input"
+                      placeholder="••••••••••••"
+                      autoComplete={isLogin ? 'current-password' : 'new-password'}
+                      value={password}
+                      onChange={(e) => { setPassword(e.target.value); if (error) setError(''); }}
+                      disabled={isFormDisabled}
+                      maxLength={MAX_PASSWORD_LENGTH}
+                      required
+                      style={{ paddingRight: 44, width: '100%' }}
+                    />
+                    <button
+                      type="button"
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      aria-pressed={showPassword}
+                      disabled={isFormDisabled}
+                      onClick={() => setShowPassword((v) => !v)}
+                      style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: isFormDisabled ? 'not-allowed' : 'pointer', padding: 4, fontSize: 12 }}
+                    >
+                      {showPassword ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
+
+                  {!isLogin && password && (
+                    <div style={{ marginTop: 6, fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div
+                        role="progressbar"
+                        aria-valuenow={passwordStrength.score}
+                        aria-valuemin={0}
+                        aria-valuemax={3}
+                        aria-label="Password strength"
+                        style={{ flex: '0 0 48px', height: 4, background: 'var(--border-subtle)', borderRadius: 2, overflow: 'hidden' }}
+                      >
+                        <div style={{ width: `${(passwordStrength.score / 3) * 100}%`, height: '100%', background: passwordStrength.color, transition: 'all 0.2s ease' }} />
+                      </div>
+                      <span style={{ color: passwordStrength.color, fontWeight: 500 }}>
+                        {passwordStrength.text}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="submit"
+                  className="btn btn-primary w-full"
+                  disabled={isFormDisabled}
+                  style={{ padding: '10px 16px', fontWeight: 700, opacity: isFormDisabled ? 0.6 : undefined, cursor: isFormDisabled ? 'not-allowed' : undefined }}
+                >
+                  {loading ? (
+                    <>
+                      <span className="spinner-sm" /> {isLogin ? 'Signing in…' : 'Sending code…'}
+                    </>
+                  ) : (
+                    isLogin ? 'Sign In' : 'Continue with Email'
+                  )}
+                </button>
+              </>
+            )}
           </form>
         </div>
 

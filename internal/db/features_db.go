@@ -3,11 +3,35 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 )
+
+// rebindPlaceholders rewrites '?' parameter placeholders to '$1, $2, ...'
+// when running against a PostgreSQL database.
+func (db *DB) rebindPlaceholders(query string) string {
+	if db.dialect != dialect.Postgres {
+		return query
+	}
+	var b strings.Builder
+	idx := 1
+	inSingle := false
+	for _, r := range query {
+		if r == '\'' {
+			inSingle = !inSingle
+			b.WriteRune(r)
+		} else if r == '?' && !inSingle {
+			fmt.Fprintf(&b, "$%d", idx)
+			idx++
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
 
 // PrivacyRule represents a filter rule for sensitive window detection.
 type PrivacyRule struct {
@@ -297,13 +321,24 @@ func (db *DB) GetPrivacyRules() ([]PrivacyRule, error) {
 	for rows.Next() {
 		var r PrivacyRule
 		var isActive, isBuiltIn int
+		var isActiveBool, isBuiltInBool bool
 		var createdStr string
-		if err := rows.Scan(&r.ID, &r.RuleType, &r.Pattern, &r.Action, &r.Description, &isActive, &isBuiltIn, &createdStr); err != nil {
-			continue
+		var createdTime time.Time
+		if db.dialect == dialect.Postgres {
+			if err := rows.Scan(&r.ID, &r.RuleType, &r.Pattern, &r.Action, &r.Description, &isActiveBool, &isBuiltInBool, &createdTime); err != nil {
+				continue
+			}
+			r.IsActive = isActiveBool
+			r.IsBuiltIn = isBuiltInBool
+			r.CreatedAt = createdTime
+		} else {
+			if err := rows.Scan(&r.ID, &r.RuleType, &r.Pattern, &r.Action, &r.Description, &isActive, &isBuiltIn, &createdStr); err != nil {
+				continue
+			}
+			r.IsActive = isActive == 1
+			r.IsBuiltIn = isBuiltIn == 1
+			r.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 		}
-		r.IsActive = isActive == 1
-		r.IsBuiltIn = isBuiltIn == 1
-		r.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 		rules = append(rules, r)
 	}
 	return rules, nil
@@ -318,6 +353,15 @@ func (db *DB) InsertPrivacyRule(rule PrivacyRule) (int64, error) {
 	if rule.IsBuiltIn {
 		builtInInt = 1
 	}
+
+	if db.dialect == dialect.Postgres {
+		query := `INSERT INTO privacy_rules (rule_type, pattern, action, description, is_active, is_built_in, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`
+		var id int64
+		err := db.rawDB.QueryRow(query, rule.RuleType, rule.Pattern, rule.Action, rule.Description, rule.IsActive, rule.IsBuiltIn, time.Now().UTC()).Scan(&id)
+		return id, err
+	}
+
 	res, err := db.rawDB.Exec(
 		"INSERT INTO privacy_rules (rule_type, pattern, action, description, is_active, is_built_in, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
 		rule.RuleType, rule.Pattern, rule.Action, rule.Description, activeInt, builtInInt, time.Now().UTC().Format(time.RFC3339),
@@ -333,12 +377,17 @@ func (db *DB) TogglePrivacyRule(id int64, active bool) error {
 	if active {
 		activeInt = 1
 	}
+	if db.dialect == dialect.Postgres {
+		_, err := db.rawDB.Exec("UPDATE privacy_rules SET is_active = $1 WHERE id = $2", active, id)
+		return err
+	}
 	_, err := db.rawDB.Exec("UPDATE privacy_rules SET is_active = ? WHERE id = ?", activeInt, id)
 	return err
 }
 
 func (db *DB) DeletePrivacyRule(id int64) error {
-	_, err := db.rawDB.Exec("DELETE FROM privacy_rules WHERE id = ?", id)
+	query := db.rebindPlaceholders("DELETE FROM privacy_rules WHERE id = ?")
+	_, err := db.rawDB.Exec(query, id)
 	return err
 }
 
@@ -475,6 +524,14 @@ func (db *DB) AllocateIdleBlock(params RetroactiveAllocationParams) (int64, erro
 // -------------------------------------------------------------
 
 func (db *DB) RecordDistractionAlert(alert DistractionAlert) (int64, error) {
+	if db.dialect == dialect.Postgres {
+		query := `INSERT INTO distraction_alerts (org_id, user_id, timestamp, app_name, window_title, dwell_seconds, threshold_seconds, action_taken, action_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`
+		var id int64
+		err := db.rawDB.QueryRow(query, alert.OrgID, alert.UserID, alert.Timestamp.UTC(), alert.AppName, alert.WindowTitle, alert.DwellSeconds, alert.ThresholdSeconds, alert.ActionTaken, time.Now().UTC()).Scan(&id)
+		return id, err
+	}
+
 	res, err := db.rawDB.Exec(
 		"INSERT INTO distraction_alerts (org_id, user_id, timestamp, app_name, window_title, dwell_seconds, threshold_seconds, action_taken, action_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		alert.OrgID, alert.UserID, alert.Timestamp.UTC().Format(time.RFC3339), alert.AppName, alert.WindowTitle, alert.DwellSeconds, alert.ThresholdSeconds, alert.ActionTaken, time.Now().UTC().Format(time.RFC3339),
@@ -486,12 +543,19 @@ func (db *DB) RecordDistractionAlert(alert DistractionAlert) (int64, error) {
 }
 
 func (db *DB) UpdateDistractionAlertAction(id int64, action string) error {
-	_, err := db.rawDB.Exec("UPDATE distraction_alerts SET action_taken = ?, action_at = ? WHERE id = ?", action, time.Now().UTC().Format(time.RFC3339), id)
+	query := db.rebindPlaceholders("UPDATE distraction_alerts SET action_taken = ?, action_at = ? WHERE id = ?")
+	nowStr := time.Now().UTC().Format(time.RFC3339)
+	if db.dialect == dialect.Postgres {
+		_, err := db.rawDB.Exec(query, action, time.Now().UTC(), id)
+		return err
+	}
+	_, err := db.rawDB.Exec(query, action, nowStr, id)
 	return err
 }
 
 func (db *DB) GetDistractionRules(userID int64) ([]DistractionRule, error) {
-	rows, err := db.rawDB.Query("SELECT id, org_id, user_id, kind, pattern, is_distraction, created_at FROM distraction_rules WHERE user_id = ? ORDER BY id ASC", userID)
+	query := db.rebindPlaceholders("SELECT id, org_id, user_id, kind, pattern, is_distraction, created_at FROM distraction_rules WHERE user_id = ? ORDER BY id ASC")
+	rows, err := db.rawDB.Query(query, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -501,18 +565,39 @@ func (db *DB) GetDistractionRules(userID int64) ([]DistractionRule, error) {
 	for rows.Next() {
 		var r DistractionRule
 		var isDist int
+		var isDistBool bool
 		var createdStr string
-		if err := rows.Scan(&r.ID, &r.OrgID, &r.UserID, &r.Kind, &r.Pattern, &isDist, &createdStr); err != nil {
-			continue
+		var createdTime time.Time
+		if db.dialect == dialect.Postgres {
+			if err := rows.Scan(&r.ID, &r.OrgID, &r.UserID, &r.Kind, &r.Pattern, &isDistBool, &createdTime); err != nil {
+				continue
+			}
+			r.IsDistraction = isDistBool
+			r.CreatedAt = createdTime
+		} else {
+			if err := rows.Scan(&r.ID, &r.OrgID, &r.UserID, &r.Kind, &r.Pattern, &isDist, &createdStr); err != nil {
+				continue
+			}
+			r.IsDistraction = isDist == 1
+			r.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 		}
-		r.IsDistraction = isDist == 1
-		r.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 		rules = append(rules, r)
 	}
 	return rules, nil
 }
 
 func (db *DB) UpsertDistractionRule(rule DistractionRule) (int64, error) {
+	if db.dialect == dialect.Postgres {
+		query := `INSERT INTO distraction_rules (org_id, user_id, kind, pattern, is_distraction, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (user_id, pattern)
+			DO UPDATE SET org_id = EXCLUDED.org_id, kind = EXCLUDED.kind, is_distraction = EXCLUDED.is_distraction
+			RETURNING id`
+		var id int64
+		err := db.rawDB.QueryRow(query, rule.OrgID, rule.UserID, rule.Kind, rule.Pattern, rule.IsDistraction, time.Now().UTC()).Scan(&id)
+		return id, err
+	}
+
 	isDist := 0
 	if rule.IsDistraction {
 		isDist = 1
@@ -528,7 +613,8 @@ func (db *DB) UpsertDistractionRule(rule DistractionRule) (int64, error) {
 }
 
 func (db *DB) DeleteDistractionRule(id int64) error {
-	_, err := db.rawDB.Exec("DELETE FROM distraction_rules WHERE id = ?", id)
+	query := db.rebindPlaceholders("DELETE FROM distraction_rules WHERE id = ?")
+	_, err := db.rawDB.Exec(query, id)
 	return err
 }
 
@@ -537,7 +623,8 @@ func (db *DB) DeleteDistractionRule(id int64) error {
 // -------------------------------------------------------------
 
 func (db *DB) GetCalendarIntegrations(userID int64) ([]CalendarIntegration, error) {
-	rows, err := db.rawDB.Query("SELECT id, user_id, provider, account_email, display_name, sync_status, last_synced_at, auto_match_enabled, created_at FROM calendar_integrations WHERE user_id = ?", userID)
+	query := db.rebindPlaceholders("SELECT id, user_id, provider, account_email, display_name, sync_status, last_synced_at, auto_match_enabled, created_at FROM calendar_integrations WHERE user_id = ?")
+	rows, err := db.rawDB.Query(query, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -547,22 +634,53 @@ func (db *DB) GetCalendarIntegrations(userID int64) ([]CalendarIntegration, erro
 	for rows.Next() {
 		var ci CalendarIntegration
 		var autoMatch int
+		var autoMatchBool bool
 		var lastSync sql.NullString
+		var lastSyncTime sql.NullTime
 		var createdStr string
-		if err := rows.Scan(&ci.ID, &ci.UserID, &ci.Provider, &ci.AccountEmail, &ci.DisplayName, &ci.SyncStatus, &lastSync, &autoMatch, &createdStr); err != nil {
-			continue
+		var createdTime time.Time
+		if db.dialect == dialect.Postgres {
+			if err := rows.Scan(&ci.ID, &ci.UserID, &ci.Provider, &ci.AccountEmail, &ci.DisplayName, &ci.SyncStatus, &lastSyncTime, &autoMatchBool, &createdTime); err != nil {
+				continue
+			}
+			ci.AutoMatchEnabled = autoMatchBool
+			if lastSyncTime.Valid {
+				ci.LastSyncedAt = lastSyncTime.Time
+			}
+			ci.CreatedAt = createdTime
+		} else {
+			if err := rows.Scan(&ci.ID, &ci.UserID, &ci.Provider, &ci.AccountEmail, &ci.DisplayName, &ci.SyncStatus, &lastSync, &autoMatch, &createdStr); err != nil {
+				continue
+			}
+			ci.AutoMatchEnabled = autoMatch == 1
+			if lastSync.Valid {
+				ci.LastSyncedAt, _ = time.Parse(time.RFC3339, lastSync.String)
+			}
+			ci.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 		}
-		ci.AutoMatchEnabled = autoMatch == 1
-		if lastSync.Valid {
-			ci.LastSyncedAt, _ = time.Parse(time.RFC3339, lastSync.String)
-		}
-		ci.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 		integrations = append(integrations, ci)
 	}
 	return integrations, nil
 }
 
 func (db *DB) UpsertCalendarIntegration(ci CalendarIntegration) (int64, error) {
+	if db.dialect == dialect.Postgres {
+		query := `INSERT INTO calendar_integrations (user_id, provider, account_email, display_name, encrypted_tokens, sync_status, last_synced_at, sync_token, auto_match_enabled, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			ON CONFLICT (user_id, provider, account_email)
+			DO UPDATE SET display_name = EXCLUDED.display_name, encrypted_tokens = EXCLUDED.encrypted_tokens,
+				sync_status = EXCLUDED.sync_status, last_synced_at = EXCLUDED.last_synced_at,
+				sync_token = EXCLUDED.sync_token, auto_match_enabled = EXCLUDED.auto_match_enabled
+			RETURNING id`
+		var id int64
+		var lastSync interface{}
+		if !ci.LastSyncedAt.IsZero() {
+			lastSync = ci.LastSyncedAt.UTC()
+		}
+		err := db.rawDB.QueryRow(query, ci.UserID, ci.Provider, ci.AccountEmail, ci.DisplayName, ci.EncryptedTokens, ci.SyncStatus, lastSync, ci.SyncToken, ci.AutoMatchEnabled, time.Now().UTC()).Scan(&id)
+		return id, err
+	}
+
 	autoMatch := 0
 	if ci.AutoMatchEnabled {
 		autoMatch = 1
@@ -577,13 +695,48 @@ func (db *DB) UpsertCalendarIntegration(ci CalendarIntegration) (int64, error) {
 	return res.LastInsertId()
 }
 
+func (db *DB) InsertCalendarEvent(event CalendarEvent) (int64, error) {
+	if db.dialect == dialect.Postgres {
+		query := `INSERT INTO calendar_events (integration_id, external_id, title, description, start_time, end_time, all_day, status, meeting_url, is_matched, matched_log_id, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`
+		var id int64
+		err := db.rawDB.QueryRow(query, event.IntegrationID, event.ExternalID, event.Title, event.Description, event.StartTime.UTC(), event.EndTime.UTC(), event.AllDay, event.Status, event.MeetingURL, event.IsMatched, event.MatchedLogID, time.Now().UTC()).Scan(&id)
+		return id, err
+	}
+
+	allDayInt := 0
+	if event.AllDay {
+		allDayInt = 1
+	}
+	isMatchedInt := 0
+	if event.IsMatched {
+		isMatchedInt = 1
+	}
+	res, err := db.rawDB.Exec(
+		"INSERT INTO calendar_events (integration_id, external_id, title, description, start_time, end_time, all_day, status, meeting_url, is_matched, matched_log_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		event.IntegrationID, event.ExternalID, event.Title, event.Description, event.StartTime.UTC().Format(time.RFC3339), event.EndTime.UTC().Format(time.RFC3339), allDayInt, event.Status, event.MeetingURL, isMatchedInt, event.MatchedLogID, time.Now().UTC().Format(time.RFC3339),
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
 func (db *DB) GetCalendarEvents(userID int64, from, to time.Time) ([]CalendarEvent, error) {
-	query := `SELECT e.id, e.integration_id, e.external_id, e.title, e.description, e.start_time, e.end_time, e.all_day, e.status, e.meeting_url, e.is_matched, e.matched_log_id, e.created_at
+	rawQuery := `SELECT e.id, e.integration_id, e.external_id, e.title, e.description, e.start_time, e.end_time, e.all_day, e.status, e.meeting_url, e.is_matched, e.matched_log_id, e.created_at
 		FROM calendar_events e
 		JOIN calendar_integrations i ON e.integration_id = i.id
 		WHERE i.user_id = ? AND e.start_time <= ? AND e.end_time >= ?
 		ORDER BY e.start_time ASC`
-	rows, err := db.rawDB.Query(query, userID, to.UTC().Format(time.RFC3339), from.UTC().Format(time.RFC3339))
+	query := db.rebindPlaceholders(rawQuery)
+
+	var rows *sql.Rows
+	var err error
+	if db.dialect == dialect.Postgres {
+		rows, err = db.rawDB.Query(query, userID, to.UTC(), from.UTC())
+	} else {
+		rows, err = db.rawDB.Query(query, userID, to.UTC().Format(time.RFC3339), from.UTC().Format(time.RFC3339))
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -593,18 +746,31 @@ func (db *DB) GetCalendarEvents(userID int64, from, to time.Time) ([]CalendarEve
 	for rows.Next() {
 		var ce CalendarEvent
 		var allDay, isMatched int
+		var allDayBool, isMatchedBool bool
 		var startStr, endStr, createdStr string
+		var startTime, endTime, createdTime time.Time
 		var desc, url sql.NullString
-		if err := rows.Scan(&ce.ID, &ce.IntegrationID, &ce.ExternalID, &ce.Title, &desc, &startStr, &endStr, &allDay, &ce.Status, &url, &isMatched, &ce.MatchedLogID, &createdStr); err != nil {
-			continue
+		if db.dialect == dialect.Postgres {
+			if err := rows.Scan(&ce.ID, &ce.IntegrationID, &ce.ExternalID, &ce.Title, &desc, &startTime, &endTime, &allDayBool, &ce.Status, &url, &isMatchedBool, &ce.MatchedLogID, &createdTime); err != nil {
+				continue
+			}
+			ce.AllDay = allDayBool
+			ce.IsMatched = isMatchedBool
+			ce.StartTime = startTime
+			ce.EndTime = endTime
+			ce.CreatedAt = createdTime
+		} else {
+			if err := rows.Scan(&ce.ID, &ce.IntegrationID, &ce.ExternalID, &ce.Title, &desc, &startStr, &endStr, &allDay, &ce.Status, &url, &isMatched, &ce.MatchedLogID, &createdStr); err != nil {
+				continue
+			}
+			ce.AllDay = allDay == 1
+			ce.IsMatched = isMatched == 1
+			ce.StartTime, _ = time.Parse(time.RFC3339, startStr)
+			ce.EndTime, _ = time.Parse(time.RFC3339, endStr)
+			ce.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 		}
 		ce.Description = desc.String
 		ce.MeetingURL = url.String
-		ce.AllDay = allDay == 1
-		ce.IsMatched = isMatched == 1
-		ce.StartTime, _ = time.Parse(time.RFC3339, startStr)
-		ce.EndTime, _ = time.Parse(time.RFC3339, endStr)
-		ce.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 		events = append(events, ce)
 	}
 	return events, nil

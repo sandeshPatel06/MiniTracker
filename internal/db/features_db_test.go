@@ -98,12 +98,19 @@ func TestCalendarIntegrationAndEventsCRUD(t *testing.T) {
 	// Event 1: Today 09:00 - 10:00
 	ev1Start := now.Add(-2 * time.Hour)
 	ev1End := now.Add(-1 * time.Hour)
-	_, err = database.rawDB.Exec(
-		"INSERT INTO calendar_events (integration_id, external_id, title, description, start_time, end_time, all_day, status, meeting_url, is_matched, matched_log_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		gcalID, "evt_001", "Sprint Daily Standup", "Discuss blockers and roadmap",
-		ev1Start.Format(time.RFC3339), ev1End.Format(time.RFC3339),
-		0, "confirmed", "https://meet.google.com/abc-def-ghi", 1, 100, now.Format(time.RFC3339),
-	)
+	_, err = database.InsertCalendarEvent(CalendarEvent{
+		IntegrationID: gcalID,
+		ExternalID:    "evt_001",
+		Title:         "Sprint Daily Standup",
+		Description:   "Discuss blockers and roadmap",
+		StartTime:     ev1Start,
+		EndTime:       ev1End,
+		AllDay:        false,
+		Status:        "confirmed",
+		MeetingURL:    "https://meet.google.com/abc-def-ghi",
+		IsMatched:     true,
+		MatchedLogID:  100,
+	})
 	if err != nil {
 		t.Fatalf("failed to insert event 1: %v", err)
 	}
@@ -111,12 +118,19 @@ func TestCalendarIntegrationAndEventsCRUD(t *testing.T) {
 	// Event 2: Today 14:00 - 15:30
 	ev2Start := now.Add(2 * time.Hour)
 	ev2End := now.Add(3*time.Hour + 30*time.Minute)
-	_, err = database.rawDB.Exec(
-		"INSERT INTO calendar_events (integration_id, external_id, title, description, start_time, end_time, all_day, status, meeting_url, is_matched, matched_log_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		gcalID, "evt_002", "Architecture Review", "Security & Data model design",
-		ev2Start.Format(time.RFC3339), ev2End.Format(time.RFC3339),
-		0, "confirmed", "https://zoom.us/j/123456789", 0, 0, now.Format(time.RFC3339),
-	)
+	_, err = database.InsertCalendarEvent(CalendarEvent{
+		IntegrationID: gcalID,
+		ExternalID:    "evt_002",
+		Title:         "Architecture Review",
+		Description:   "Security & Data model design",
+		StartTime:     ev2Start,
+		EndTime:       ev2End,
+		AllDay:        false,
+		Status:        "confirmed",
+		MeetingURL:    "https://zoom.us/j/123456789",
+		IsMatched:     false,
+		MatchedLogID:  0,
+	})
 	if err != nil {
 		t.Fatalf("failed to insert event 2: %v", err)
 	}
@@ -124,12 +138,19 @@ func TestCalendarIntegrationAndEventsCRUD(t *testing.T) {
 	// Event 3: Far future event (next week)
 	ev3Start := now.Add(7 * 24 * time.Hour)
 	ev3End := ev3Start.Add(1 * time.Hour)
-	_, err = database.rawDB.Exec(
-		"INSERT INTO calendar_events (integration_id, external_id, title, description, start_time, end_time, all_day, status, meeting_url, is_matched, matched_log_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		gcalID, "evt_003", "Future Townhall", "Company-wide all hands",
-		ev3Start.Format(time.RFC3339), ev3End.Format(time.RFC3339),
-		0, "confirmed", "", 0, 0, now.Format(time.RFC3339),
-	)
+	_, err = database.InsertCalendarEvent(CalendarEvent{
+		IntegrationID: gcalID,
+		ExternalID:    "evt_003",
+		Title:         "Future Townhall",
+		Description:   "Company-wide all hands",
+		StartTime:     ev3Start,
+		EndTime:       ev3End,
+		AllDay:        false,
+		Status:        "confirmed",
+		MeetingURL:    "",
+		IsMatched:     false,
+		MatchedLogID:  0,
+	})
 	if err != nil {
 		t.Fatalf("failed to insert event 3: %v", err)
 	}

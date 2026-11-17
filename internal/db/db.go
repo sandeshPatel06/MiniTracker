@@ -200,6 +200,7 @@ func Open(dataDir string, dbURLs ...string) (*DB, error) {
 
 	if drvDialect == dialect.SQLite {
 		_, _ = rawDB.Exec(`
+			PRAGMA foreign_keys = ON;
 			PRAGMA cache_size = -64000;
 			PRAGMA temp_store = MEMORY;
 			PRAGMA mmap_size = 268435456;
@@ -384,6 +385,7 @@ func (db *DB) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_logs_org_ts ON logs(org_id, timestamp);`,
 		`CREATE INDEX IF NOT EXISTS idx_logs_unanalyzed ON logs(ai_category, timestamp);`,
 		`CREATE INDEX IF NOT EXISTS idx_logs_sync_status ON logs(sync_status);`,
+		`CREATE INDEX IF NOT EXISTS idx_logs_dashboard ON logs(user_id, is_productive, timestamp DESC);`,
 		// Note: total_clicks and mouse_distance are handled by safeAddColumn above
 		`CREATE TABLE IF NOT EXISTS work_sessions (
 			id             SERIAL PRIMARY KEY,
@@ -487,6 +489,7 @@ func (db *DB) migrate() error {
 			`CREATE INDEX IF NOT EXISTS idx_logs_org_ts ON logs(org_id, timestamp);`,
 			`CREATE INDEX IF NOT EXISTS idx_logs_unanalyzed ON logs(ai_category, timestamp);`,
 			`CREATE INDEX IF NOT EXISTS idx_logs_sync_status ON logs(sync_status);`,
+			`CREATE INDEX IF NOT EXISTS idx_logs_dashboard ON logs(user_id, is_productive, timestamp);`,
 			`CREATE TABLE IF NOT EXISTS work_sessions (
 				id             INTEGER PRIMARY KEY AUTOINCREMENT,
 				org_id         INTEGER DEFAULT 1,

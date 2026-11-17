@@ -1895,6 +1895,110 @@ func main() {
 		})
 	})
 
+	// Member management: PATCH role / DELETE member / Revoke invitation
+	// Handles: /api/org/members/{id}/role, /api/org/members/{id}, /api/org/invitations/{id}
+	mux.HandleFunc("/api/org/members/", func(w http.ResponseWriter, r *http.Request) {
+		sessUser := getSessionUser(r, database)
+		if sessUser == nil && !isLoopbackRequest(r) {
+			jsonError(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if sessUser != nil && sessUser.Role == "member" {
+			jsonError(w, "Forbidden: Only organization admins can manage members", http.StatusForbidden)
+			return
+		}
+
+		path := strings.TrimPrefix(r.URL.Path, "/api/org/members/")
+		parts := strings.Split(strings.Trim(path, "/"), "/")
+		if len(parts) == 0 || parts[0] == "" {
+			jsonError(w, "Invalid user ID", http.StatusBadRequest)
+			return
+		}
+
+		targetUserID, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			jsonError(w, "Invalid user ID format", http.StatusBadRequest)
+			return
+		}
+
+		orgID := int64(1)
+		if sessUser != nil {
+			orgID = sessUser.OrgID
+		}
+
+		// PATCH /api/org/members/{id}/role
+		if r.Method == http.MethodPatch && len(parts) >= 2 && parts[1] == "role" {
+			var body struct {
+				Role string `json:"role"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || (body.Role != "admin" && body.Role != "member") {
+				jsonError(w, "Invalid role specified (must be admin or member)", http.StatusBadRequest)
+				return
+			}
+			if sessUser != nil && sessUser.ID == targetUserID {
+				jsonError(w, "Cannot modify your own role", http.StatusBadRequest)
+				return
+			}
+			if err := database.UpdateUserRole(orgID, targetUserID, body.Role); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			jsonResp(w, map[string]interface{}{"success": true, "message": "Role updated"})
+			return
+		}
+
+		// DELETE /api/org/members/{id}
+		if r.Method == http.MethodDelete {
+			if sessUser != nil && sessUser.ID == targetUserID {
+				jsonError(w, "Cannot remove yourself from organization", http.StatusBadRequest)
+				return
+			}
+			if err := database.RemoveUser(orgID, targetUserID); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			jsonResp(w, map[string]interface{}{"success": true, "message": "Member removed"})
+			return
+		}
+
+		jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+	})
+
+	// DELETE /api/org/invitations/{id}
+	mux.HandleFunc("/api/org/invitations/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		sessUser := getSessionUser(r, database)
+		if sessUser == nil && !isLoopbackRequest(r) {
+			jsonError(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if sessUser != nil && sessUser.Role == "member" {
+			jsonError(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		path := strings.TrimPrefix(r.URL.Path, "/api/org/invitations/")
+		inviteID, err := strconv.ParseInt(strings.Trim(path, "/"), 10, 64)
+		if err != nil {
+			jsonError(w, "Invalid invitation ID", http.StatusBadRequest)
+			return
+		}
+
+		orgID := int64(1)
+		if sessUser != nil {
+			orgID = sessUser.OrgID
+		}
+
+		if err := database.RevokeInvitation(orgID, inviteID); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		jsonResp(w, map[string]interface{}{"success": true, "message": "Invitation revoked"})
+	})
+
 	// POST /api/org/invite — Invite a new team member
 	mux.HandleFunc("/api/org/invite", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

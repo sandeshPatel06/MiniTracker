@@ -738,6 +738,51 @@ func (db *DB) GetUserByID(id int64) (*User, error) {
 	return &u, nil
 }
 
+// UpdateUserRole updates a user's role within an organization.
+func (db *DB) UpdateUserRole(orgID, userID int64, newRole string) error {
+	builder := entsql.Dialect(db.dialect).Update("users").Set("role", newRole).Where(entsql.And(entsql.EQ("org_id", orgID), entsql.EQ("id", userID)))
+	query, args := builder.Query()
+	res, err := db.rawDB.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("update user role: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("user not found in organization")
+	}
+	return nil
+}
+
+// RemoveUser removes a user from an organization.
+func (db *DB) RemoveUser(orgID, userID int64) error {
+	builder := entsql.Dialect(db.dialect).Delete("users").Where(entsql.And(entsql.EQ("org_id", orgID), entsql.EQ("id", userID)))
+	query, args := builder.Query()
+	res, err := db.rawDB.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("remove user: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("user not found in organization")
+	}
+	return nil
+}
+
+// RevokeInvitation cancels a pending invitation.
+func (db *DB) RevokeInvitation(orgID, inviteID int64) error {
+	builder := entsql.Dialect(db.dialect).Update("invitations").Set("status", "revoked").Where(entsql.And(entsql.EQ("org_id", orgID), entsql.EQ("id", inviteID), entsql.EQ("status", "pending")))
+	query, args := builder.Query()
+	res, err := db.rawDB.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("revoke invitation: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("invitation not found or already processed")
+	}
+	return nil
+}
+
 // CreateInvitation creates an email invite record using Ent SQL Builder.
 func (db *DB) CreateInvitation(orgID int64, email, role, token string, expiresAt time.Time) (*Invitation, error) {
 	checkQ := entsql.Dialect(db.dialect).Select(entsql.Count("*")).From(entsql.Table("users")).Where(entsql.And(entsql.EQ("org_id", orgID), entsql.EQ("email", email)))

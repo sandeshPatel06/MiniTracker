@@ -128,7 +128,14 @@ func processMatchesBinary(pid int) bool {
 	}
 	selfName := filepath.Base(self)
 
-	if link, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid)); err == nil && filepath.Base(link) == selfName {
+	isNameMatch := func(name string) bool {
+		clean := strings.TrimSuffix(name, " (deleted)")
+		base := filepath.Base(clean)
+		return base == selfName || base == "get-hike" || base == "mini-tracker" ||
+			strings.HasPrefix(base, "get-hike") || strings.HasPrefix(base, "mini-tracker")
+	}
+
+	if link, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid)); err == nil && isNameMatch(link) {
 		return true
 	}
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
@@ -139,7 +146,7 @@ func processMatchesBinary(pid int) bool {
 	if len(arg0) == 0 {
 		return false
 	}
-	return filepath.Base(arg0[0]) == selfName
+	return isNameMatch(arg0[0])
 }
 
 // writePIDFile persists pid to path.
@@ -176,27 +183,30 @@ func processMatchesDaemon(pid int) bool {
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(data), "--background")
+	cmdStr := string(data)
+	return strings.Contains(cmdStr, "--background") || strings.Contains(cmdStr, "get-hike") || strings.Contains(cmdStr, "mini-tracker")
 }
 
 // stopBackgroundDaemon terminates a running background tracker for dataDir, if any.
 func stopBackgroundDaemon(dataDir string) {
 	path := pidPath(dataDir)
 	pid := readPIDFile(path)
-	if pid > 0 && processAlive(pid) && processMatchesDaemon(pid) {
-		_ = terminateProcess(pid)
+	if pid > 0 && pid != os.Getpid() && processAlive(pid) {
+		if processMatchesBinary(pid) || processMatchesDaemon(pid) {
+			_ = terminateProcess(pid)
 
-		deadline := time.Now().Add(1500 * time.Millisecond)
-		for time.Now().Before(deadline) {
-			if !processAlive(pid) {
-				break
+			deadline := time.Now().Add(1500 * time.Millisecond)
+			for time.Now().Before(deadline) {
+				if !processAlive(pid) {
+					break
+				}
+				time.Sleep(50 * time.Millisecond)
 			}
-			time.Sleep(50 * time.Millisecond)
+			if processAlive(pid) {
+				_ = killProcess(pid)
+			}
+			log.Printf("[bg] stopped background tracker (pid %d)", pid)
 		}
-		if processAlive(pid) {
-			_ = killProcess(pid)
-		}
-		log.Printf("[bg] stopped background tracker (pid %d)", pid)
 	}
 	_ = os.Remove(path)
 

@@ -553,13 +553,26 @@ func (tm *TrayManager) Start() {
 	}()
 }
 
-// Stop unregisters and cleans up the tray connection.
+// Stop unregisters and cleans up the tray connection immediately so no orphan
+// or duplicate tray icons remain on the system desktop panel.
 func (tm *TrayManager) Stop() {
 	tm.mu.Lock()
-	defer tm.mu.Unlock()
+	conn := tm.conn
+	tm.conn = nil
 	if tm.running {
 		tm.running = false
-		close(tm.stopCh)
+		select {
+		case <-tm.stopCh:
+		default:
+			close(tm.stopCh)
+		}
+	}
+	tm.mu.Unlock()
+
+	if conn != nil {
+		busName := fmt.Sprintf("org.kde.StatusNotifierItem-%d-1", os.Getpid())
+		_, _ = conn.ReleaseName(busName)
+		_ = conn.Close()
 	}
 }
 

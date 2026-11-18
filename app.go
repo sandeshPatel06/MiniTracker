@@ -150,6 +150,13 @@ func (a *App) startup(ctx context.Context) {
 		}()
 	}
 
+	// If a background tracker daemon is running, stop it cleanly BEFORE opening
+	// the database so SQLite handles and file locks are released without contention.
+	// This guarantees strictly ONE process, ONE capture worker, and ONE tray icon.
+	if !a.headless {
+		stopBackgroundDaemon(cfg.DataDir)
+	}
+
 	// Open database
 	dbConn, err := db.Open(cfg.DataDir)
 	if err != nil {
@@ -177,13 +184,6 @@ func (a *App) startup(ctx context.Context) {
 	// Initialize Platform Notifier
 	if n, err := notify.NewNotifier(); err == nil {
 		a.notifier = n
-	}
-
-	// If a background tracker daemon is running, stop it cleanly so the desktop GUI
-	// takes over full tracking and tray ownership. This guarantees strictly ONE process,
-	// ONE capture worker, and ONE tray icon at any time.
-	if !a.headless {
-		stopBackgroundDaemon(cfg.DataDir)
 	}
 
 	a.statsMu.Lock()
@@ -880,20 +880,9 @@ func (a *App) shutdown(_ context.Context) {
 		a.trayMgr = nil
 	}
 
-	// If tracking is active, hand it off to a detached background process so capture continues after this app exits.
-	if !a.headless && a.cfg != nil {
-		removePIDFileIfOwner(guiPidPath(a.cfg.DataDir), os.Getpid())
-		a.statsMu.Lock()
-		active := a.isTrackingActive
-		a.statsMu.Unlock()
-		if active {
-			if err := spawnBackgroundDaemon(a.cfg.DataDir); err != nil {
-				log.Printf("[app] failed to start background tracker: %v", err)
-			} else {
-				log.Printf("[app] tracking will continue in background (pid %d)", readPIDFile(pidPath(a.cfg.DataDir)))
-			}
-		}
-	}
+	a.statsMu.Lock()
+	shouldSpawnDaemon := a.isTrackingActive && !a.headless
+	a.statsMu.Unlock()
 
 	// Flush any accumulated in-memory stats before stopping trackers.
 	// This ensures activity counts from the current interval are saved to the DB
@@ -935,6 +924,21 @@ func (a *App) shutdown(_ context.Context) {
 	}
 	if a.database != nil {
 		_ = a.database.Close()
+		a.database = nil
+	}
+
+	if a.cfg != nil {
+		removePIDFileIfOwner(guiPidPath(a.cfg.DataDir), os.Getpid())
+	}
+
+	// Hand off to detached background daemon ONLY after all tracking loops,
+	// tray registrations, and database connections in the GUI have completely closed.
+	if shouldSpawnDaemon && a.cfg != nil {
+		if err := spawnBackgroundDaemon(a.cfg.DataDir); err != nil {
+			log.Printf("[app] failed to start background tracker: %v", err)
+		} else {
+			log.Printf("[app] tracking will continue in background (pid %d)", readPIDFile(pidPath(a.cfg.DataDir)))
+		}
 	}
 }
 

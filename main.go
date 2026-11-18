@@ -57,6 +57,10 @@ func main() {
 	_ = writePIDFile(guiPidPath(cfg.DataDir), os.Getpid())
 	defer removePIDFileIfOwner(guiPidPath(cfg.DataDir), os.Getpid())
 
+	// Terminate any existing background daemon and unregister its tray icon
+	// BEFORE opening GUI windows or database connections.
+	stopBackgroundDaemon(cfg.DataDir)
+
 	app := NewApp()
 	app.cfg = cfg
 

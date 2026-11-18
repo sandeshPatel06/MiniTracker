@@ -203,23 +203,27 @@ func Open(dataDir string, dbURLs ...string) (*DB, error) {
 		dbPath := filepath.Join(dataDir, "tracker.db")
 		_ = os.MkdirAll(dataDir, 0755)
 
-		rawDB, err = sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL")
+		rawDB, err = sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=15000&_synchronous=NORMAL&_txlock=immediate")
 		if err != nil {
 			return nil, fmt.Errorf("open sqlite ent: %w", err)
 		}
 	}
 
-	rawDB.SetMaxOpenConns(25)
-	rawDB.SetMaxIdleConns(10)
-	rawDB.SetConnMaxLifetime(30 * time.Minute)
-
 	if drvDialect == dialect.SQLite {
+		// Single connection avoids multi-thread transaction collisions in SQLite
+		rawDB.SetMaxOpenConns(1)
+		rawDB.SetMaxIdleConns(1)
 		_, _ = rawDB.Exec(`
 			PRAGMA foreign_keys = ON;
 			PRAGMA cache_size = -64000;
 			PRAGMA temp_store = MEMORY;
 			PRAGMA mmap_size = 268435456;
+			PRAGMA wal_autocheckpoint = 1000;
 		`)
+	} else {
+		rawDB.SetMaxOpenConns(25)
+		rawDB.SetMaxIdleConns(10)
+		rawDB.SetConnMaxLifetime(30 * time.Minute)
 	}
 
 	entDriver := entsql.OpenDB(drvDialect, rawDB)

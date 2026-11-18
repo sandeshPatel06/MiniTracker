@@ -526,7 +526,23 @@ func (s *SyncEngine) TriggerSyncNow(ctx context.Context) error {
 	}()
 
 	log.Printf("[sync] initiating manual sync cycle...")
-	_, pushErr := s.PushTelemetry(ctx)
+	var totalPushed int
+	var pushErr error
+	for batch := 0; batch < 10; batch++ {
+		var pushed int
+		pushed, pushErr = s.PushTelemetry(ctx)
+		if pushErr != nil {
+			log.Printf("[sync] push error on batch %d: %v", batch+1, pushErr)
+			break
+		}
+		totalPushed += pushed
+		if pushed < 50 {
+			break
+		}
+	}
+	if totalPushed > 0 {
+		log.Printf("[sync] total pushed in cycle: %d logs", totalPushed)
+	}
 	_, pullErr := s.PullAnalytics(ctx)
 
 	if pushErr != nil && pullErr != nil {

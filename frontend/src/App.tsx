@@ -876,6 +876,13 @@ export default function App() {
     if (targetPage !== 'accept-invite') {
       window.location.hash = `#${targetPage}`;
     }
+    if (targetPage === 'dashboard') {
+      const todayStr = localISODate();
+      setToday(todayStr);
+      setStartDate(todayStr);
+      setEndDate(todayStr);
+      loadData(todayStr, selectedUserId, todayStr, todayStr);
+    }
     setPage(targetPage);
     setIsMobileMenuOpen(false);
   };
@@ -1050,12 +1057,12 @@ export default function App() {
               config={config}
               loading={loading}
               today={today}
-              onRefresh={() => loadData(today)}
+              onRefresh={() => loadData(today, selectedUserId, today, today)}
               onDateChange={(d) => {
                 setToday(d);
                 setStartDate(d);
                 setEndDate(d);
-                loadData(d);
+                loadData(d, selectedUserId, d, d);
               }}
               onOpenSettings={() => navigateTo('settings')}
               loadError={loadError}

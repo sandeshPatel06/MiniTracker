@@ -11,6 +11,7 @@ import { EmptyState } from '../components/EmptyState';
 import { Alert } from '../components/Alert';
 import { canonicalAppName } from '../lib/appNames';
 import { DateNavigator } from '../components/DateNavigator';
+import { CustomSelect } from '../components/CustomSelect';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from 'recharts';
 import { localISODate, isPendingLog, isIdleLog, buildLocalWorkSessions, FOCUS_GOOD, FOCUS_OK } from '../utils';
 import { isDesktopApp, callGo } from '../services/wailsBridge';
@@ -240,18 +241,12 @@ export default function Dashboard({
     if (analyzedLogs.length === 0) {
       return null;
     }
-    if (stats?.productive_minutes && stats.productive_minutes > 0) {
-      return stats.productive_minutes;
-    }
     return Math.round((productiveCaptures * intervalSec) / 60);
-  }, [stats, productiveCaptures, intervalSec, analyzedLogs.length]);
+  }, [productiveCaptures, intervalSec, analyzedLogs.length]);
 
   const totalTrackedMinutes = useMemo(() => {
-    if (stats?.total_minutes && stats.total_minutes > 0) {
-      return stats.total_minutes;
-    }
     return Math.round((activeLogs.length * intervalSec) / 60);
-  }, [stats, activeLogs.length, intervalSec]);
+  }, [activeLogs.length, intervalSec]);
 
   // Memoized App Usage Breakdown
   const topApps = useMemo(() => {
@@ -370,8 +365,52 @@ export default function Dashboard({
     });
   }, [activeLogs]);
 
-  // Latest 10 entries strictly from activeLogs (today's activity)
-  const recent = useMemo(() => activeLogs.slice(-10).reverse(), [activeLogs]);
+  type DashFilterTier = 'ALL' | 'productive' | 'neutral' | 'unproductive' | 'pending';
+  const [activityTier, setActivityTier] = useState<DashFilterTier>('ALL');
+  const [activityApp, setActivityApp] = useState<string>('ALL');
+
+  const availableApps = useMemo(() => {
+    const apps = new Set<string>();
+    activeLogs.forEach((l) => {
+      const name = canonicalAppName(l.app_name);
+      if (name) apps.add(name);
+    });
+    return Array.from(apps).sort();
+  }, [activeLogs]);
+
+  const tierCounts = useMemo(() => {
+    let prod = 0, neut = 0, unprod = 0, pend = 0;
+    activeLogs.forEach((l) => {
+      if (isPendingLog(l)) {
+        pend++;
+      } else {
+        const score = typeof l.productive_score === 'number' ? l.productive_score : (l.is_productive ? 100 : 0);
+        if (score >= FOCUS_GOOD) prod++;
+        else if (score >= FOCUS_OK) neut++;
+        else unprod++;
+      }
+    });
+    return { all: activeLogs.length, prod, neut, unprod, pend };
+  }, [activeLogs]);
+
+  const filteredRecent = useMemo(() => {
+    let result = activeLogs;
+    if (activityTier !== 'ALL') {
+      result = result.filter((l) => {
+        if (activityTier === 'pending') return isPendingLog(l);
+        if (isPendingLog(l)) return false;
+        const score = typeof l.productive_score === 'number' ? l.productive_score : (l.is_productive ? 100 : 0);
+        if (activityTier === 'productive') return score >= FOCUS_GOOD;
+        if (activityTier === 'neutral') return score >= FOCUS_OK && score < FOCUS_GOOD;
+        if (activityTier === 'unproductive') return score < FOCUS_OK;
+        return true;
+      });
+    }
+    if (activityApp !== 'ALL') {
+      result = result.filter((l) => canonicalAppName(l.app_name) === activityApp);
+    }
+    return result.slice(-30).reverse();
+  }, [activeLogs, activityTier, activityApp]);
 
   let dateLabel = today === localISODate() ? 'Today' : today;
   try {
@@ -993,15 +1032,76 @@ export default function Dashboard({
 
       {/* Activity Stream Feed */}
       <article className="card dash-activity">
-        <header className="card-header">
-          <span className="card-title">
-            <Icon name="desktop" size={14} />
-            Activity Stream
-          </span>
-          <div className="dash-feed-meta">
-            <span style={{ fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
-              Latest {recent.length} captures
+        <header className="card-header" style={{ flexWrap: 'wrap', gap: 10, justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span className="card-title">
+              <Icon name="desktop" size={14} />
+              Activity Stream
             </span>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+              Showing {filteredRecent.length} of {activeLogs.length}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div className="dash-view-toggle" role="tablist" aria-label="Activity focus filter">
+              <button
+                type="button"
+                className={`dash-view-toggle-btn ${activityTier === 'ALL' ? 'is-active' : ''}`}
+                onClick={() => setActivityTier('ALL')}
+                style={{ padding: '3px 8px', fontSize: 11 }}
+              >
+                All ({tierCounts.all})
+              </button>
+              <button
+                type="button"
+                className={`dash-view-toggle-btn ${activityTier === 'productive' ? 'is-active' : ''}`}
+                onClick={() => setActivityTier('productive')}
+                style={{ padding: '3px 8px', fontSize: 11 }}
+              >
+                Focus ({tierCounts.prod})
+              </button>
+              <button
+                type="button"
+                className={`dash-view-toggle-btn ${activityTier === 'neutral' ? 'is-active' : ''}`}
+                onClick={() => setActivityTier('neutral')}
+                style={{ padding: '3px 8px', fontSize: 11 }}
+              >
+                Neutral ({tierCounts.neut})
+              </button>
+              <button
+                type="button"
+                className={`dash-view-toggle-btn ${activityTier === 'unproductive' ? 'is-active' : ''}`}
+                onClick={() => setActivityTier('unproductive')}
+                style={{ padding: '3px 8px', fontSize: 11 }}
+              >
+                Distracted ({tierCounts.unprod})
+              </button>
+              {tierCounts.pend > 0 && (
+                <button
+                  type="button"
+                  className={`dash-view-toggle-btn ${activityTier === 'pending' ? 'is-active' : ''}`}
+                  onClick={() => setActivityTier('pending')}
+                  style={{ padding: '3px 8px', fontSize: 11 }}
+                >
+                  Pending ({tierCounts.pend})
+                </button>
+              )}
+            </div>
+
+            {availableApps.length > 1 && (
+              <CustomSelect
+                value={activityApp}
+                options={[
+                  { value: 'ALL', label: 'All Apps' },
+                  ...availableApps.map((a) => ({ value: a, label: a })),
+                ]}
+                onChange={setActivityApp}
+                ariaLabel="Filter activity by application"
+                compact
+              />
+            )}
+
             {pendingCount > 0 && (
               <span
                 className={`badge badge-pending dash-pending-pill${processingPending ? ' is-processing' : ''}`}
@@ -1019,17 +1119,30 @@ export default function Dashboard({
         </header>
 
         <div className="card-body" style={{ padding: '12px 14px' }}>
-          {recent.length === 0 ? (
+          {filteredRecent.length === 0 ? (
             <EmptyState
               icon={<Icon name="inbox" size={32} />}
-              title="No Activity Captured Yet"
+              title="No Activity Found"
               description={
-                isDesktopApp()
-                  ? "The tracking daemon will automatically log desktop screenshots and keystroke activity."
-                  : "No activity recorded yet. Run the get-Hike desktop tracker on your computer to log work sessions and sync to this dashboard."
+                activeLogs.length === 0
+                  ? (isDesktopApp()
+                    ? "The tracking daemon will automatically log desktop screenshots and keystroke activity."
+                    : "No activity recorded yet for this date.")
+                  : "No captures match your selected focus or application filter."
               }
               action={
-                onRefresh ? (
+                activityTier !== 'ALL' || activityApp !== 'ALL' ? (
+                  <button
+                    type="button"
+                    className="btn btn-secondary dash-btn"
+                    onClick={() => {
+                      setActivityTier('ALL');
+                      setActivityApp('ALL');
+                    }}
+                  >
+                    Reset filters
+                  </button>
+                ) : onRefresh ? (
                   <button
                     type="button"
                     className="btn btn-secondary dash-btn"
@@ -1043,7 +1156,7 @@ export default function Dashboard({
             />
           ) : (
             <div className="timeline-list" role="feed" aria-label="Recent activity captures feed">
-              {recent.map((log) => {
+              {filteredRecent.map((log) => {
                 const scoreVal = Math.round(captureScore(log));
                 const isPending = isPendingLog(log);
                 const safeTitle = redactSensitiveTitle(log.window_title);

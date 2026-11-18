@@ -153,11 +153,9 @@ export function Sidebar({
               alt="get-Hike brand logo"
               className="sidebar-brand-img"
             />
-            <div>
-              <div className="sidebar-logo-text">get-Hike</div>
-              <div className="sidebar-logo-sub">Productivity</div>
+            <div className="sidebar-brand-title-wrap">
+              <span className="sidebar-logo-text">get-Hike</span>
             </div>
-            <span className="sidebar-brand-pill">v1</span>
           </div>
 
           {onToggleSidebarCollapse && (
@@ -173,37 +171,24 @@ export function Sidebar({
           )}
         </div>
 
-        {/* Workspace / Organization Switcher Info */}
-        {(currentOrg || currentUser) && (
-          <div
-            className="sidebar-org-box"
-            title={currentOrg ? `Workspace: ${currentOrg.name}` : 'Default Workspace'}
-          >
-            <Icon name="building" size={13} color="var(--text-muted)" />
-            <div className="sidebar-org-name">
-              {currentOrg?.name || 'My Workspace'}
-            </div>
-          </div>
-        )}
-
         {/* Work Clock & Tracking Control Widget - Desktop Only */}
         {isDesktop && (
           <div className="sidebar-widget">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <span className="sidebar-widget-label">Work Session</span>
+              <span className="sidebar-widget-label">Session</span>
               <span
                 style={{
-                  fontSize: 11,
-                  padding: '2px 6px',
+                  fontSize: 10,
+                  padding: '1px 5px',
                   borderRadius: 4,
                   fontWeight: 600,
-                  background: isGuestMode ? 'color-mix(in srgb, var(--accent-purple) 15%, transparent)' : 'color-mix(in srgb, var(--accent-green) 15%, transparent)',
-                  color: isGuestMode ? 'var(--accent-purple)' : 'var(--accent-primary-text)',
-                  border: isGuestMode ? '1px solid color-mix(in srgb, var(--accent-purple) 30%, transparent)' : '1px solid color-mix(in srgb, var(--accent-green) 30%, transparent)',
+                  background: isGuestMode ? 'rgba(139, 92, 246, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                  color: isGuestMode ? 'var(--accent-purple)' : 'var(--accent-primary)',
+                  border: isGuestMode ? '1px solid rgba(139, 92, 246, 0.3)' : '1px solid rgba(16, 185, 129, 0.3)',
                   whiteSpace: 'nowrap',
                 }}
               >
-                {isGuestMode ? 'Offline Guest' : 'Synced'}
+                {isGuestMode ? 'Guest' : 'Active'}
               </span>
             </div>
             <div className="sidebar-widget-timer" style={{ fontVariantNumeric: 'tabular-nums' }}>
@@ -213,9 +198,9 @@ export function Sidebar({
               type="button"
               onClick={handleToggleTracking}
               className={`btn-tracker-toggle ${isTrackingActive ? 'active' : 'paused'}`}
-              style={{ marginBottom: 8 }}
+              style={{ marginBottom: 6 }}
             >
-              <Icon name={isTrackingActive ? 'pause' : 'play'} size={14} />
+              <Icon name={isTrackingActive ? 'pause' : 'play'} size={13} />
               <span>{isTrackingActive ? 'Pause Tracker' : 'Start Tracker'}</span>
             </button>
             {trackerError && (
@@ -223,18 +208,18 @@ export function Sidebar({
                 role="alert"
                 style={{
                   fontSize: 11,
-                  padding: '6px 8px',
+                  padding: '4px 6px',
                   borderRadius: 'var(--radius-sm)',
-                  background: 'color-mix(in srgb, var(--accent-red) 15%, transparent)',
-                  border: '1px solid color-mix(in srgb, var(--accent-red) 35%, transparent)',
+                  background: 'rgba(239, 68, 68, 0.15)',
+                  border: '1px solid rgba(239, 68, 68, 0.35)',
                   color: 'var(--danger-text)',
-                  marginBottom: 8,
+                  marginBottom: 6,
                   display: 'flex',
                   alignItems: 'center',
                   gap: 6,
                 }}
               >
-                <Icon name="x" size={12} />
+                <Icon name="x" size={11} />
                 <span style={{ flex: 1 }}>{trackerError}</span>
               </div>
             )}
@@ -242,45 +227,17 @@ export function Sidebar({
               type="button"
               onClick={onOpenTaskModal}
               className={`btn-task-goal ${userTask ? 'active' : ''}`}
-              title={userTask || 'Set target task goal (max 20 words)'}
+              title={userTask || 'Set target task goal'}
             >
               <Icon name="target" size={12} />
               <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {userTask ? `Task: ${userTask}` : 'Set Target Task Goal'}
+                {userTask ? `Task: ${userTask}` : 'Set Target Goal'}
               </span>
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                const w = window as any;
-                if (w.go?.main?.App?.TogglePrivacyMode) {
-                  w.go.main.App.TogglePrivacyMode().then((active: boolean) => {
-                    toast.info(active ? 'Privacy Shield enabled' : 'Privacy Shield disabled');
-                  });
-                }
-              }}
-              className="btn-task-goal"
-              style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}
-              title="Toggle Privacy Shield (Auto-blur credentials & vaults)"
-            >
-              <Icon name="shield" size={12} />
-              <span>Privacy Shield</span>
-            </button>
-            {!isGuestMode && (
-              <button
-                type="button"
-                onClick={handleSyncNow}
-                disabled={isSyncing}
-                className={`btn-sync-now ${isSyncing ? 'syncing' : ''}`}
-              >
-                <Icon name="refresh" size={12} className={isSyncing ? 'spin' : ''} />
-                <span>{isSyncing ? 'Syncing...' : (syncMessage || 'Sync Now')}</span>
-              </button>
-            )}
           </div>
         )}
 
-        <div className="sidebar-section-label">Navigation</div>
+        <div className="sidebar-section-label">Menu</div>
         <nav aria-label="Main Navigation">
           {navItems.map((item) => {
             const active = page === item.id;
@@ -323,7 +280,7 @@ export function Sidebar({
                     {currentUser.full_name || currentUser.email}
                   </div>
                   <div className="sidebar-user-meta">
-                    <span style={{ textTransform: 'capitalize' }}>Role: {currentUser.role}</span>
+                    <span className="sidebar-user-role">{currentUser.role}</span>
                     <button
                       type="button"
                       className="sidebar-logout-btn"
@@ -333,7 +290,7 @@ export function Sidebar({
                       }}
                       title="Sign out of your account"
                     >
-                      <span>Logout</span>
+                      <span>Sign Out</span>
                       <Icon name="logout" size={11} />
                     </button>
                   </div>
@@ -375,30 +332,14 @@ export function Sidebar({
             </button>
           )}
 
-          {/* Status Group: Connection Status & AI Engine Indicator */}
-          <div className="sidebar-status-group">
-            {/* Server Connection Status */}
+          {/* Discreet Connection & Engine Status */}
+          <div className="sidebar-status-group" title={backendUnavailable ? 'Server unreachable' : isAIReady ? 'Connected • AI Online' : 'Connected • AI Standby'}>
             <div className="status-badge" role="status">
               <div
                 className={`status-dot ${backendUnavailable ? 'error' : isGuestMode ? 'inactive' : ''}`}
-                title={backendUnavailable ? 'Server unreachable' : isGuestMode ? 'Offline Guest Mode' : 'Connected to Server'}
               />
               <span>
-                {backendUnavailable ? 'Server Offline' : isGuestMode ? 'Offline Mode' : 'Server Online'}
-              </span>
-            </div>
-
-            {/* AI Engine Status */}
-            <div className="status-badge" role="status">
-              <div
-                className={`status-dot ${isAIReady ? '' : 'inactive'}`}
-                style={{
-                  background: isAIReady ? 'var(--accent-teal)' : undefined,
-                  boxShadow: isAIReady ? '0 0 6px var(--accent-teal)' : undefined,
-                }}
-              />
-              <span>
-                {isAIReady ? 'AI Engine Ready' : 'AI Standby'}
+                {backendUnavailable ? 'Offline' : isGuestMode ? 'Guest Mode' : 'Connected'}
               </span>
             </div>
           </div>

@@ -885,11 +885,9 @@ export default function App() {
     { id: 'timeline',  iconName: 'clock', label: 'Timeline'  },
     { id: 'analytics', iconName: 'activity', label: 'Analytics' },
     ...(currentUser?.role === 'admin' || currentUser?.role === 'owner' ? [
-      { id: 'organization' as Page, iconName: 'building' as IconName, label: 'Team / Org' },
-      { id: 'settings' as Page, iconName: 'settings' as IconName, label: 'AI Settings' },
-    ] : (isDesktopApp() && isGuestMode) ? [
-      { id: 'settings' as Page, iconName: 'settings' as IconName, label: 'Preferences' },
+      { id: 'organization' as Page, iconName: 'building' as IconName, label: 'Team' },
     ] : []),
+    { id: 'settings' as Page, iconName: 'settings' as IconName, label: 'Settings' },
   ];
 
   const mainRef = useRef<HTMLElement | null>(null);
@@ -1123,21 +1121,11 @@ export default function App() {
               }
             />
           ) : null}
-          {page === 'settings' && (currentUser?.role === 'admin' || currentUser?.role === 'owner' || (isDesktopApp() && isGuestMode)) ? (
+          {page === 'settings' ? (
             <SettingsPage
               theme={theme}
               onThemeChange={(newTheme) => setTheme(newTheme)}
               syncIntervalSeconds={config?.screenshot_interval_seconds}
-            />
-          ) : page === 'settings' ? (
-            <EmptyState
-              title="You don't have access"
-              description="Your account doesn't have permission to view this page. Contact your organization admin if you believe this is a mistake."
-              action={
-                <button type="button" className="btn btn-primary btn-sm" onClick={() => navigateTo('dashboard')}>
-                  Back to Dashboard
-                </button>
-              }
             />
           ) : null}
           {page === 'accept-invite' && (

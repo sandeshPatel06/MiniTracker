@@ -57,6 +57,15 @@ func runBackgroundApp() {
 
 // pidPath returns the pidfile location for a data directory.
 func pidPath(dataDir string) string {
+	if strings.HasPrefix(dataDir, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			if dataDir == "~" {
+				dataDir = home
+			} else if strings.HasPrefix(dataDir, "~/") {
+				dataDir = filepath.Join(home, dataDir[2:])
+			}
+		}
+	}
 	return filepath.Join(dataDir, "tracker.pid")
 }
 
@@ -64,6 +73,15 @@ func pidPath(dataDir string) string {
 // directory. The GUI writes it at startup and releases it at shutdown; the
 // daemon checks it so exactly one capture loop (GUI or daemon) ever runs.
 func guiPidPath(dataDir string) string {
+	if strings.HasPrefix(dataDir, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			if dataDir == "~" {
+				dataDir = home
+			} else if strings.HasPrefix(dataDir, "~/") {
+				dataDir = filepath.Join(home, dataDir[2:])
+			}
+		}
+	}
 	return filepath.Join(dataDir, "gui.pid")
 }
 

@@ -108,6 +108,14 @@ export function apiFetch(path: string, options: RequestInit = {}): Promise<Respo
   const startedAt = Date.now();
   const headers = new Headers(options.headers || {});
 
+  // Fast timeout abort controller for desktop app responsiveness (3.5s timeout)
+  let controller: AbortController | null = null;
+  let timer: any = null;
+  if (!options.signal && typeof AbortController !== 'undefined') {
+    controller = new AbortController();
+    timer = setTimeout(() => controller?.abort(), 3500);
+  }
+
   // Attach JWT or session token from localStorage for robust authentication
   try {
     if (!headers.has('Authorization')) {
@@ -131,9 +139,11 @@ export function apiFetch(path: string, options: RequestInit = {}): Promise<Respo
   return fetch(url, {
     credentials: 'include',
     ...options,
+    signal: options.signal || controller?.signal,
     headers,
   })
     .then((response) => {
+      if (timer) clearTimeout(timer);
       recordDevApiCall({
         time: new Date().toISOString(),
         method,
@@ -150,6 +160,7 @@ export function apiFetch(path: string, options: RequestInit = {}): Promise<Respo
       return response;
     })
     .catch((error) => {
+      if (timer) clearTimeout(timer);
       recordDevApiCall({
         time: new Date().toISOString(),
         method,

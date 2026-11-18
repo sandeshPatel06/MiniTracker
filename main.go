@@ -25,7 +25,7 @@ var assets embed.FS
 //	wails build -ldflags "-s -w -X main.version=2.1.0"
 //
 // Unset ("dev") builds fall back to VCS revision info embedded by the toolchain.
-var version = "dev"
+var version = "2.1.0"
 
 func main() {
 	cfg, err := config.Load()

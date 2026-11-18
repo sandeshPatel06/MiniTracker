@@ -27,22 +27,22 @@ interface SettingsPageProps {
 }
 
 const DEFAULT_INTERVAL_OPTIONS: SelectOption[] = [
-  { value: '15', label: '15s | High frequency', leading: <Icon name="clock" size={14} /> },
-  { value: '30', label: '30s | Active tracking', leading: <Icon name="clock" size={14} /> },
-  { value: '60', label: '60s | Standard (default)', leading: <Icon name="clock" size={14} /> },
-  { value: '120', label: '2m | Low resource', leading: <Icon name="clock" size={14} /> },
-  { value: '300', label: '5m | Minimal', leading: <Icon name="clock" size={14} /> },
+  { value: '15', label: '15 seconds · High frequency (fast-paced work)', leading: <Icon name="clock" size={14} /> },
+  { value: '30', label: '30 seconds · Recommended (balanced)', leading: <Icon name="clock" size={14} /> },
+  { value: '60', label: '1 minute · Standard (battery saver)', leading: <Icon name="clock" size={14} /> },
+  { value: '120', label: '2 minutes · Low frequency', leading: <Icon name="clock" size={14} /> },
+  { value: '300', label: '5 minutes · Minimal', leading: <Icon name="clock" size={14} /> },
 ];
 
 const RULE_TYPE_OPTIONS: SelectOption[] = [
-  { value: 'app', label: 'App name', leading: <Icon name="desktop" size={13} /> },
-  { value: 'title_regex', label: 'Title regex', leading: <Icon name="code" size={13} /> },
+  { value: 'app', label: 'App name (e.g. WhatsApp, Slack, Spotify)', leading: <Icon name="desktop" size={13} /> },
+  { value: 'title_regex', label: 'Window title contains (e.g. Bank, Netflix)', leading: <Icon name="search" size={13} /> },
 ];
 
 const RULE_ACTION_OPTIONS: SelectOption[] = [
-  { value: 'blur', label: 'Blur', leading: <Icon name="palette" size={13} /> },
-  { value: 'shield', label: 'Shield', leading: <Icon name="shield" size={13} /> },
-  { value: 'skip_screenshot', label: 'Skip', leading: <Icon name="lock" size={13} /> },
+  { value: 'blur', label: 'Blur window', leading: <Icon name="palette" size={13} /> },
+  { value: 'shield', label: 'Cover with lock shield', leading: <Icon name="shield" size={13} /> },
+  { value: 'skip_screenshot', label: 'Do not take screenshot', leading: <Icon name="lock" size={13} /> },
 ];
 
 export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSeconds = 30 }: SettingsPageProps) {
@@ -58,6 +58,8 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
   const [testing, setTesting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [trackingActive, setTrackingActive] = useState<boolean>(true);
   const [backendConfiguredKey, setBackendConfiguredKey] = useState<boolean>(false);
   const [maskedKeyHint, setMaskedKeyHint] = useState<string>('');
 
@@ -179,7 +181,9 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
       if (goApp?.GetDevDiagnostics) {
         callGo(() => goApp.GetDevDiagnostics()).then((diag: any) => {
           if (!mounted || !diag) return;
+          setDiagnostics(diag);
           if (typeof diag.version === 'string' && diag.version) setAppVersion(diag.version);
+          if (typeof diag.tracking_active === 'boolean') setTrackingActive(diag.tracking_active);
           if (diag.ai_configured) setBackendConfiguredKey(true);
           if (typeof diag.ai_key_masked === 'string' && diag.ai_key_masked !== 'not set') {
             setMaskedKeyHint(diag.ai_key_masked);
@@ -661,7 +665,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
     const hasMatch = DEFAULT_INTERVAL_OPTIONS.some((opt) => opt.value === stringVal);
     if (!hasMatch) {
       return [
-        { value: stringVal, label: `${screenshotInterval}s | Custom`, leading: <Icon name="clock" size={14} /> },
+        { value: stringVal, label: `${screenshotInterval} seconds (custom)`, leading: <Icon name="clock" size={14} /> },
         ...DEFAULT_INTERVAL_OPTIONS,
       ];
     }
@@ -675,50 +679,97 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
     return 'Gemini Flash family';
   })();
 
+  const handleOpenFolder = (kind: string) => {
+    if (!isDesktop) return;
+    const goApp = (window as any).go?.main?.App;
+    if (goApp?.OpenFolder) {
+      callGo(() => goApp.OpenFolder(kind)).catch((err: any) => {
+        showStatus(`✕ Failed to open folder: ${err?.message || 'Error'}`, 4000);
+      });
+    }
+  };
+
+  const handleOpenURL = (url: string) => {
+    const rt = (window as any).runtime;
+    if (rt?.BrowserOpenURL) {
+      rt.BrowserOpenURL(url);
+    } else {
+      window.open(url, '_blank');
+    }
+  };
+
+  const displayVersion = appVersion
+    ? (appVersion.startsWith('v') ? appVersion : `v${appVersion}`)
+    : 'v2.1.0';
+
+  const displayPlatform = (diagnostics?.platform as string) || 'Linux x86_64';
+
   return (
-    <div className="fade-in-up">
+    <div className="fade-in-up" style={{ paddingBottom: 40 }}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
           handleSave();
         }}
       >
-        <div className="page-header" style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+        {/* Top Header with Save & Test Actions */}
+        <div
+          className="page-header"
+          style={{
+            marginBottom: 20,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 12,
+          }}
+        >
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <h1 className="page-title" style={{ margin: 0 }}>AI Engine & Model Settings</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <h1 className="page-title" style={{ margin: 0 }}>Settings</h1>
               {isDirty && (
-                <span className="badge badge-warning" style={{ fontSize: 11, padding: '2px 8px' }}>
+                <span className="badge badge-warning" style={{ fontSize: 11, padding: '3px 8px' }}>
                   Unsaved changes
                 </span>
               )}
             </div>
-            <p className="page-subtitle">API key, model, capture preferences, and live usage.</p>
+            <p className="page-subtitle" style={{ margin: '4px 0 0', color: 'var(--text-muted)' }}>
+              Simple preferences for screen tracking, privacy protection, focus alerts, and AI insights.
+            </p>
           </div>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             <button
               type="button"
               onClick={handleTestAPI}
               disabled={testing}
               className="btn btn-secondary"
-              style={{ padding: '10px 18px', fontSize: 14, fontWeight: 600, opacity: testing ? 0.6 : undefined, cursor: testing ? 'not-allowed' : undefined }}
+              style={{
+                padding: '9px 16px',
+                fontSize: 13,
+                fontWeight: 600,
+                opacity: testing ? 0.6 : undefined,
+                cursor: testing ? 'not-allowed' : undefined,
+              }}
+              title="Verify Gemini API key connection"
             >
-              {testing ? 'Testing…' : 'Test'}
+              <Icon name="sparkles" size={14} />
+              <span>{testing ? 'Testing…' : 'Test AI Connection'}</span>
             </button>
             <button
               type="submit"
               disabled={saving}
               className="btn btn-primary"
               style={{
-                padding: '10px 22px',
-                fontSize: 14,
+                padding: '9px 20px',
+                fontSize: 13,
                 fontWeight: 700,
                 opacity: saving ? 0.6 : undefined,
                 cursor: saving ? 'not-allowed' : undefined,
                 boxShadow: isDirty ? '0 0 0 2px var(--accent-primary)' : undefined,
               }}
             >
-              {saving ? 'Saving…' : 'Save Settings'}
+              <Icon name="check" size={14} />
+              <span>{saving ? 'Saving…' : 'Save Changes'}</span>
             </button>
           </div>
         </div>
@@ -731,104 +782,136 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
           />
         )}
 
-        {/* API Key & Model Card */}
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-            <span className="card-title">
-              <Icon name="sparkles" size={16} className="card-title-icon" />
-              <span className="card-title-text">API Key & Model</span>
-            </span>
-            {backendConfiguredKey && (
-              <span className="badge badge-productive" style={{ fontSize: 11 }}>
-                ✓ {isDesktop ? 'Active in Desktop Config' : 'Active on Server'}
-                {maskedKeyHint ? ` (${maskedKeyHint})` : ''}
-              </span>
-            )}
-          </div>
-          <div className="card-body">
-            <div className="form-group">
-              <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Google Gemini API Key</span>
-                {apiKey && (
-                  <button
-                    type="button"
-                    onClick={handleClearApiKey}
-                    style={{ background: 'none', border: 'none', color: 'var(--danger-text)', fontSize: 12, cursor: 'pointer', padding: 0 }}
-                  >
-                    Clear key
-                  </button>
-                )}
-              </label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  type="password"
-                  placeholder={backendConfiguredKey ? '●●●●●●●● (Configured - enter new key to replace)' : 'AIzaSy...'}
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  className="form-input"
-                  style={{ fontFamily: 'monospace', flex: 1 }}
-                />
-                <button
-                  type="button"
-                  onClick={() => fetchAvailableModels(apiKey, true)}
-                  disabled={fetchingModels || (isDesktop && !apiKey.trim() && !backendConfiguredKey)}
-                  className="btn btn-secondary"
-                  title="Refresh model list from Google Gemini API"
+        {/* System Overview & App Version Banner */}
+        {isDesktop && (
+          <div
+            className="card"
+            style={{
+              marginBottom: 16,
+              background: 'linear-gradient(135deg, color-mix(in srgb, var(--accent-primary) 8%, var(--bg-card)) 0%, var(--bg-card) 100%)',
+              border: '1px solid color-mix(in srgb, var(--accent-primary) 25%, var(--border-subtle))',
+            }}
+          >
+            <div
+              className="card-body"
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: 16,
+                padding: '16px 20px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                <div
                   style={{
-                    padding: '8px 12px',
-                    minWidth: 42,
-                    opacity: fetchingModels || (isDesktop && !apiKey.trim() && !backendConfiguredKey) ? 0.6 : undefined,
-                    cursor: fetchingModels || (isDesktop && !apiKey.trim() && !backendConfiguredKey) ? 'not-allowed' : undefined,
+                    width: 44,
+                    height: 44,
+                    borderRadius: 12,
+                    background: 'var(--accent-primary)',
+                    color: '#fff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 4px 12px color-mix(in srgb, var(--accent-primary) 35%, transparent)',
+                    flexShrink: 0,
                   }}
                 >
-                  {fetchingModels ? '…' : '↻'}
+                  <Icon name="desktop" size={22} />
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>
+                      get-Hike Desktop
+                    </span>
+                    <span
+                      className="badge badge-productive"
+                      style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.02em', padding: '2px 8px' }}
+                    >
+                      {displayVersion}
+                    </span>
+                    <span
+                      className="badge badge-neutral"
+                      style={{ fontSize: 11, padding: '2px 8px' }}
+                    >
+                      Official Release
+                    </span>
+                    <span
+                      className="badge badge-neutral"
+                      style={{ fontSize: 11, padding: '2px 8px' }}
+                    >
+                      {displayPlatform}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4, fontSize: 12, color: 'var(--text-muted)' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          background: trackingActive ? 'var(--accent-green, #10b981)' : 'var(--text-muted)',
+                          display: 'inline-block',
+                          boxShadow: trackingActive ? '0 0 6px var(--accent-green, #10b981)' : undefined,
+                        }}
+                      />
+                      <strong style={{ color: trackingActive ? 'var(--accent-green, #10b981)' : 'var(--text-secondary)' }}>
+                        {trackingActive ? 'Tracking Active' : 'Tracking Paused'}
+                      </strong>
+                    </span>
+                    <span>•</span>
+                    <span>100% Private Local Storage</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => handleOpenFolder('data')}
+                  className="btn btn-secondary btn-sm"
+                  style={{ fontSize: 12, padding: '6px 12px', gap: 6 }}
+                  title="Open local app data and activity database folder"
+                >
+                  <Icon name="folder" size={13} />
+                  <span>Open Storage Folder</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleOpenFolder('screenshots')}
+                  className="btn btn-secondary btn-sm"
+                  style={{ fontSize: 12, padding: '6px 12px', gap: 6 }}
+                  title="Open local screenshots folder in file manager"
+                >
+                  <Icon name="palette" size={13} />
+                  <span>View Screenshots</span>
                 </button>
               </div>
             </div>
-
-            <div className="form-group" style={{ marginBottom: selectedModelInfo ? 8 : undefined }}>
-              <label className="form-label">
-                Model {availableModels.length > 0 && `(${availableModels.length} fetched)`}
-              </label>
-              <CustomSelect
-                fullWidth
-                ariaLabel="Model"
-                value={model}
-                onChange={setModel}
-                options={modelOptions}
-                triggerStyle={{ height: 38 }}
-              />
-            </div>
-
-            {selectedModelInfo && (
-              <div
-                title={selectedModelInfo.description}
-                style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-              >
-                Context {fmtTokens(selectedModelInfo.inputTokenLimit)} · Output {fmtTokens(selectedModelInfo.outputTokenLimit)}
-                {selectedModelInfo.description ? ` · ${selectedModelInfo.description}` : ''}
-              </div>
-            )}
           </div>
-        </div>
+        )}
 
-        {/* Capture & Appearance Card */}
+        {/* Card 1: Screen Tracking & Display */}
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-header">
             <span className="card-title">
               <Icon name="desktop" size={16} className="card-title-icon" />
-              <span className="card-title-text">Capture & Appearance</span>
+              <span className="card-title-text">Screen Tracking & Appearance</span>
             </span>
           </div>
           <div className="card-body">
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16 }}>
+              {/* Theme Selector */}
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Theme</label>
+                <label className="form-label" style={{ fontWeight: 600 }}>
+                  App Theme
+                </label>
                 <div style={{ display: 'flex', gap: 8 }}>
                   {[
-                    { id: 'dark', label: 'Dark', desc: 'Dark contrast for low light' },
-                    { id: 'light', label: 'Light', desc: 'Bright palette for daytime' },
-                    { id: 'auto', label: 'Auto', desc: 'Match OS system preference' },
+                    { id: 'dark', label: 'Dark', icon: 'moon', desc: 'Dark theme for low light' },
+                    { id: 'light', label: 'Light', icon: 'sparkles', desc: 'Bright palette for daytime' },
+                    { id: 'auto', label: 'System', icon: 'desktop', desc: 'Match your operating system' },
                   ].map((t) => (
                     <button
                       key={t.id}
@@ -836,19 +919,29 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                       title={t.desc}
                       onClick={() => onThemeChange?.(t.id as any)}
                       className={theme === t.id ? 'btn btn-primary' : 'btn btn-secondary'}
-                      style={{ flex: 1, padding: '8px 10px', fontSize: 13, fontWeight: theme === t.id ? 700 : 500 }}
+                      style={{
+                        flex: 1,
+                        padding: '9px 12px',
+                        fontSize: 13,
+                        fontWeight: theme === t.id ? 700 : 500,
+                        gap: 6,
+                      }}
                     >
-                      {t.label}
+                      <Icon name={t.icon as any} size={14} />
+                      <span>{t.label}</span>
                     </button>
                   ))}
                 </div>
               </div>
 
+              {/* Capture Frequency */}
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Capture Interval</label>
+                <label className="form-label" style={{ fontWeight: 600 }}>
+                  Screenshot Frequency
+                </label>
                 <CustomSelect
                   fullWidth
-                  ariaLabel="Capture Interval"
+                  ariaLabel="Screenshot Frequency"
                   value={String(screenshotInterval)}
                   onChange={(value) => {
                     const parsed = parseInt(value, 10);
@@ -859,41 +952,183 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 />
               </div>
             </div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 12 }}>
-              {isDesktop
-                ? `Captures every ${screenshotInterval}s (backend: ${syncIntervalSeconds}s). Pending captures are batched to keep AI usage low.`
-                : `Organization capture interval: every ${screenshotInterval}s. This policy is synced to all connected desktop trackers.`}
+
+            <div
+              style={{
+                fontSize: 12,
+                color: 'var(--text-muted)',
+                marginTop: 14,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                background: 'var(--bg-surface)',
+                padding: '10px 14px',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              <Icon name="info" size={14} />
+              <span>
+                Screenshots are captured locally every <strong>{screenshotInterval} seconds</strong> and analyzed in 5-minute sessions. Images older than 7 days are automatically removed to save disk space.
+              </span>
             </div>
           </div>
         </div>
 
-        {/* Feature 8: Privacy & Sensitive Content Protection */}
+        {/* Card 2: AI Assistant (Google Gemini) */}
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div
+            className="card-header"
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}
+          >
+            <span className="card-title">
+              <Icon name="sparkles" size={16} className="card-title-icon" />
+              <span className="card-title-text">AI Assistant (Google Gemini)</span>
+            </span>
+            {backendConfiguredKey ? (
+              <span className="badge badge-productive" style={{ fontSize: 11 }}>
+                ✓ Connected {maskedKeyHint ? `(${maskedKeyHint})` : ''}
+              </span>
+            ) : (
+              <span className="badge badge-neutral" style={{ fontSize: 11 }}>
+                Optional for auto-summaries
+              </span>
+            )}
+          </div>
+          <div className="card-body">
+            {/* Free API Key Banner */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: 12,
+                padding: '12px 16px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'color-mix(in srgb, var(--accent-primary) 8%, var(--bg-surface))',
+                border: '1px solid color-mix(in srgb, var(--accent-primary) 20%, var(--border-subtle))',
+                marginBottom: 16,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ color: 'var(--accent-primary)', display: 'flex' }}>
+                  <Icon name="zap" size={16} />
+                </span>
+                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                  Google provides a <strong>100% free API tier</strong> for personal productivity ($0.00 cost).
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleOpenURL('https://aistudio.google.com/app/apikey')}
+                className="btn btn-secondary btn-sm"
+                style={{ fontSize: 12, fontWeight: 600, padding: '5px 12px', gap: 6 }}
+                title="Open Google AI Studio to generate a free Gemini API key"
+              >
+                <span>Get Free API Key from Google AI Studio</span>
+                <span style={{ fontSize: 11 }}>↗</span>
+              </button>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                <span>Gemini API Key</span>
+                {apiKey && (
+                  <button
+                    type="button"
+                    onClick={handleClearApiKey}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--danger-text)',
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      padding: 0,
+                    }}
+                  >
+                    Clear key
+                  </button>
+                )}
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="password"
+                  placeholder={backendConfiguredKey ? '●●●●●●●● (Configured - enter new key to replace)' : 'AIzaSy... (Paste your free key here)'}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  className="form-input"
+                  style={{ fontFamily: 'monospace', flex: 1 }}
+                />
+                <button
+                  type="button"
+                  onClick={() => fetchAvailableModels(apiKey, true)}
+                  disabled={fetchingModels || (isDesktop && !apiKey.trim() && !backendConfiguredKey)}
+                  className="btn btn-secondary"
+                  title="Check connection and refresh available models"
+                  style={{
+                    padding: '8px 14px',
+                    gap: 6,
+                    fontSize: 13,
+                    opacity: fetchingModels || (isDesktop && !apiKey.trim() && !backendConfiguredKey) ? 0.6 : undefined,
+                    cursor: fetchingModels || (isDesktop && !apiKey.trim() && !backendConfiguredKey) ? 'not-allowed' : undefined,
+                  }}
+                >
+                  <Icon name="refresh" size={13} />
+                  <span>{fetchingModels ? 'Checking…' : 'Check'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ fontWeight: 600 }}>
+                AI Model {availableModels.length > 0 && `(${availableModels.length} models available)`}
+              </label>
+              <CustomSelect
+                fullWidth
+                ariaLabel="AI Model"
+                value={model}
+                onChange={setModel}
+                options={modelOptions}
+                triggerStyle={{ height: 38 }}
+              />
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+                Gemini 3.5 Flash Lite is selected by default for ultra-fast, zero-delay categorization within free rate limits.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Card 3: Privacy Shield & Safe Apps */}
         {isDesktop && (
-          <div className="card" style={{ marginTop: 16 }}>
-            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div
+              className="card-header"
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}
+            >
               <span className="card-title">
                 <Icon name="shield" size={16} className="card-title-icon" />
-                <span className="card-title-text">Privacy & Sensitive Content Protection</span>
+                <span className="card-title-text">Privacy Shield & Safe Apps</span>
               </span>
               <span
                 className={privacyEnabled ? 'badge badge-productive' : 'badge badge-neutral'}
                 style={{ fontSize: 11 }}
               >
-                {privacyEnabled ? 'Active' : 'Disabled'}
+                {privacyEnabled ? 'Shield Active' : 'Shield Disabled'}
               </span>
             </div>
             <div className="card-body">
-              {/* Master Toggle */}
+              {/* Master Switch */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 16 }}>
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>
-                    Enable Sensitive Window Auto-Protection
+                  <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>
+                    Auto-Protect Passwords & Sensitive Windows
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                    Automatically blurs password managers (Bitwarden, 1Password), banking portals, incognito sessions, and detected credentials in RAM before saving.
+                    Automatically protects password managers (Bitwarden, 1Password, Keepass), banking tabs, and private browsing before screenshots are saved to disk.
                   </div>
                 </div>
-                <label className="settings-switch" title="Toggle Sensitive Window Auto-Protection">
+                <label className="settings-switch" title="Toggle Privacy Shield">
                   <input
                     type="checkbox"
                     checked={privacyEnabled}
@@ -905,22 +1140,22 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                         callGo(() => w.go.main.App.UpdatePrivacySettings(checked, privacyBlurStyle, 35));
                       }
                     }}
-                    aria-label="Toggle Sensitive Window Auto-Protection"
+                    aria-label="Toggle Privacy Shield"
                   />
                   <span className="settings-switch-slider" />
                 </label>
               </div>
 
-              {/* Segmented Mode Selector */}
+              {/* Protection Style */}
               <div className="form-group" style={{ marginBottom: 16 }}>
-                <label className="form-label" style={{ marginBottom: 6 }}>
-                  Protection Mode
+                <label className="form-label" style={{ marginBottom: 6, fontWeight: 600 }}>
+                  Protection Style
                 </label>
-                <div className="settings-segmented-group" role="group" aria-label="Privacy protection mode">
+                <div className="settings-segmented-group" role="group" aria-label="Privacy protection style">
                   {[
-                    { id: 'blur', label: 'Heavy Blur', desc: 'Gaussian filter masks window' },
-                    { id: 'shield', label: 'Frosted Shield', desc: 'Frosted overlay with lock' },
-                    { id: 'skip', label: 'Skip Capture', desc: 'Zero disk storage' },
+                    { id: 'blur', label: 'Heavy Blur', desc: 'Blurs sensitive windows so text cannot be read' },
+                    { id: 'shield', label: 'Frosted Lock Shield', desc: 'Covers sensitive windows with a lock graphic' },
+                    { id: 'skip', label: 'Skip Screenshot', desc: 'Completely pauses capture while sensitive app is open' },
                   ].map((mode) => (
                     <button
                       key={mode.id}
@@ -944,14 +1179,14 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 </div>
               </div>
 
-              {/* Custom Privacy Filter Rules */}
+              {/* Safe Apps List */}
               <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 14 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
-                    Active Protection Rules ({privacyRules.length})
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                    Safe App Rules ({privacyRules.length})
                   </span>
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    Built-in credentials, vaults & banks included automatically
+                    Click rule to toggle on/off
                   </span>
                 </div>
 
@@ -995,17 +1230,17 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                   </div>
                 ) : (
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, fontStyle: 'italic' }}>
-                    No custom rules defined yet. Add app names or regex patterns below.
+                    No custom rules defined yet. Add an app below to protect it automatically.
                   </div>
                 )}
 
-                {/* Add Rule Inline Form */}
+                {/* Add Safe App Form */}
                 <form onSubmit={handleAddPrivacyRule} className="privacy-rule-form">
                   <div className="privacy-rule-type-field">
                     <CustomSelect
                       fullWidth
                       compact
-                      ariaLabel="Rule target type"
+                      ariaLabel="Rule type"
                       value={newRuleType}
                       onChange={(val) => setNewRuleType(val as 'app' | 'title_regex')}
                       options={RULE_TYPE_OPTIONS}
@@ -1014,7 +1249,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                   </div>
                   <input
                     type="text"
-                    placeholder={newRuleType === 'app' ? 'e.g. keepassxc, signal' : 'e.g. (?i)payroll|classified'}
+                    placeholder={newRuleType === 'app' ? 'App name, e.g. whatsapp or spotify' : 'Window text, e.g. bank or netflix'}
                     value={newRulePattern}
                     onChange={(e) => setNewRulePattern(e.target.value)}
                     className="form-input privacy-rule-pattern-input"
@@ -1039,7 +1274,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                     style={{ fontSize: 12, padding: '0 14px', height: 32, gap: 4 }}
                   >
                     <Icon name="plus" size={12} />
-                    <span>Add Rule</span>
+                    <span>Add Safe App</span>
                   </button>
                 </form>
               </div>
@@ -1047,20 +1282,23 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
           </div>
         )}
 
-        {/* Feature 5: Smart Distraction Alerts */}
+        {/* Card 4: Focus & Break Reminders */}
         {isDesktop && (
-          <div className="card" style={{ marginTop: 16 }}>
-            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div
+              className="card-header"
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}
+            >
               <span className="card-title">
                 <Icon name="bell" size={16} className="card-title-icon" />
-                <span className="card-title-text">Smart Distraction Alerts</span>
+                <span className="card-title-text">Focus & Break Reminders</span>
               </span>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span
                   className={distractionEnabled ? 'badge badge-productive' : 'badge badge-neutral'}
                   style={{ fontSize: 11 }}
                 >
-                  {distractionEnabled ? 'Active' : 'Disabled'}
+                  {distractionEnabled ? 'Reminders On' : 'Reminders Off'}
                 </span>
                 <button
                   type="button"
@@ -1069,44 +1307,52 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                     const w = window as any;
                     if (w.go?.main?.App?.SendTestDistractionAlert) {
                       callGo(() => w.go.main.App.SendTestDistractionAlert());
-                      showStatus('✓ Test alert sent', 2500);
+                      showStatus('✓ Test reminder sent!', 2500);
                     }
                   }}
                   style={{ fontSize: 11, padding: '3px 10px', height: 26, gap: 4 }}
-                  title="Trigger a test distraction notification and sound"
+                  title="Test what a distraction reminder looks and sounds like"
                 >
                   <Icon name="bell" size={12} />
-                  <span>Test Nudge</span>
+                  <span>Test Reminder</span>
                 </button>
               </div>
             </div>
             <div className="card-body">
-              {/* Master Alert Switch */}
+              {/* Master Switch */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 16 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>
-                    Continuous Dwell Nudges
+                  <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>
+                    Gentle Nudge When Distracted
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                    Receive non-intrusive in-app toasts and OS notifications when continuous time on non-productive applications exceeds your limit.
+                    Gives you a friendly nudge when you spend too much uninterrupted time on social media, video streaming, or non-work apps.
                   </div>
                 </div>
-                <label className="settings-switch" title="Toggle Continuous Dwell Nudges">
+                <label className="settings-switch" title="Toggle Distraction Reminders">
                   <input
                     type="checkbox"
                     checked={distractionEnabled}
                     onChange={(e) => updateDistractionSettings({ enabled: e.target.checked })}
-                    aria-label="Toggle Continuous Dwell Nudges"
+                    aria-label="Toggle Distraction Reminders"
                   />
                   <span className="settings-switch-slider" />
                 </label>
               </div>
 
-              {/* Responsive Slider Control with Segmented Steps */}
-              <div style={{ marginBottom: 16, background: 'var(--bg-surface)', padding: '12px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, marginBottom: 8 }}>
+              {/* Slider */}
+              <div
+                style={{
+                  marginBottom: 16,
+                  background: 'var(--bg-surface)',
+                  padding: '12px 14px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, marginBottom: 8 }}>
                   <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>
-                    Continuous Dwell Threshold
+                    Remind me after continuous distraction:
                   </span>
                   <span style={{ fontWeight: 700, color: 'var(--accent-primary)', fontVariantNumeric: 'tabular-nums' }}>
                     {distractionThresholdMins} minutes
@@ -1120,11 +1366,20 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                   value={distractionThresholdMins}
                   onChange={(e) => updateDistractionSettings({ threshold: parseInt(e.target.value, 10) })}
                   className="settings-range-slider"
-                  aria-label="Continuous Dwell Threshold"
+                  aria-label="Continuous Distraction Limit"
                 />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginTop: 6, fontVariantNumeric: 'tabular-nums' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 11,
+                    color: 'var(--text-muted)',
+                    marginTop: 6,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
                   <span>5m (Strict)</span>
-                  <span>15m (Balanced)</span>
+                  <span>15m (Recommended)</span>
                   <span>30m</span>
                   <span>60m (Relaxed)</span>
                 </div>
@@ -1141,110 +1396,9 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                   transition: 'opacity var(--transition)',
                 }}
               >
-                <label
-                  className={`settings-pref-card ${distractionFocusSuppression ? 'is-active' : ''}`}
-                >
+                <label className={`settings-pref-card ${distractionSound ? 'is-active' : ''}`}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                    <span
-                      style={{
-                        color: distractionFocusSuppression ? 'var(--accent-primary)' : 'var(--text-muted)',
-                        display: 'flex',
-                        flexShrink: 0,
-                      }}
-                    >
-                      <Icon name="target" size={15} />
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
-                        Focus suppression
-                      </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
-                        Silence alerts during focus goals
-                      </div>
-                    </div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={distractionFocusSuppression}
-                    disabled={!distractionEnabled}
-                    onChange={(e) => updateDistractionSettings({ focusSuppression: e.target.checked })}
-                    aria-label="Suppress alerts during focus goals"
-                  />
-                </label>
-
-                <label
-                  className={`settings-pref-card ${distractionInAppToast ? 'is-active' : ''}`}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                    <span
-                      style={{
-                        color: distractionInAppToast ? 'var(--accent-primary)' : 'var(--text-muted)',
-                        display: 'flex',
-                        flexShrink: 0,
-                      }}
-                    >
-                      <Icon name="message" size={15} />
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
-                        In-app nudge toast
-                      </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
-                        Show non-intrusive floating toast
-                      </div>
-                    </div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={distractionInAppToast}
-                    disabled={!distractionEnabled}
-                    onChange={(e) => updateDistractionSettings({ inAppToast: e.target.checked })}
-                    aria-label="Show in-app nudge toast"
-                  />
-                </label>
-
-                <label
-                  className={`settings-pref-card ${distractionNativeNotify ? 'is-active' : ''}`}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                    <span
-                      style={{
-                        color: distractionNativeNotify ? 'var(--accent-primary)' : 'var(--text-muted)',
-                        display: 'flex',
-                        flexShrink: 0,
-                      }}
-                    >
-                      <Icon name="desktop" size={15} />
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
-                        OS notifications
-                      </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
-                        Send desktop system banner
-                      </div>
-                    </div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={distractionNativeNotify}
-                    disabled={!distractionEnabled}
-                    onChange={(e) => updateDistractionSettings({ nativeNotify: e.target.checked })}
-                    aria-label="Send desktop OS notifications"
-                  />
-                </label>
-
-                <label
-                  className={`settings-pref-card ${distractionSound ? 'is-active' : ''}`}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                    <span
-                      style={{
-                        color: distractionSound ? 'var(--accent-primary)' : 'var(--text-muted)',
-                        display: 'flex',
-                        flexShrink: 0,
-                      }}
-                    >
+                    <span style={{ color: distractionSound ? 'var(--accent-primary)' : 'var(--text-muted)', display: 'flex' }}>
                       <Icon name="bell" size={15} />
                     </span>
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -1252,7 +1406,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                         Audible alert chime
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
-                        Play gentle sound effect on nudge
+                        Play a soft chime sound on nudge
                       </div>
                     </div>
                   </div>
@@ -1261,7 +1415,76 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                     checked={distractionSound}
                     disabled={!distractionEnabled}
                     onChange={(e) => updateDistractionSettings({ sound: e.target.checked })}
-                    aria-label="Play sound effect on nudge"
+                    aria-label="Play soft sound effect"
+                  />
+                </label>
+
+                <label className={`settings-pref-card ${distractionNativeNotify ? 'is-active' : ''}`}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                    <span style={{ color: distractionNativeNotify ? 'var(--accent-primary)' : 'var(--text-muted)', display: 'flex' }}>
+                      <Icon name="desktop" size={15} />
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        Desktop notification
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
+                        Show desktop pop-up notification
+                      </div>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={distractionNativeNotify}
+                    disabled={!distractionEnabled}
+                    onChange={(e) => updateDistractionSettings({ nativeNotify: e.target.checked })}
+                    aria-label="Show desktop notification"
+                  />
+                </label>
+
+                <label className={`settings-pref-card ${distractionInAppToast ? 'is-active' : ''}`}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                    <span style={{ color: distractionInAppToast ? 'var(--accent-primary)' : 'var(--text-muted)', display: 'flex' }}>
+                      <Icon name="message" size={15} />
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        In-app reminder toast
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
+                        Show gentle banner inside get-Hike
+                      </div>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={distractionInAppToast}
+                    disabled={!distractionEnabled}
+                    onChange={(e) => updateDistractionSettings({ inAppToast: e.target.checked })}
+                    aria-label="Show in-app toast"
+                  />
+                </label>
+
+                <label className={`settings-pref-card ${distractionFocusSuppression ? 'is-active' : ''}`}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                    <span style={{ color: distractionFocusSuppression ? 'var(--accent-primary)' : 'var(--text-muted)', display: 'flex' }}>
+                      <Icon name="target" size={15} />
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        Focus goals silence
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
+                        Pause alerts during active focus mode
+                      </div>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={distractionFocusSuppression}
+                    disabled={!distractionEnabled}
+                    onChange={(e) => updateDistractionSettings({ focusSuppression: e.target.checked })}
+                    aria-label="Pause alerts during active focus mode"
                   />
                 </label>
               </div>
@@ -1269,24 +1492,27 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
           </div>
         )}
 
-        {/* Feature 10 & 9: Connected Calendars & Away Tracking */}
+        {/* Card 5: Auto-Pause & Away Tracking */}
         {isDesktop && (
-          <div className="card" style={{ marginTop: 16 }}>
-            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div
+              className="card-header"
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}
+            >
               <span className="card-title">
-                <Icon name="calendar" size={16} className="card-title-icon" />
-                <span className="card-title-text">Connected Calendars & Away Intervals</span>
+                <Icon name="coffee" size={16} className="card-title-icon" />
+                <span className="card-title-text">Auto-Pause & Away Time</span>
               </span>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span className="badge badge-productive" style={{ fontSize: 11 }}>
-                  Ready
+                  ✓ Enabled
                 </span>
                 <button
                   type="button"
                   className="btn btn-secondary btn-sm"
                   onClick={() => {
                     loadCalendarIntegrations();
-                    showStatus('✓ Refreshed calendar sync status', 2000);
+                    showStatus('✓ Refreshed calendar sync', 2000);
                   }}
                   style={{ fontSize: 11, padding: '3px 10px', height: 26, gap: 4 }}
                   title="Check calendar sync status"
@@ -1300,34 +1526,48 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 16 }}>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', marginBottom: 4 }}>
-                    Automated Calendar Meeting Matching
+                    5-Minute Inactivity Auto-Pause
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                    When stepping away for meetings or calls, get-Hike automatically correlates detected offline intervals with scheduled Google and Microsoft 365 calendar events.
+                    When you step away for coffee, calls, or breaks without keyboard/mouse input for 5 minutes, get-Hike automatically pauses recording so idle time is never mistakenly logged as work.
                   </div>
-                  <div style={{ marginTop: 12 }}>
+                  <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span className="badge badge-neutral" style={{ fontSize: 11, padding: '4px 8px', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <Icon name="clock" size={12} />
+                      5m inactivity limit
+                    </span>
+                    <span className="badge badge-productive" style={{ fontSize: 11, padding: '4px 8px', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <Icon name="check" size={12} />
+                      Auto-prompt on return
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', marginBottom: 4 }}>
+                    Calendar & Meeting Matching
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                    Offline intervals are automatically checked against your scheduled Google or Microsoft calendar events so meeting time is categorized accurately.
+                  </div>
+                  <div style={{ marginTop: 10 }}>
                     {calendarIntegrations.length > 0 ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                         {calendarIntegrations.map((ci) => (
-                          <div
-                            key={ci.id}
-                            className="calendar-account-card"
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: '1 1 200px' }}>
-                              <span style={{ color: 'var(--accent-primary)', display: 'flex', flexShrink: 0 }}>
-                                <Icon name="calendar" size={14} />
-                              </span>
+                          <div key={ci.id} className="calendar-account-card">
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                              <Icon name="calendar" size={14} color="var(--accent-primary)" />
                               <div style={{ minWidth: 0 }}>
-                                <div style={{ fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {ci.account_email || ci.display_name}
                                 </div>
-                                <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'capitalize' }}>
-                                  {ci.provider} {ci.last_synced_at && `• Synced ${new Date(ci.last_synced_at).toLocaleTimeString()}`}
+                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                  {ci.provider} • Connected
                                 </div>
                               </div>
                             </div>
-                            <span className="badge badge-productive" style={{ fontSize: 10, flexShrink: 0 }}>
-                              {ci.sync_status || 'connected'}
+                            <span className="badge badge-productive" style={{ fontSize: 10 }}>
+                              {ci.sync_status || 'synced'}
                             </span>
                           </div>
                         ))}
@@ -1336,44 +1576,20 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                       <div
                         style={{
                           display: 'flex',
-                          alignItems: 'flex-start',
-                          gap: 10,
-                          padding: '12px 14px',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '10px 12px',
                           borderRadius: 'var(--radius-sm)',
                           background: 'var(--bg-surface)',
                           border: '1px dashed var(--border-medium)',
                           fontSize: 12,
                           color: 'var(--text-muted)',
-                          lineHeight: 1.5,
                         }}
                       >
-                        <span style={{ color: 'var(--text-muted)', display: 'flex', flexShrink: 0, marginTop: 2 }}>
-                          <Icon name="info" size={14} />
-                        </span>
-                        <div>
-                          Calendar sync configured via organization settings or environment secrets (Google & Microsoft 365 tokens).
-                        </div>
+                        <Icon name="info" size={13} />
+                        <span>Ready — calendar events match automatically when connected.</span>
                       </div>
                     )}
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', marginBottom: 4 }}>
-                    Offline Away Detection
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                    Periods exceeding 5 minutes without keyboard or mouse input automatically pause active recording. Upon return, an offline interval modal allows one-click classification.
-                  </div>
-                  <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span className="badge badge-neutral" style={{ fontSize: 11, padding: '4px 8px', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      <Icon name="clock" size={12} />
-                      5m inactivity threshold
-                    </span>
-                    <span className="badge badge-productive" style={{ fontSize: 11, padding: '4px 8px', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      <Icon name="check" size={12} />
-                      Auto-prompt enabled
-                    </span>
                   </div>
                 </div>
               </div>
@@ -1382,21 +1598,21 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
         )}
       </form>
 
-      {/* Live AI Usage */}
-      <div className="card" style={{ marginTop: 16 }}>
-        <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      {/* Card 6: AI Usage & Free Quota */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div
+          className="card-header"
+          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}
+        >
           <span className="card-title">
             <Icon name="activity" size={16} className="card-title-icon" />
-            <span className="card-title-text">API Usage</span>
+            <span className="card-title-text">Today's AI Usage</span>
           </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, fontSize: 12, color: 'var(--text-secondary)' }}>
-            <span
-              style={{ fontWeight: 700, color: 'var(--teal-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }}
-              title={selectedModelInfo?.displayName || model.replace('models/', '')}
-            >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+            <span style={{ fontWeight: 700, color: 'var(--teal-text)' }}>
               {selectedModelInfo?.displayName || model.replace('models/', '')}
             </span>
-            <span className="badge badge-productive" style={{ flexShrink: 0 }}>
+            <span className="badge badge-productive">
               {modelFamily}
             </span>
           </span>
@@ -1407,69 +1623,124 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
               label="Requests Today"
               value={usageSummary?.total_requests ?? usageCount}
               valueClass="text-purple"
-              sub="Total tracked requests (resets daily)"
+              sub="AI summaries processed today"
             />
             <StatCard
-              label="Prompt Tokens"
+              label="Input Prompt Data"
               value={(usageSummary?.prompt_tokens ?? 0).toLocaleString()}
               valueClass="text-cyan"
-              sub="Input prompt tokens"
+              sub="Tokens sent to AI"
             />
             <StatCard
-              label="Output Tokens"
+              label="Output Summaries"
               value={(usageSummary?.candidate_tokens ?? 0).toLocaleString()}
               valueClass="text-amber"
-              sub="AI output tokens"
+              sub="AI generated tokens"
             />
             <StatCard
-              label="Total Tokens"
+              label="Total Activity"
               value={(usageSummary?.total_tokens ?? 0).toLocaleString()}
               valueClass="text-green"
-              sub="Combined API tokens"
+              sub="Combined daily token count"
             />
           </div>
 
-          <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-            Free-tier RPM/RPD/TPM limits are enforced by Google per model (check <strong>Google AI Studio → Rate limits</strong>); the numbers above are live app usage. Each completed 5-minute window is analyzed as one session bundle with automatic retry and model fallback.
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            Each 5-minute session is analyzed efficiently in bundles to ensure your personal API key stays well within Google's free quota ($0.00 cost).
           </div>
         </div>
       </div>
 
-      {/* Danger Zone - Desktop Only */}
+      {/* Card 7: Local Storage & Reset */}
       {isDesktop && (
-        <div className="card" style={{ marginTop: 16, border: '1px solid color-mix(in srgb, var(--accent-red) 30%, transparent)' }}>
-          <div className="card-header" style={{ borderBottom: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
-            <span className="card-title" style={{ color: 'var(--danger-text)' }}>
-              <Icon name="trash" size={16} className="card-title-icon" style={{ color: 'var(--danger-text)' }} />
-              <span className="card-title-text">Danger Zone</span>
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-header">
+            <span className="card-title">
+              <Icon name="folder" size={16} className="card-title-icon" />
+              <span className="card-title-text">Local Storage & Reset</span>
             </span>
           </div>
-          <div className="card-body" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-            <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 220 }}>
-              Permanently purge local screenshot caches and reset the activity database. Settings and API keys are preserved.
-            </p>
-            <button
-              type="button"
-              onClick={handleClearData}
-              className="btn btn-danger"
-              style={{
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-              }}
-            >
-              <Icon name="trash" size={13} />
-              <span>Clear All Data & Reset</span>
-            </button>
+          <div
+            className="card-body"
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 16,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 260 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', marginBottom: 4 }}>
+                Manage Local Files & Data
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                All your tracked activity, screenshots, and logs are stored only on this computer. You can browse your files directly or safely clear data caches anytime.
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={() => handleOpenFolder('data')}
+                className="btn btn-secondary"
+                style={{ fontSize: 13, padding: '8px 14px', gap: 6 }}
+              >
+                <Icon name="folder" size={14} />
+                <span>Open Storage Folder</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleOpenFolder('screenshots')}
+                className="btn btn-secondary"
+                style={{ fontSize: 13, padding: '8px 14px', gap: 6 }}
+              >
+                <Icon name="palette" size={14} />
+                <span>View Screenshots</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleClearData}
+                className="btn btn-danger"
+                style={{
+                  fontSize: 13,
+                  padding: '8px 14px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+                title="Erase local screenshots and reset database"
+              >
+                <Icon name="trash" size={14} />
+                <span>Clear All Data & Reset</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {isDesktop && appVersion && (
-        <div style={{ marginTop: 14, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
-          get-Hike desktop · version {appVersion}
+      {/* Clean Footer */}
+      {isDesktop && (
+        <div
+          style={{
+            marginTop: 20,
+            textAlign: 'center',
+            fontSize: 12,
+            color: 'var(--text-muted)',
+            fontVariantNumeric: 'tabular-nums',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <span>get-Hike Desktop</span>
+          <span>•</span>
+          <span>version {displayVersion}</span>
+          <span>•</span>
+          <span>{displayPlatform}</span>
+          <span>•</span>
+          <span>100% Local Privacy</span>
         </div>
       )}
     </div>

@@ -2405,6 +2405,9 @@ func copyFileContents(src, dst string) error {
 // version, and lastly to "dev".
 func appVersion() string {
 	v := version
+	if v == "" || v == "dev" {
+		v = "2.1.0"
+	}
 	revision := ""
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, setting := range info.Settings {
@@ -2413,14 +2416,9 @@ func appVersion() string {
 				break
 			}
 		}
-		if v == "dev" {
-			if main := info.Main.Version; main != "" && main != "(devel)" {
-				v = main
-			}
-		}
 	}
 	if revision != "" {
-		return v + "+" + revision
+		return v + " (" + revision + ")"
 	}
 	return v
 }

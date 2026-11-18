@@ -112,7 +112,7 @@ function ScoreRing({
           cx={size / 2}
           cy={size / 2}
           r={radius}
-          stroke="var(--bg-elevated)"
+          stroke="var(--border-subtle)"
           strokeWidth={strokeWidth}
           fill="none"
         />
@@ -168,12 +168,17 @@ const CustomTooltip = ({
               : `${Number.isInteger(p.value) ? p.value : p.value.toFixed(1)}${p.unit || ''}`
             : String(p.value);
 
+        const dotColor =
+          typeof (p.color || p.fill) === 'string' && (p.color || p.fill).startsWith('url(')
+            ? 'var(--accent-primary)'
+            : (p.color || p.fill);
+
         return (
           <div key={i} className="an-tooltip-row">
             <div className="an-tooltip-key">
               <div
                 className="an-tooltip-dot"
-                style={{ background: p.color || p.fill }}
+                style={{ background: dotColor }}
               />
               <span>{p.name || p.dataKey}</span>
             </div>
@@ -602,7 +607,6 @@ export default function Analytics({
               aria-label="Range start date"
               value={startDate || today}
               max={endDate || localISODate()}
-              style={{ colorScheme: 'dark light' }}
               onChange={(e) => {
                 const s = e.target.value;
                 if (!s) return;
@@ -620,7 +624,6 @@ export default function Analytics({
               value={endDate || today}
               min={startDate || undefined}
               max={localISODate()}
-              style={{ colorScheme: 'dark light' }}
               onChange={(e) => {
                 const ed = e.target.value;
                 if (!ed) return;

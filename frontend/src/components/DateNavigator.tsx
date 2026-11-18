@@ -90,7 +90,7 @@ export function DateNavigator({
           fontSize: 13,
           fontWeight: 600,
           color: 'var(--text-primary)',
-          colorScheme: 'dark light',
+          colorScheme: 'inherit',
           cursor: 'pointer',
           fontFamily: 'inherit',
           minWidth: 0,

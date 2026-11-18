@@ -715,7 +715,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 fontWeight: 700,
                 opacity: saving ? 0.6 : undefined,
                 cursor: saving ? 'not-allowed' : undefined,
-                boxShadow: isDirty ? '0 0 0 2px var(--primary-accent)' : undefined,
+                boxShadow: isDirty ? '0 0 0 2px var(--accent-primary)' : undefined,
               }}
             >
               {saving ? 'Saving…' : 'Save Settings'}
@@ -1451,12 +1451,8 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
             <button
               type="button"
               onClick={handleClearData}
-              className="btn"
+              className="btn btn-danger"
               style={{
-                background: 'color-mix(in srgb, var(--accent-red) 15%, transparent)',
-                border: '1px solid var(--accent-red)',
-                color: 'var(--danger-text)',
-                fontWeight: 600,
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
                 display: 'inline-flex',

@@ -700,7 +700,7 @@ export default function Dashboard({
                                   ? 'var(--accent-indigo)'
                                   : 'var(--accent-amber)'
                                 : entry.count > 0
-                                ? 'var(--accent-muted, var(--border-medium))'
+                                ? 'var(--text-muted)'
                                 : 'transparent'
                             }
                           />
@@ -723,7 +723,7 @@ export default function Dashboard({
                     <span>Low (&lt;50%)</span>
                   </span>
                   <span className="dash-legend-item">
-                    <span className="dash-legend-dot" style={{ background: 'var(--border-medium)' }} />
+                    <span className="dash-legend-dot" style={{ background: 'var(--text-muted)' }} />
                     <span>Pending AI</span>
                   </span>
                 </div>
@@ -1112,7 +1112,7 @@ export default function Dashboard({
                         <div title={safeTitle} className="dash-window-title">
                           {isProtected ? (
                             <span className="dash-protected-badge">
-                              <Icon name="lock" size={12} color="var(--accent-amber)" />
+                              <Icon name="lock" size={12} color="var(--warning-text)" />
                               <span>Protected Window</span>
                             </span>
                           ) : (

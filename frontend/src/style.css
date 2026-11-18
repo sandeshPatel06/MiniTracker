@@ -3460,7 +3460,8 @@ img.app-icon {
 }
 
 /* --- Activity stream rows (analysis output cards) --- */
-.dash-page .dash-log-row {
+.dash-page .dash-log-row,
+.tl-page .dash-log-row {
   display: grid;
   grid-template-columns: 52px 76px minmax(0, 1fr) 115px;
   align-items: flex-start;
@@ -3473,22 +3474,33 @@ img.app-icon {
   transition: border-color var(--transition), background var(--transition);
 }
 
-.dash-page .dash-log-row:hover {
+.dash-page .dash-log-row:hover,
+.tl-page .dash-log-row:hover {
   border-color: var(--border-medium);
   background: var(--bg-card-hover);
 }
 
-.dash-page .dash-time-col {
+.dash-page .dash-time-col,
+.tl-page .dash-time-col {
   min-width: 52px;
   padding-top: 3px;
 }
 
-.dash-page .dash-thumb-col {
+.dash-page .dash-thumb-col,
+.tl-page .dash-thumb-col {
   width: 76px;
   flex-shrink: 0;
 }
 
-.dash-page .dash-info-col {
+.dash-thumb-col .timeline-thumb,
+.dash-thumb-col .timeline-thumb-img,
+.dash-thumb-col .timeline-thumb-placeholder {
+  width: 72px;
+  height: 42px;
+}
+
+.dash-page .dash-info-col,
+.tl-page .dash-info-col {
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -3496,7 +3508,8 @@ img.app-icon {
 }
 
 /* Chips row: consistent gap, baseline-aligned icon + text. */
-.dash-page .dash-chip-row {
+.dash-page .dash-chip-row,
+.tl-page .dash-chip-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -3507,7 +3520,8 @@ img.app-icon {
 
 /* App chip and category badge: unified heights and border-radius. */
 .dash-page .dash-activity .category-badge,
-.dash-page .category-badge {
+.dash-page .category-badge,
+.tl-page .category-badge {
   font-size: 11px !important;
   height: 22px !important;
   padding: 0 8px !important;
@@ -3518,7 +3532,8 @@ img.app-icon {
   box-sizing: border-box !important;
 }
 
-.dash-page .dash-app-chip {
+.dash-page .dash-app-chip,
+.tl-page .dash-app-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -3537,13 +3552,15 @@ img.app-icon {
   box-sizing: border-box;
 }
 
-.dash-page .dash-app-chip-label {
+.dash-page .dash-app-chip-label,
+.tl-page .dash-app-chip-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.dash-page .dash-app-category {
+.dash-page .dash-app-category,
+.tl-page .dash-app-category {
   font-size: 11px;
   color: var(--text-muted);
   font-style: normal;
@@ -3554,7 +3571,8 @@ img.app-icon {
   flex-shrink: 0;
 }
 
-.dash-page .dash-window-title {
+.dash-page .dash-window-title,
+.tl-page .dash-window-title {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
@@ -3567,7 +3585,8 @@ img.app-icon {
   gap: 6px;
 }
 
-.dash-page .dash-window-title-text {
+.dash-page .dash-window-title-text,
+.tl-page .dash-window-title-text {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -3577,13 +3596,15 @@ img.app-icon {
   max-width: 100%;
 }
 
-.dash-page .dash-window-title-string {
+.dash-page .dash-window-title-string,
+.tl-page .dash-window-title-string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.dash-page .dash-protected-badge {
+.dash-page .dash-protected-badge,
+.tl-page .dash-protected-badge {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -3597,7 +3618,8 @@ img.app-icon {
 }
 
 /* Reason text: two-line clamp with readable line-height */
-.dash-page .dash-reason {
+.dash-page .dash-reason,
+.tl-page .dash-reason {
   font-size: 12px;
   line-height: 1.45;
   color: var(--text-secondary);
@@ -3610,7 +3632,8 @@ img.app-icon {
 }
 
 /* Pending captures: shimmer placeholders */
-.dash-page .dash-reason-skeleton {
+.dash-page .dash-reason-skeleton,
+.tl-page .dash-reason-skeleton {
   margin-top: 3px;
   display: flex;
   flex-direction: column;
@@ -3619,14 +3642,16 @@ img.app-icon {
   max-width: 280px;
 }
 
-.dash-page .dash-shimmer-line {
+.dash-page .dash-shimmer-line,
+.tl-page .dash-shimmer-line {
   height: 9px;
   border-radius: 99px;
   position: relative;
   overflow: hidden;
 }
 
-.dash-page .dash-shimmer-line::after {
+.dash-page .dash-shimmer-line::after,
+.tl-page .dash-shimmer-line::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -3645,7 +3670,8 @@ img.app-icon {
 }
 
 /* Pending chip */
-.dash-page .dash-pending-chip {
+.dash-page .dash-pending-chip,
+.tl-page .dash-pending-chip {
   gap: 6px;
   animation: dash-pending-pulse 1.8s ease-in-out 0.4s infinite;
 }
@@ -3655,7 +3681,8 @@ img.app-icon {
   50% { opacity: 0.6; }
 }
 
-.dash-page .dash-mini-spinner {
+.dash-page .dash-mini-spinner,
+.tl-page .dash-mini-spinner {
   width: 10px;
   height: 10px;
   border-radius: 50%;
@@ -3666,23 +3693,27 @@ img.app-icon {
 }
 
 /* Feed header meta: count + pending pill side by side */
-.dash-page .dash-feed-meta {
+.dash-page .dash-feed-meta,
+.tl-page .dash-feed-meta {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
 }
 
-.dash-page .dash-pending-pill {
+.dash-page .dash-pending-pill,
+.tl-page .dash-pending-pill {
   font-size: 12px;
 }
 
-.dash-page .dash-pending-pill.is-processing {
+.dash-page .dash-pending-pill.is-processing,
+.tl-page .dash-pending-pill.is-processing {
   animation: none;
 }
 
 /* Score column: badge + focus meter */
-.dash-page .dash-score-col {
+.dash-page .dash-score-col,
+.tl-page .dash-score-col {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -3693,7 +3724,8 @@ img.app-icon {
   padding-top: 2px;
 }
 
-.dash-page .dash-score-bar {
+.dash-page .dash-score-bar,
+.tl-page .dash-score-bar {
   width: 72px;
   height: 5px;
   border-radius: 99px;
@@ -3702,27 +3734,52 @@ img.app-icon {
   flex-shrink: 0;
 }
 
-.dash-page .dash-score-bar-fill {
+.dash-page .dash-score-bar-fill,
+.tl-page .dash-score-bar-fill {
   height: 100%;
   border-radius: inherit;
   transition: width var(--transition);
 }
 
+.dash-key-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.dash-key-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.dash-key-dot {
+  opacity: 0.5;
+}
+
 /* Pressed feedback for screenshot thumbnails */
-.dash-page .dash-log-row .timeline-thumb-img {
+.dash-page .dash-log-row .timeline-thumb-img,
+.tl-page .dash-log-row .timeline-thumb-img {
   transition: border-color var(--transition), transform 0.12s ease-out;
 }
 
-.dash-page .dash-log-row .timeline-thumb-img:hover {
+.dash-page .dash-log-row .timeline-thumb-img:hover,
+.tl-page .dash-log-row .timeline-thumb-img:hover {
   border-color: var(--accent-primary);
 }
 
-.dash-page .dash-log-row .timeline-thumb-img:focus-visible {
+.dash-page .dash-log-row .timeline-thumb-img:focus-visible,
+.tl-page .dash-log-row .timeline-thumb-img:focus-visible {
   outline: 2px solid var(--accent-primary);
   outline-offset: 2px;
 }
 
-.dash-page .dash-log-row .timeline-thumb-img:active {
+.dash-page .dash-log-row .timeline-thumb-img:active,
+.tl-page .dash-log-row .timeline-thumb-img:active {
   transform: scale(0.96);
 }
 
@@ -3771,7 +3828,8 @@ img.app-icon {
   }
 
   /* Two-row mobile capture card layout */
-  .dash-page .dash-log-row {
+  .dash-page .dash-log-row,
+  .tl-page .dash-log-row {
     grid-template-columns: 72px minmax(0, 1fr);
     grid-template-areas:
       "time score"
@@ -3781,21 +3839,25 @@ img.app-icon {
     align-items: start;
   }
 
-  .dash-page .dash-time-col {
+  .dash-page .dash-time-col,
+  .tl-page .dash-time-col {
     grid-area: time;
     padding-top: 0;
   }
 
-  .dash-page .dash-thumb-col {
+  .dash-page .dash-thumb-col,
+  .tl-page .dash-thumb-col {
     grid-area: thumb;
     width: 72px;
   }
 
-  .dash-page .dash-info-col {
+  .dash-page .dash-info-col,
+  .tl-page .dash-info-col {
     grid-area: info;
   }
 
-  .dash-page .dash-score-col {
+  .dash-page .dash-score-col,
+  .tl-page .dash-score-col {
     grid-area: score;
     justify-self: end;
     align-items: flex-end;
@@ -3803,11 +3865,13 @@ img.app-icon {
     padding-top: 0;
   }
 
-  .dash-page .dash-score-bar {
+  .dash-page .dash-score-bar,
+  .tl-page .dash-score-bar {
     display: none;
   }
 
-  .dash-page .dash-reason-skeleton {
+  .dash-page .dash-reason-skeleton,
+  .tl-page .dash-reason-skeleton {
     max-width: 100%;
   }
 
@@ -4758,7 +4822,7 @@ img.app-icon {
   min-width: 0;
 }
 
-.tl-page .timeline-item {
+.tl-page .timeline-item:not(.dash-log-row) {
   grid-template-columns: max-content 72px minmax(0, 1fr) minmax(96px, auto);
   gap: 12px;
   padding: 8px 14px;
@@ -5362,7 +5426,7 @@ img.app-icon {
    because every .tl-page- scoped base rule outranks them)
    ============================================================ */
 @media (max-width: 1200px) {
-  .tl-page .timeline-item {
+  .tl-page .timeline-item:not(.dash-log-row) {
     grid-template-columns: max-content 72px minmax(0, 1fr) minmax(88px, auto);
     gap: 10px;
   }
@@ -5390,11 +5454,11 @@ img.app-icon {
     gap: 12px;
   }
 
-  .tl-page .timeline-item {
+  .tl-page .timeline-item:not(.dash-log-row) {
     grid-template-columns: max-content 72px minmax(0, 1fr);
   }
 
-  .tl-page .timeline-item > div:last-child {
+  .tl-page .timeline-item:not(.dash-log-row) > div:last-child {
     grid-column: 1 / -1;
     display: flex;
     justify-content: flex-end;
@@ -5502,21 +5566,21 @@ img.app-icon {
     flex-shrink: 0;
   }
 
-  .tl-page .timeline-item {
+  .tl-page .timeline-item:not(.dash-log-row) {
     grid-template-columns: 1fr;
     gap: 8px;
     min-height: 0;
   }
 
-  /* Shared 540px rule widens thumbs; mirror it inside page scope. */
-  .tl-page .timeline-thumb,
-  .tl-page .timeline-thumb-img,
-  .tl-page .timeline-thumb-placeholder {
+  /* Shared 540px rule widens thumbs in grid mode only */
+  .tl-page .tl-grid .timeline-thumb,
+  .tl-page .tl-grid .timeline-thumb-img,
+  .tl-page .tl-grid .timeline-thumb-placeholder {
     width: 100%;
     height: 100px;
   }
 
-  .tl-page .tl-sk-thumb {
+  .tl-page .tl-grid .tl-sk-thumb {
     width: 100%;
     height: 100px;
   }
@@ -5562,7 +5626,7 @@ img.app-icon {
 }
 
 @media (max-width: 420px) {
-  .tl-page .timeline-item { padding: 8px 10px; }
+  .tl-page .timeline-item:not(.dash-log-row) { padding: 8px 10px; }
 
   .tl-page .tl-sk-line { min-width: 90px; }
   .tl-page .tl-sk-line2 { min-width: 100px; }

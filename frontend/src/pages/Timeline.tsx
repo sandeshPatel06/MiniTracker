@@ -67,6 +67,14 @@ function safeFormatDateHeader(dateStr: string): string {
   return !Number.isNaN(d.getTime()) ? format(d, 'MMMM d, yyyy') : dateStr;
 }
 
+function focusBarColor(score: number): string {
+  return score >= FOCUS_GOOD
+    ? 'var(--accent-green)'
+    : score >= FOCUS_OK
+    ? 'var(--accent-indigo)'
+    : 'var(--accent-amber)';
+}
+
 // Filter definitions
 type TimeInterval = 'ALL' | 'morning' | 'afternoon' | 'evening' | 'night';
 type FocusFilter = 'ALL' | 'productive' | 'neutral' | 'unproductive' | 'pending';
@@ -991,11 +999,15 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
             ) : (
               <ul className="timeline-list tl-rows" aria-label="Loading captures">
                 {SKELETON_ROWS.map((i) => (
-                  <li key={i} className="timeline-item tl-row tl-skeleton-row">
-                    <span className="skeleton tl-sk-time" />
-                    <span className="skeleton tl-sk-thumb" />
-                    <div className="tl-sk-info">
-                      <div className="tl-sk-chips">
+                  <li key={i} className="timeline-item dash-log-row tl-row tl-skeleton-row">
+                    <div className="dash-time-col">
+                      <span className="skeleton tl-sk-time" />
+                    </div>
+                    <div className="dash-thumb-col">
+                      <span className="skeleton tl-sk-thumb" />
+                    </div>
+                    <div className="timeline-info dash-info-col tl-sk-info">
+                      <div className="dash-chip-row tl-sk-chips">
                         <span className="skeleton tl-sk-chip tl-sk-chip-a" />
                         <span className="skeleton tl-sk-chip tl-sk-chip-b" />
                       </div>
@@ -1003,7 +1015,7 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
                       <span className="skeleton tl-sk-line2" />
                       <span className="skeleton tl-sk-keys" />
                     </div>
-                    <div className="tl-sk-score">
+                    <div className="dash-score-col tl-sk-score">
                       <span className="skeleton tl-sk-badge" />
                       <span className="skeleton tl-sk-conf" />
                     </div>
@@ -1193,85 +1205,183 @@ export default function Timeline({ logs = [], loading, today, onDateChange, load
               {paginatedLogs.map((log, index) => {
                 const appName = canonicalAppName(log.app_name);
                 const time = safeFormatTime(log.timestamp);
-                const windowTitle = maskSensitive ? redactSensitiveTitle(log.window_title) : (log.window_title || '');
+                const isPending = isPendingLog(log);
+                const isProtected = log.is_blurred || /🔒|protected|incognito/i.test(log.window_title || '');
+                const safeTitle = maskSensitive ? redactSensitiveTitle(log.window_title) : (log.window_title || '');
                 const entropySafe = typeof log.entropy_score === 'number' && Number.isFinite(log.entropy_score)
                   ? log.entropy_score.toFixed(1)
                   : '0.0';
+                const isNum = typeof log.productive_score === 'number' && Number.isFinite(log.productive_score);
+                const rawScore = isNum ? log.productive_score! : log.is_productive ? 100 : 0;
+                const scoreVal = Math.min(100, Math.max(0, Math.round(rawScore)));
 
                 return (
                   <li
                     key={log.id ?? `list-log-${log.timestamp}-${index}`}
-                    className={`timeline-item tl-row ${log.is_blurred ? 'tl-row-shielded' : ''} ${log.is_retroactive ? 'tl-row-retroactive' : ''}`}
-                    aria-label={`${time} — ${appName || 'Unknown app'}`}
+                    className={`timeline-item dash-log-row tl-row ${log.is_blurred ? 'tl-row-shielded' : ''} ${log.is_retroactive ? 'tl-row-retroactive' : ''}`}
+                    aria-label={`Capture at ${time} — ${appName || 'Unknown app'}`}
                   >
-                    <span className="timeline-time tl-time">{time}</span>
+                    <div className="dash-time-col">
+                      <time className="timeline-time tl-time" dateTime={log.timestamp}>
+                        {time}
+                      </time>
+                    </div>
 
-                    <ScreenshotThumb
-                      imagePath={log.image_path}
-                      onClick={log.image_path ? () => setSelectedImage(log.image_path) : undefined}
-                    />
+                    <div className="dash-thumb-col">
+                      <ScreenshotThumb
+                        imagePath={log.image_path}
+                        onClick={log.image_path ? () => setSelectedImage(log.image_path) : undefined}
+                      />
+                    </div>
 
-                    <div className="timeline-info">
-                      <div className="tl-tags">
+                    <div className="timeline-info dash-info-col">
+                      <div className="dash-chip-row">
                         <CategoryBadge category={log.ai_category} />
                         {appName && (
-                          <span className="tl-app-chip" title={appName}>
+                          <span
+                            title={`Application: ${appName}`}
+                            className="dash-app-chip"
+                          >
                             <AppIcon name={appName} size={14} />
-                            <span className="tl-app-chip-label">{appName}</span>
+                            <span className="dash-app-chip-label">
+                              {appName}
+                            </span>
+                          </span>
+                        )}
+                        {log.app_category && (
+                          <span title={`Category: ${log.app_category}`} className="dash-app-category">
+                            ({log.app_category})
                           </span>
                         )}
                         {log.is_blurred && (
                           <span
-                            className="badge-privacy-shield"
+                            className="badge badge-amber"
+                            style={{ fontSize: 10, padding: '1px 6px', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                             title={log.blur_reason || 'Sensitive window protected at capture'}
                           >
-                            <Icon name="shield" size={11} />
+                            <Icon name="shield" size={10} />
                             Privacy Shielded
                           </span>
                         )}
                         {log.is_retroactive && (
                           <span
-                            className="badge-offline-interval"
+                            className="badge badge-purple"
+                            style={{ fontSize: 10, padding: '1px 6px', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                             title="Retroactively categorized offline block"
                           >
-                            <Icon name="clock" size={11} />
+                            <Icon name="clock" size={10} />
                             Offline Interval
                           </span>
                         )}
                       </div>
 
-                      {windowTitle && (
-                        <div className="tl-window-title" title={windowTitle}>
-                          {windowTitle}
+                      {safeTitle && (
+                        <div title={safeTitle} className="dash-window-title">
+                          {isProtected ? (
+                            <span className="dash-protected-badge">
+                              <Icon name="lock" size={12} color="var(--warning-text)" />
+                              <span>Protected Window</span>
+                            </span>
+                          ) : (
+                            <span className="dash-window-title-text">
+                              <Icon name="desktop" size={12} color="var(--text-muted)" />
+                              <span className="dash-window-title-string">{safeTitle}</span>
+                            </span>
+                          )}
                         </div>
                       )}
 
-                      <div className="timeline-reason" title={log.ai_reason || undefined}>
-                        {log.ai_reason || '—'}
-                      </div>
+                      {isPending ? (
+                        <div
+                          className="dash-reason-skeleton"
+                          title="Analysis is running for this capture"
+                          aria-busy="true"
+                        >
+                          <div className="skeleton dash-shimmer-line" style={{ width: '58%' }} />
+                          <div className="skeleton dash-shimmer-line" style={{ width: '34%' }} />
+                        </div>
+                      ) : (
+                        <div
+                          className="dash-reason"
+                          title={log.ai_reason || 'No AI summary for this capture'}
+                        >
+                          {log.ai_reason || 'No AI summary for this capture'}
+                        </div>
+                      )}
 
-                      <div className="tl-keys">
-                        <span className="tl-keys-icon" aria-hidden="true">
-                          <Icon name="keyboard" size={12} />
+                      <div className="dash-key-meta">
+                        <span className="dash-key-item" title={`${(log.total_keys ?? 0).toLocaleString()} keys total, ${(log.unique_keys ?? 0).toLocaleString()} unique`}>
+                          <Icon name="keyboard" size={11} />
+                          <span>{(log.total_keys ?? 0).toLocaleString()} keys ({(log.unique_keys ?? 0).toLocaleString()} uniq)</span>
                         </span>
-                        <span>{(log.total_keys ?? 0).toLocaleString()} keys · {(log.unique_keys ?? 0).toLocaleString()} unique</span>
                         {(log.total_clicks ?? 0) > 0 && (
                           <>
-                            <span className="tl-dot" aria-hidden="true">•</span>
-                            <span>{log.total_clicks} clicks</span>
+                            <span className="dash-key-dot" aria-hidden="true">•</span>
+                            <span className="dash-key-item" title={`${log.total_clicks} clicks`}>
+                              <span>{log.total_clicks} clicks</span>
+                            </span>
                           </>
                         )}
-                        <span className="tl-dot" aria-hidden="true">•</span>
-                        <span>Entropy: {entropySafe}</span>
+                        <span className="dash-key-dot" aria-hidden="true">•</span>
+                        <span className="dash-key-item" title={`Entropy: ${entropySafe}`}>
+                          <span>Entropy {entropySafe}</span>
+                        </span>
                       </div>
                     </div>
 
-                    <div className="tl-score-col">
-                      {renderFocusBadge(log)}
-                      {(log.ai_confidence ?? 0) > 0 && (
-                        <span className="tl-confidence">
-                          {((log.ai_confidence ?? 0) * 100).toFixed(0)}% AI confidence
+                    <div className={isPending ? 'dash-score-col is-pending' : 'dash-score-col'}>
+                      {isPending ? (
+                        <span
+                          className="badge badge-pending dash-pending-chip"
+                          title="Pending review | add an API key in Settings to score captures"
+                        >
+                          <span className="dash-mini-spinner" aria-hidden="true" />
+                          <span>Pending AI</span>
                         </span>
+                      ) : (
+                        <>
+                          <span
+                            title={`AI focus rating: ${scoreVal}%`}
+                            className={`badge ${
+                              scoreVal >= FOCUS_GOOD
+                                ? 'badge-productive'
+                                : scoreVal >= FOCUS_OK
+                                ? 'badge-amber'
+                                : 'badge-unproductive'
+                            }`}
+                            style={{ fontVariantNumeric: 'tabular-nums' }}
+                          >
+                            <Icon
+                              name={
+                                scoreVal >= FOCUS_GOOD
+                                  ? 'check'
+                                  : scoreVal >= FOCUS_OK
+                                  ? 'activity'
+                                  : 'x'
+                              }
+                              size={12}
+                            />
+                            {scoreVal}% Focus
+                          </span>
+                          <div
+                            className="dash-score-bar"
+                            role="meter"
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={scoreVal}
+                            aria-label="AI focus rating"
+                          >
+                            <div
+                              className="dash-score-bar-fill"
+                              style={{ width: `${scoreVal}%`, background: focusBarColor(scoreVal) }}
+                            />
+                          </div>
+                          {(log.ai_confidence ?? 0) > 0 && (
+                            <span className="tl-confidence" style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                              {((log.ai_confidence ?? 0) * 100).toFixed(0)}% conf
+                            </span>
+                          )}
+                        </>
                       )}
                     </div>
                   </li>

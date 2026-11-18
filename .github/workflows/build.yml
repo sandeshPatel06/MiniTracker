@@ -12,7 +12,7 @@ permissions:
 
 env:
   WAILS_VERSION: v2.12.0
-  NODE_VERSION: '20'
+  NODE_VERSION: '22'
 
 jobs:
   frontend:
@@ -85,7 +85,7 @@ jobs:
             server_asset: get-hike-server-macos-amd64
             legacy_aliases: false
           - name: macOS Apple Silicon
-            os: macos-15
+            os: macos-14
             artifact: binaries-macos-arm64
             platform: darwin/arm64
             tags: desktop,production

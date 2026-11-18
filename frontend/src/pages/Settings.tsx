@@ -734,7 +734,10 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
         {/* API Key & Model Card */}
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-            <span className="card-title">API Key & Model</span>
+            <span className="card-title">
+              <Icon name="sparkles" size={16} className="card-title-icon" />
+              <span className="card-title-text">API Key & Model</span>
+            </span>
             {backendConfiguredKey && (
               <span className="badge badge-productive" style={{ fontSize: 11 }}>
                 ✓ {isDesktop ? 'Active in Desktop Config' : 'Active on Server'}
@@ -812,7 +815,10 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
         {/* Capture & Appearance Card */}
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-header">
-            <span className="card-title">Capture & Appearance</span>
+            <span className="card-title">
+              <Icon name="desktop" size={16} className="card-title-icon" />
+              <span className="card-title-text">Capture & Appearance</span>
+            </span>
           </div>
           <div className="card-body">
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
@@ -866,8 +872,8 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
           <div className="card" style={{ marginTop: 16 }}>
             <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
               <span className="card-title">
-                <Icon name="shield" size={16} />
-                Privacy & Sensitive Content Protection
+                <Icon name="shield" size={16} className="card-title-icon" />
+                <span className="card-title-text">Privacy & Sensitive Content Protection</span>
               </span>
               <span
                 className={privacyEnabled ? 'badge badge-productive' : 'badge badge-neutral'}
@@ -1046,8 +1052,8 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
           <div className="card" style={{ marginTop: 16 }}>
             <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
               <span className="card-title">
-                <Icon name="bell" size={16} />
-                Smart Distraction Alerts
+                <Icon name="bell" size={16} className="card-title-icon" />
+                <span className="card-title-text">Smart Distraction Alerts</span>
               </span>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span
@@ -1077,7 +1083,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
             <div className="card-body">
               {/* Master Alert Switch */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 16 }}>
-                <div>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>
                     Continuous Dwell Nudges
                   </div>
@@ -1138,7 +1144,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 <label
                   className={`settings-pref-card ${distractionFocusSuppression ? 'is-active' : ''}`}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
                     <span
                       style={{
                         color: distractionFocusSuppression ? 'var(--accent-primary)' : 'var(--text-muted)',
@@ -1148,7 +1154,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                     >
                       <Icon name="target" size={15} />
                     </span>
-                    <div style={{ minWidth: 0 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
                         Focus suppression
                       </div>
@@ -1169,7 +1175,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 <label
                   className={`settings-pref-card ${distractionInAppToast ? 'is-active' : ''}`}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
                     <span
                       style={{
                         color: distractionInAppToast ? 'var(--accent-primary)' : 'var(--text-muted)',
@@ -1179,7 +1185,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                     >
                       <Icon name="message" size={15} />
                     </span>
-                    <div style={{ minWidth: 0 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
                         In-app nudge toast
                       </div>
@@ -1200,7 +1206,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 <label
                   className={`settings-pref-card ${distractionNativeNotify ? 'is-active' : ''}`}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
                     <span
                       style={{
                         color: distractionNativeNotify ? 'var(--accent-primary)' : 'var(--text-muted)',
@@ -1210,7 +1216,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                     >
                       <Icon name="desktop" size={15} />
                     </span>
-                    <div style={{ minWidth: 0 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
                         OS notifications
                       </div>
@@ -1231,7 +1237,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 <label
                   className={`settings-pref-card ${distractionSound ? 'is-active' : ''}`}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
                     <span
                       style={{
                         color: distractionSound ? 'var(--accent-primary)' : 'var(--text-muted)',
@@ -1241,7 +1247,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                     >
                       <Icon name="bell" size={15} />
                     </span>
-                    <div style={{ minWidth: 0 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
                         Audible alert chime
                       </div>
@@ -1268,8 +1274,8 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
           <div className="card" style={{ marginTop: 16 }}>
             <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
               <span className="card-title">
-                <Icon name="calendar" size={16} />
-                Connected Calendars & Away Intervals
+                <Icon name="calendar" size={16} className="card-title-icon" />
+                <span className="card-title-text">Connected Calendars & Away Intervals</span>
               </span>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span className="badge badge-productive" style={{ fontSize: 11 }}>
@@ -1377,9 +1383,12 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
       </form>
 
       {/* Live AI Usage */}
-      <div className="card">
+      <div className="card" style={{ marginTop: 16 }}>
         <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <span className="card-title">API Usage</span>
+          <span className="card-title">
+            <Icon name="activity" size={16} className="card-title-icon" />
+            <span className="card-title-text">API Usage</span>
+          </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, fontSize: 12, color: 'var(--text-secondary)' }}>
             <span
               style={{ fontWeight: 700, color: 'var(--teal-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }}
@@ -1430,7 +1439,10 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
       {isDesktop && (
         <div className="card" style={{ marginTop: 16, border: '1px solid color-mix(in srgb, var(--accent-red) 30%, transparent)' }}>
           <div className="card-header" style={{ borderBottom: '1px solid color-mix(in srgb, var(--accent-red) 20%, transparent)' }}>
-            <span className="card-title" style={{ color: 'var(--danger-text)' }}>⚠️ Danger Zone</span>
+            <span className="card-title" style={{ color: 'var(--danger-text)' }}>
+              <Icon name="trash" size={16} className="card-title-icon" style={{ color: 'var(--danger-text)' }} />
+              <span className="card-title-text">Danger Zone</span>
+            </span>
           </div>
           <div className="card-body" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
             <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 220 }}>
@@ -1447,9 +1459,13 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 fontWeight: 600,
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
               }}
             >
-              🗑️ Clear All Data & Reset
+              <Icon name="trash" size={13} />
+              <span>Clear All Data & Reset</span>
             </button>
           </div>
         </div>

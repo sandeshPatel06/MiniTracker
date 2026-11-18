@@ -238,7 +238,7 @@ export function Sidebar({
         )}
 
         <div className="sidebar-section-label">Menu</div>
-        <nav aria-label="Main Navigation">
+        <nav aria-label="Main Navigation" className="sidebar-nav">
           {navItems.map((item) => {
             const active = page === item.id;
             return (

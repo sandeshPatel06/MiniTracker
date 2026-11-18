@@ -243,12 +243,15 @@ func Load() (*Config, error) {
 	cfg.AIAnalysisInterval = aiDur
 
 	// Ensure DataDir fallback
-	if cfg.DataDir == "" {
+	if cfg.DataDir == "" || (cfg.DataDir == "/data" && os.Geteuid() != 0) {
 		cfg.DataDir = filepath.Join(home, ".local", "share", "get-hike")
 	}
 
 	// Ensure required directories exist
-	_ = os.MkdirAll(cfg.DataDir, 0755)
+	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil && cfg.DataDir != filepath.Join(home, ".local", "share", "get-hike") {
+		cfg.DataDir = filepath.Join(home, ".local", "share", "get-hike")
+		_ = os.MkdirAll(cfg.DataDir, 0755)
+	}
 	_ = os.MkdirAll(filepath.Join(home, ".config", "get-hike"), 0755)
 
 	return &cfg, nil

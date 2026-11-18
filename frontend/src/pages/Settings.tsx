@@ -705,14 +705,14 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
   const displayPlatform = (diagnostics?.platform as string) || 'Linux x86_64';
 
   return (
-    <div className="fade-in-up" style={{ paddingBottom: 40 }}>
+    <div className="fade-in-up" style={{ paddingBottom: 40, maxWidth: 840, margin: '0 auto' }}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
           handleSave();
         }}
       >
-        {/* Top Header with Save & Test Actions */}
+        {/* Minimal Header */}
         <div
           className="page-header"
           style={{
@@ -727,49 +727,33 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <h1 className="page-title" style={{ margin: 0 }}>Settings</h1>
+              <span className="badge badge-neutral" style={{ fontSize: 11, padding: '2px 8px' }}>
+                {displayVersion}
+              </span>
               {isDirty && (
-                <span className="badge badge-warning" style={{ fontSize: 11, padding: '3px 8px' }}>
+                <span className="badge badge-warning" style={{ fontSize: 11, padding: '2px 8px' }}>
                   Unsaved changes
                 </span>
               )}
             </div>
             <p className="page-subtitle" style={{ margin: '4px 0 0', color: 'var(--text-muted)' }}>
-              Simple preferences for screen tracking, privacy protection, focus alerts, and AI insights.
+              Preferences for tracking interval, appearance, AI, and privacy.
             </p>
           </div>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-            <button
-              type="button"
-              onClick={handleTestAPI}
-              disabled={testing}
-              className="btn btn-secondary"
-              style={{
-                padding: '9px 16px',
-                fontSize: 13,
-                fontWeight: 600,
-                opacity: testing ? 0.6 : undefined,
-                cursor: testing ? 'not-allowed' : undefined,
-              }}
-              title="Verify Gemini API key connection"
-            >
-              <Icon name="sparkles" size={14} />
-              <span>{testing ? 'Testing…' : 'Test AI Connection'}</span>
-            </button>
+          <div>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || !isDirty}
               className="btn btn-primary"
               style={{
-                padding: '9px 20px',
+                padding: '8px 20px',
                 fontSize: 13,
-                fontWeight: 700,
-                opacity: saving ? 0.6 : undefined,
-                cursor: saving ? 'not-allowed' : undefined,
-                boxShadow: isDirty ? '0 0 0 2px var(--accent-primary)' : undefined,
+                fontWeight: 600,
+                opacity: saving || !isDirty ? 0.6 : 1,
+                cursor: saving || !isDirty ? 'not-allowed' : 'pointer',
               }}
             >
-              <Icon name="check" size={14} />
-              <span>{saving ? 'Saving…' : 'Save Changes'}</span>
+              {saving ? 'Saving…' : 'Save Changes'}
             </button>
           </div>
         </div>
@@ -782,163 +766,39 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
           />
         )}
 
-        {/* System Overview & App Version Banner */}
-        {isDesktop && (
-          <div
-            className="card"
-            style={{
-              marginBottom: 16,
-              background: 'linear-gradient(135deg, color-mix(in srgb, var(--accent-primary) 8%, var(--bg-card)) 0%, var(--bg-card) 100%)',
-              border: '1px solid color-mix(in srgb, var(--accent-primary) 25%, var(--border-subtle))',
-            }}
-          >
-            <div
-              className="card-body"
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                gap: 16,
-                padding: '16px 20px',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <div
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: 12,
-                    background: 'var(--accent-primary)',
-                    color: '#fff',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    boxShadow: '0 4px 12px color-mix(in srgb, var(--accent-primary) 35%, transparent)',
-                    flexShrink: 0,
-                  }}
-                >
-                  <Icon name="desktop" size={22} />
-                </div>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>
-                      get-Hike Desktop
-                    </span>
-                    <span
-                      className="badge badge-productive"
-                      style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.02em', padding: '2px 8px' }}
-                    >
-                      {displayVersion}
-                    </span>
-                    <span
-                      className="badge badge-neutral"
-                      style={{ fontSize: 11, padding: '2px 8px' }}
-                    >
-                      Official Release
-                    </span>
-                    <span
-                      className="badge badge-neutral"
-                      style={{ fontSize: 11, padding: '2px 8px' }}
-                    >
-                      {displayPlatform}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4, fontSize: 12, color: 'var(--text-muted)' }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      <span
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: '50%',
-                          background: trackingActive ? 'var(--accent-green, #10b981)' : 'var(--text-muted)',
-                          display: 'inline-block',
-                          boxShadow: trackingActive ? '0 0 6px var(--accent-green, #10b981)' : undefined,
-                        }}
-                      />
-                      <strong style={{ color: trackingActive ? 'var(--accent-green, #10b981)' : 'var(--text-secondary)' }}>
-                        {trackingActive ? 'Tracking Active' : 'Tracking Paused'}
-                      </strong>
-                    </span>
-                    <span>•</span>
-                    <span>100% Private Local Storage</span>
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  onClick={() => handleOpenFolder('data')}
-                  className="btn btn-secondary btn-sm"
-                  style={{ fontSize: 12, padding: '6px 12px', gap: 6 }}
-                  title="Open local app data and activity database folder"
-                >
-                  <Icon name="folder" size={13} />
-                  <span>Open Storage Folder</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleOpenFolder('screenshots')}
-                  className="btn btn-secondary btn-sm"
-                  style={{ fontSize: 12, padding: '6px 12px', gap: 6 }}
-                  title="Open local screenshots folder in file manager"
-                >
-                  <Icon name="palette" size={13} />
-                  <span>View Screenshots</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Card 1: Screen Tracking & Display */}
+        {/* 1. General (Theme & Screenshot Interval) */}
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-header">
             <span className="card-title">
               <Icon name="desktop" size={16} className="card-title-icon" />
-              <span className="card-title-text">Screen Tracking & Appearance</span>
+              <span className="card-title-text">General</span>
             </span>
           </div>
           <div className="card-body">
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16 }}>
-              {/* Theme Selector */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label" style={{ fontWeight: 600 }}>
-                  App Theme
-                </label>
+                <label className="form-label" style={{ fontWeight: 600 }}>Theme</label>
                 <div style={{ display: 'flex', gap: 8 }}>
                   {[
-                    { id: 'dark', label: 'Dark', icon: 'moon', desc: 'Dark theme for low light' },
-                    { id: 'light', label: 'Light', icon: 'sparkles', desc: 'Bright palette for daytime' },
-                    { id: 'auto', label: 'System', icon: 'desktop', desc: 'Match your operating system' },
+                    { id: 'dark', label: 'Dark' },
+                    { id: 'light', label: 'Light' },
+                    { id: 'auto', label: 'Auto' },
                   ].map((t) => (
                     <button
                       key={t.id}
                       type="button"
-                      title={t.desc}
                       onClick={() => onThemeChange?.(t.id as any)}
                       className={theme === t.id ? 'btn btn-primary' : 'btn btn-secondary'}
-                      style={{
-                        flex: 1,
-                        padding: '9px 12px',
-                        fontSize: 13,
-                        fontWeight: theme === t.id ? 700 : 500,
-                        gap: 6,
-                      }}
+                      style={{ flex: 1, padding: '8px 12px', fontSize: 13, fontWeight: theme === t.id ? 700 : 500 }}
                     >
-                      <Icon name={t.icon as any} size={14} />
-                      <span>{t.label}</span>
+                      {t.label}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Capture Frequency */}
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label" style={{ fontWeight: 600 }}>
-                  Screenshot Frequency
-                </label>
+                <label className="form-label" style={{ fontWeight: 600 }}>Screenshot Frequency</label>
                 <CustomSelect
                   fullWidth
                   ariaLabel="Screenshot Frequency"
@@ -952,109 +812,55 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 />
               </div>
             </div>
-
-            <div
-              style={{
-                fontSize: 12,
-                color: 'var(--text-muted)',
-                marginTop: 14,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                background: 'var(--bg-surface)',
-                padding: '10px 14px',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-subtle)',
-              }}
-            >
-              <Icon name="info" size={14} />
-              <span>
-                Screenshots are captured locally every <strong>{screenshotInterval} seconds</strong> and analyzed in 5-minute sessions. Images older than 7 days are automatically removed to save disk space.
-              </span>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 12 }}>
+              Captures are taken locally every {screenshotInterval}s and kept for 7 days.
             </div>
           </div>
         </div>
 
-        {/* Card 2: AI Assistant (Google Gemini) */}
+        {/* 2. AI Assistant (Google Gemini) */}
         <div className="card" style={{ marginBottom: 16 }}>
-          <div
-            className="card-header"
-            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}
-          >
+          <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <span className="card-title">
               <Icon name="sparkles" size={16} className="card-title-icon" />
-              <span className="card-title-text">AI Assistant (Google Gemini)</span>
+              <span className="card-title-text">Google Gemini AI</span>
             </span>
-            {backendConfiguredKey ? (
+            {backendConfiguredKey && (
               <span className="badge badge-productive" style={{ fontSize: 11 }}>
-                ✓ Connected {maskedKeyHint ? `(${maskedKeyHint})` : ''}
-              </span>
-            ) : (
-              <span className="badge badge-neutral" style={{ fontSize: 11 }}>
-                Optional for auto-summaries
+                Connected
               </span>
             )}
           </div>
           <div className="card-body">
-            {/* Free API Key Banner */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                flexWrap: 'wrap',
-                gap: 12,
-                padding: '12px 16px',
-                borderRadius: 'var(--radius-sm)',
-                background: 'color-mix(in srgb, var(--accent-primary) 8%, var(--bg-surface))',
-                border: '1px solid color-mix(in srgb, var(--accent-primary) 20%, var(--border-subtle))',
-                marginBottom: 16,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ color: 'var(--accent-primary)', display: 'flex' }}>
-                  <Icon name="zap" size={16} />
-                </span>
-                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                  Google provides a <strong>100% free API tier</strong> for personal productivity ($0.00 cost).
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleOpenURL('https://aistudio.google.com/app/apikey')}
-                className="btn btn-secondary btn-sm"
-                style={{ fontSize: 12, fontWeight: 600, padding: '5px 12px', gap: 6 }}
-                title="Open Google AI Studio to generate a free Gemini API key"
-              >
-                <span>Get Free API Key from Google AI Studio</span>
-                <span style={{ fontSize: 11 }}>↗</span>
-              </button>
-            </div>
-
             <div className="form-group">
-              <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
-                <span>Gemini API Key</span>
-                {apiKey && (
+              <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 600 }}>
+                <span>API Key</span>
+                <span style={{ fontSize: 12 }}>
                   <button
                     type="button"
-                    onClick={handleClearApiKey}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: 'var(--danger-text)',
-                      fontSize: 12,
-                      cursor: 'pointer',
-                      padding: 0,
-                    }}
+                    onClick={() => handleOpenURL('https://aistudio.google.com/app/apikey')}
+                    style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', cursor: 'pointer', padding: 0 }}
                   >
-                    Clear key
+                    Get free API key ↗
                   </button>
-                )}
+                  {apiKey && (
+                    <>
+                      <span style={{ margin: '0 6px', color: 'var(--text-muted)' }}>•</span>
+                      <button
+                        type="button"
+                        onClick={handleClearApiKey}
+                        style={{ background: 'none', border: 'none', color: 'var(--danger-text)', cursor: 'pointer', padding: 0 }}
+                      >
+                        Clear
+                      </button>
+                    </>
+                  )}
+                </span>
               </label>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
                   type="password"
-                  placeholder={backendConfiguredKey ? '●●●●●●●● (Configured - enter new key to replace)' : 'AIzaSy... (Paste your free key here)'}
+                  placeholder={backendConfiguredKey ? '●●●●●●●● (Configured - enter to replace)' : 'AIzaSy... (Paste key)'}
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   className="form-input"
@@ -1062,28 +868,18 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 />
                 <button
                   type="button"
-                  onClick={() => fetchAvailableModels(apiKey, true)}
-                  disabled={fetchingModels || (isDesktop && !apiKey.trim() && !backendConfiguredKey)}
+                  onClick={handleTestAPI}
+                  disabled={testing}
                   className="btn btn-secondary"
-                  title="Check connection and refresh available models"
-                  style={{
-                    padding: '8px 14px',
-                    gap: 6,
-                    fontSize: 13,
-                    opacity: fetchingModels || (isDesktop && !apiKey.trim() && !backendConfiguredKey) ? 0.6 : undefined,
-                    cursor: fetchingModels || (isDesktop && !apiKey.trim() && !backendConfiguredKey) ? 'not-allowed' : undefined,
-                  }}
+                  style={{ padding: '8px 14px', fontSize: 13, minWidth: 64 }}
                 >
-                  <Icon name="refresh" size={13} />
-                  <span>{fetchingModels ? 'Checking…' : 'Check'}</span>
+                  {testing ? 'Testing…' : 'Test'}
                 </button>
               </div>
             </div>
 
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label" style={{ fontWeight: 600 }}>
-                AI Model {availableModels.length > 0 && `(${availableModels.length} models available)`}
-              </label>
+              <label className="form-label" style={{ fontWeight: 600 }}>Model</label>
               <CustomSelect
                 fullWidth
                 ariaLabel="AI Model"
@@ -1092,43 +888,33 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 options={modelOptions}
                 triggerStyle={{ height: 38 }}
               />
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
-                Gemini 3.5 Flash Lite is selected by default for ultra-fast, zero-delay categorization within free rate limits.
-              </div>
             </div>
           </div>
         </div>
 
-        {/* Card 3: Privacy Shield & Safe Apps */}
+        {/* 3. Privacy Shield */}
         {isDesktop && (
           <div className="card" style={{ marginBottom: 16 }}>
-            <div
-              className="card-header"
-              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}
-            >
+            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span className="card-title">
                 <Icon name="shield" size={16} className="card-title-icon" />
-                <span className="card-title-text">Privacy Shield & Safe Apps</span>
+                <span className="card-title-text">Privacy Shield</span>
               </span>
-              <span
-                className={privacyEnabled ? 'badge badge-productive' : 'badge badge-neutral'}
-                style={{ fontSize: 11 }}
-              >
-                {privacyEnabled ? 'Shield Active' : 'Shield Disabled'}
+              <span className={privacyEnabled ? 'badge badge-productive' : 'badge badge-neutral'} style={{ fontSize: 11 }}>
+                {privacyEnabled ? 'Active' : 'Disabled'}
               </span>
             </div>
             <div className="card-body">
-              {/* Master Switch */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 16 }}>
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>
-                    Auto-Protect Passwords & Sensitive Windows
+                  <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>
+                    Protect Sensitive Windows
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                    Automatically protects password managers (Bitwarden, 1Password, Keepass), banking tabs, and private browsing before screenshots are saved to disk.
+                    Automatically masks password managers (Bitwarden, 1Password) and banking before saving.
                   </div>
                 </div>
-                <label className="settings-switch" title="Toggle Privacy Shield">
+                <label className="settings-switch">
                   <input
                     type="checkbox"
                     checked={privacyEnabled}
@@ -1146,16 +932,13 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 </label>
               </div>
 
-              {/* Protection Style */}
-              <div className="form-group" style={{ marginBottom: 16 }}>
-                <label className="form-label" style={{ marginBottom: 6, fontWeight: 600 }}>
-                  Protection Style
-                </label>
-                <div className="settings-segmented-group" role="group" aria-label="Privacy protection style">
+              <div className="form-group" style={{ marginBottom: 14 }}>
+                <label className="form-label" style={{ marginBottom: 6, fontWeight: 600 }}>Protection Style</label>
+                <div className="settings-segmented-group" role="group">
                   {[
-                    { id: 'blur', label: 'Heavy Blur', desc: 'Blurs sensitive windows so text cannot be read' },
-                    { id: 'shield', label: 'Frosted Lock Shield', desc: 'Covers sensitive windows with a lock graphic' },
-                    { id: 'skip', label: 'Skip Screenshot', desc: 'Completely pauses capture while sensitive app is open' },
+                    { id: 'blur', label: 'Heavy Blur' },
+                    { id: 'shield', label: 'Lock Shield' },
+                    { id: 'skip', label: 'Skip Capture' },
                   ].map((mode) => (
                     <button
                       key={mode.id}
@@ -1168,168 +951,111 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                           callGo(() => w.go.main.App.UpdatePrivacySettings(privacyEnabled, mode.id, 35));
                         }
                       }}
-                      title={mode.desc}
                     >
-                      {mode.id === 'shield' && <Icon name="shield" size={13} />}
-                      {mode.id === 'blur' && <Icon name="palette" size={13} />}
-                      {mode.id === 'skip' && <Icon name="lock" size={13} />}
-                      <span>{mode.label}</span>
+                      {mode.label}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Safe Apps List */}
-              <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 14 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>
-                    Safe App Rules ({privacyRules.length})
-                  </span>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    Click rule to toggle on/off
-                  </span>
-                </div>
-
-                {privacyRules.length > 0 ? (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-                    {privacyRules.map((rule) => (
-                      <span
-                        key={rule.id}
-                        className="rule-badge-pill"
-                        style={{ opacity: rule.is_active ? 1 : 0.55 }}
+              {privacyRules.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                  {privacyRules.map((rule) => (
+                    <span key={rule.id} className="rule-badge-pill" style={{ opacity: rule.is_active ? 1 : 0.55 }}>
+                      <button
+                        type="button"
+                        onClick={() => handleTogglePrivacyRule(rule.id, !!rule.is_active)}
+                        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex' }}
                       >
+                        <Icon name={rule.is_active ? 'check' : 'x'} size={12} color={rule.is_active ? 'var(--accent-green)' : 'var(--text-muted)'} />
+                      </button>
+                      <span className="pill-pattern">{rule.pattern}</span>
+                      <span className={`pill-action action-${rule.action.startsWith('skip') ? 'skip' : rule.action}`}>
+                        {rule.action.replace('_screenshot', '')}
+                      </span>
+                      {!rule.is_built_in && (
                         <button
                           type="button"
-                          onClick={() => handleTogglePrivacyRule(rule.id, !!rule.is_active)}
-                          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex' }}
-                          title={rule.is_active ? 'Click to disable' : 'Click to enable'}
+                          className="pill-del-btn"
+                          onClick={() => handleDeletePrivacyRule(rule.id)}
+                          title="Delete rule"
                         >
-                          <Icon
-                            name={rule.is_active ? 'check' : 'x'}
-                            size={12}
-                            color={rule.is_active ? 'var(--accent-green)' : 'var(--text-muted)'}
-                          />
+                          <Icon name="x" size={11} />
                         </button>
-                        <span className="pill-pattern">{rule.pattern}</span>
-                        <span className={`pill-action action-${rule.action.startsWith('skip') ? 'skip' : rule.action}`}>
-                          {rule.action.replace('_screenshot', '')}
-                        </span>
-                        {!rule.is_built_in && (
-                          <button
-                            type="button"
-                            className="pill-del-btn"
-                            onClick={() => handleDeletePrivacyRule(rule.id)}
-                            title="Delete custom rule"
-                            aria-label={`Delete rule ${rule.pattern}`}
-                          >
-                            <Icon name="x" size={11} />
-                          </button>
-                        )}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, fontStyle: 'italic' }}>
-                    No custom rules defined yet. Add an app below to protect it automatically.
-                  </div>
-                )}
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
 
-                {/* Add Safe App Form */}
-                <form onSubmit={handleAddPrivacyRule} className="privacy-rule-form">
-                  <div className="privacy-rule-type-field">
-                    <CustomSelect
-                      fullWidth
-                      compact
-                      ariaLabel="Rule type"
-                      value={newRuleType}
-                      onChange={(val) => setNewRuleType(val as 'app' | 'title_regex')}
-                      options={RULE_TYPE_OPTIONS}
-                      triggerStyle={{ height: 32, fontSize: 12 }}
-                    />
-                  </div>
-                  <input
-                    type="text"
-                    placeholder={newRuleType === 'app' ? 'App name, e.g. whatsapp or spotify' : 'Window text, e.g. bank or netflix'}
-                    value={newRulePattern}
-                    onChange={(e) => setNewRulePattern(e.target.value)}
-                    className="form-input privacy-rule-pattern-input"
-                    aria-label="Filter pattern"
+              <form onSubmit={handleAddPrivacyRule} className="privacy-rule-form">
+                <div className="privacy-rule-type-field">
+                  <CustomSelect
+                    fullWidth
+                    compact
+                    ariaLabel="Rule type"
+                    value={newRuleType}
+                    onChange={(val) => setNewRuleType(val as 'app' | 'title_regex')}
+                    options={RULE_TYPE_OPTIONS}
+                    triggerStyle={{ height: 32, fontSize: 12 }}
                   />
-                  <div className="privacy-rule-action-field">
-                    <CustomSelect
-                      fullWidth
-                      compact
-                      align="right"
-                      ariaLabel="Rule action"
-                      value={newRuleAction}
-                      onChange={(val) => setNewRuleAction(val as 'blur' | 'shield' | 'skip_screenshot')}
-                      options={RULE_ACTION_OPTIONS}
-                      triggerStyle={{ height: 32, fontSize: 12 }}
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={addingRule || !newRulePattern.trim()}
-                    className="btn btn-secondary privacy-rule-add-btn"
-                    style={{ fontSize: 12, padding: '0 14px', height: 32, gap: 4 }}
-                  >
-                    <Icon name="plus" size={12} />
-                    <span>Add Safe App</span>
-                  </button>
-                </form>
-              </div>
+                </div>
+                <input
+                  type="text"
+                  placeholder={newRuleType === 'app' ? 'e.g. whatsapp, spotify' : 'e.g. bank, netflix'}
+                  value={newRulePattern}
+                  onChange={(e) => setNewRulePattern(e.target.value)}
+                  className="form-input privacy-rule-pattern-input"
+                  aria-label="Filter pattern"
+                />
+                <div className="privacy-rule-action-field">
+                  <CustomSelect
+                    fullWidth
+                    compact
+                    align="right"
+                    ariaLabel="Rule action"
+                    value={newRuleAction}
+                    onChange={(val) => setNewRuleAction(val as 'blur' | 'shield' | 'skip_screenshot')}
+                    options={RULE_ACTION_OPTIONS}
+                    triggerStyle={{ height: 32, fontSize: 12 }}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={addingRule || !newRulePattern.trim()}
+                  className="btn btn-secondary privacy-rule-add-btn"
+                  style={{ fontSize: 12, padding: '0 14px', height: 32 }}
+                >
+                  Add
+                </button>
+              </form>
             </div>
           </div>
         )}
 
-        {/* Card 4: Focus & Break Reminders */}
+        {/* 4. Focus & Distraction Nudges */}
         {isDesktop && (
           <div className="card" style={{ marginBottom: 16 }}>
-            <div
-              className="card-header"
-              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}
-            >
+            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span className="card-title">
                 <Icon name="bell" size={16} className="card-title-icon" />
-                <span className="card-title-text">Focus & Break Reminders</span>
+                <span className="card-title-text">Distraction Reminders</span>
               </span>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span
-                  className={distractionEnabled ? 'badge badge-productive' : 'badge badge-neutral'}
-                  style={{ fontSize: 11 }}
-                >
-                  {distractionEnabled ? 'Reminders On' : 'Reminders Off'}
-                </span>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => {
-                    const w = window as any;
-                    if (w.go?.main?.App?.SendTestDistractionAlert) {
-                      callGo(() => w.go.main.App.SendTestDistractionAlert());
-                      showStatus('✓ Test reminder sent!', 2500);
-                    }
-                  }}
-                  style={{ fontSize: 11, padding: '3px 10px', height: 26, gap: 4 }}
-                  title="Test what a distraction reminder looks and sounds like"
-                >
-                  <Icon name="bell" size={12} />
-                  <span>Test Reminder</span>
-                </button>
-              </div>
+              <span className={distractionEnabled ? 'badge badge-productive' : 'badge badge-neutral'} style={{ fontSize: 11 }}>
+                {distractionEnabled ? 'Active' : 'Disabled'}
+              </span>
             </div>
             <div className="card-body">
-              {/* Master Switch */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 16 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>
-                    Gentle Nudge When Distracted
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>
+                    Gentle Break Reminders
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                    Gives you a friendly nudge when you spend too much uninterrupted time on social media, video streaming, or non-work apps.
+                    Nudges you when continuous time on non-work apps exceeds your limit.
                   </div>
                 </div>
-                <label className="settings-switch" title="Toggle Distraction Reminders">
+                <label className="settings-switch">
                   <input
                     type="checkbox"
                     checked={distractionEnabled}
@@ -1340,23 +1066,10 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                 </label>
               </div>
 
-              {/* Slider */}
-              <div
-                style={{
-                  marginBottom: 16,
-                  background: 'var(--bg-surface)',
-                  padding: '12px 14px',
-                  borderRadius: 'var(--radius-md)',
-                  border: '1px solid var(--border-subtle)',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, marginBottom: 8 }}>
-                  <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>
-                    Remind me after continuous distraction:
-                  </span>
-                  <span style={{ fontWeight: 700, color: 'var(--accent-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                    {distractionThresholdMins} minutes
-                  </span>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, marginBottom: 6 }}>
+                  <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Remind after:</span>
+                  <span style={{ fontWeight: 700, color: 'var(--accent-primary)' }}>{distractionThresholdMins} minutes</span>
                 </div>
                 <input
                   type="range"
@@ -1366,298 +1079,51 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
                   value={distractionThresholdMins}
                   onChange={(e) => updateDistractionSettings({ threshold: parseInt(e.target.value, 10) })}
                   className="settings-range-slider"
-                  aria-label="Continuous Distraction Limit"
+                  aria-label="Distraction Threshold"
                 />
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    fontSize: 11,
-                    color: 'var(--text-muted)',
-                    marginTop: 6,
-                    fontVariantNumeric: 'tabular-nums',
-                  }}
-                >
-                  <span>5m (Strict)</span>
-                  <span>15m (Recommended)</span>
-                  <span>30m</span>
-                  <span>60m (Relaxed)</span>
-                </div>
               </div>
 
-              {/* Preference Controls */}
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))',
-                  gap: 10,
-                  opacity: distractionEnabled ? 1 : 0.55,
-                  pointerEvents: distractionEnabled ? 'auto' : 'none',
-                  transition: 'opacity var(--transition)',
-                }}
-              >
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8 }}>
                 <label className={`settings-pref-card ${distractionSound ? 'is-active' : ''}`}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                    <span style={{ color: distractionSound ? 'var(--accent-primary)' : 'var(--text-muted)', display: 'flex' }}>
-                      <Icon name="bell" size={15} />
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
-                        Audible alert chime
-                      </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
-                        Play a soft chime sound on nudge
-                      </div>
-                    </div>
-                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>Audio chime</span>
                   <input
                     type="checkbox"
                     checked={distractionSound}
                     disabled={!distractionEnabled}
                     onChange={(e) => updateDistractionSettings({ sound: e.target.checked })}
-                    aria-label="Play soft sound effect"
                   />
                 </label>
-
                 <label className={`settings-pref-card ${distractionNativeNotify ? 'is-active' : ''}`}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                    <span style={{ color: distractionNativeNotify ? 'var(--accent-primary)' : 'var(--text-muted)', display: 'flex' }}>
-                      <Icon name="desktop" size={15} />
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
-                        Desktop notification
-                      </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
-                        Show desktop pop-up notification
-                      </div>
-                    </div>
-                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>Desktop banner</span>
                   <input
                     type="checkbox"
                     checked={distractionNativeNotify}
                     disabled={!distractionEnabled}
                     onChange={(e) => updateDistractionSettings({ nativeNotify: e.target.checked })}
-                    aria-label="Show desktop notification"
                   />
                 </label>
-
                 <label className={`settings-pref-card ${distractionInAppToast ? 'is-active' : ''}`}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                    <span style={{ color: distractionInAppToast ? 'var(--accent-primary)' : 'var(--text-muted)', display: 'flex' }}>
-                      <Icon name="message" size={15} />
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
-                        In-app reminder toast
-                      </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
-                        Show gentle banner inside get-Hike
-                      </div>
-                    </div>
-                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>In-app notification</span>
                   <input
                     type="checkbox"
                     checked={distractionInAppToast}
                     disabled={!distractionEnabled}
                     onChange={(e) => updateDistractionSettings({ inAppToast: e.target.checked })}
-                    aria-label="Show in-app toast"
                   />
                 </label>
-
-                <label className={`settings-pref-card ${distractionFocusSuppression ? 'is-active' : ''}`}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                    <span style={{ color: distractionFocusSuppression ? 'var(--accent-primary)' : 'var(--text-muted)', display: 'flex' }}>
-                      <Icon name="target" size={15} />
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
-                        Focus goals silence
-                      </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
-                        Pause alerts during active focus mode
-                      </div>
-                    </div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={distractionFocusSuppression}
-                    disabled={!distractionEnabled}
-                    onChange={(e) => updateDistractionSettings({ focusSuppression: e.target.checked })}
-                    aria-label="Pause alerts during active focus mode"
-                  />
-                </label>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Card 5: Auto-Pause & Away Tracking */}
-        {isDesktop && (
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div
-              className="card-header"
-              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}
-            >
-              <span className="card-title">
-                <Icon name="coffee" size={16} className="card-title-icon" />
-                <span className="card-title-text">Auto-Pause & Away Time</span>
-              </span>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span className="badge badge-productive" style={{ fontSize: 11 }}>
-                  ✓ Enabled
-                </span>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => {
-                    loadCalendarIntegrations();
-                    showStatus('✓ Refreshed calendar sync', 2000);
-                  }}
-                  style={{ fontSize: 11, padding: '3px 10px', height: 26, gap: 4 }}
-                  title="Check calendar sync status"
-                >
-                  <Icon name="refresh" size={12} />
-                  <span>Refresh</span>
-                </button>
-              </div>
-            </div>
-            <div className="card-body">
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 16 }}>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', marginBottom: 4 }}>
-                    5-Minute Inactivity Auto-Pause
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                    When you step away for coffee, calls, or breaks without keyboard/mouse input for 5 minutes, get-Hike automatically pauses recording so idle time is never mistakenly logged as work.
-                  </div>
-                  <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span className="badge badge-neutral" style={{ fontSize: 11, padding: '4px 8px', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      <Icon name="clock" size={12} />
-                      5m inactivity limit
-                    </span>
-                    <span className="badge badge-productive" style={{ fontSize: 11, padding: '4px 8px', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      <Icon name="check" size={12} />
-                      Auto-prompt on return
-                    </span>
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', marginBottom: 4 }}>
-                    Calendar & Meeting Matching
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                    Offline intervals are automatically checked against your scheduled Google or Microsoft calendar events so meeting time is categorized accurately.
-                  </div>
-                  <div style={{ marginTop: 10 }}>
-                    {calendarIntegrations.length > 0 ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {calendarIntegrations.map((ci) => (
-                          <div key={ci.id} className="calendar-account-card">
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-                              <Icon name="calendar" size={14} color="var(--accent-primary)" />
-                              <div style={{ minWidth: 0 }}>
-                                <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {ci.account_email || ci.display_name}
-                                </div>
-                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                  {ci.provider} • Connected
-                                </div>
-                              </div>
-                            </div>
-                            <span className="badge badge-productive" style={{ fontSize: 10 }}>
-                              {ci.sync_status || 'synced'}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          padding: '10px 12px',
-                          borderRadius: 'var(--radius-sm)',
-                          background: 'var(--bg-surface)',
-                          border: '1px dashed var(--border-medium)',
-                          fontSize: 12,
-                          color: 'var(--text-muted)',
-                        }}
-                      >
-                        <Icon name="info" size={13} />
-                        <span>Ready — calendar events match automatically when connected.</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
               </div>
             </div>
           </div>
         )}
       </form>
 
-      {/* Card 6: AI Usage & Free Quota */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div
-          className="card-header"
-          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}
-        >
-          <span className="card-title">
-            <Icon name="activity" size={16} className="card-title-icon" />
-            <span className="card-title-text">Today's AI Usage</span>
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
-            <span style={{ fontWeight: 700, color: 'var(--teal-text)' }}>
-              {selectedModelInfo?.displayName || model.replace('models/', '')}
-            </span>
-            <span className="badge badge-productive">
-              {modelFamily}
-            </span>
-          </span>
-        </div>
-        <div className="card-body">
-          <div className="stats-grid" style={{ marginBottom: 14 }}>
-            <StatCard
-              label="Requests Today"
-              value={usageSummary?.total_requests ?? usageCount}
-              valueClass="text-purple"
-              sub="AI summaries processed today"
-            />
-            <StatCard
-              label="Input Prompt Data"
-              value={(usageSummary?.prompt_tokens ?? 0).toLocaleString()}
-              valueClass="text-cyan"
-              sub="Tokens sent to AI"
-            />
-            <StatCard
-              label="Output Summaries"
-              value={(usageSummary?.candidate_tokens ?? 0).toLocaleString()}
-              valueClass="text-amber"
-              sub="AI generated tokens"
-            />
-            <StatCard
-              label="Total Activity"
-              value={(usageSummary?.total_tokens ?? 0).toLocaleString()}
-              valueClass="text-green"
-              sub="Combined daily token count"
-            />
-          </div>
-
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-            Each 5-minute session is analyzed efficiently in bundles to ensure your personal API key stays well within Google's free quota ($0.00 cost).
-          </div>
-        </div>
-      </div>
-
-      {/* Card 7: Local Storage & Reset */}
+      {/* 5. Local Storage & Reset */}
       {isDesktop && (
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-header">
             <span className="card-title">
               <Icon name="folder" size={16} className="card-title-icon" />
-              <span className="card-title-text">Local Storage & Reset</span>
+              <span className="card-title-text">Local Storage</span>
             </span>
           </div>
           <div
@@ -1670,77 +1136,40 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
               flexWrap: 'wrap',
             }}
           >
-            <div style={{ flex: 1, minWidth: 260 }}>
-              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', marginBottom: 4 }}>
-                Manage Local Files & Data
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                All your tracked activity, screenshots, and logs are stored only on this computer. You can browse your files directly or safely clear data caches anytime.
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                All activity and screenshots are kept strictly on this device.
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button
                 type="button"
                 onClick={() => handleOpenFolder('data')}
                 className="btn btn-secondary"
-                style={{ fontSize: 13, padding: '8px 14px', gap: 6 }}
+                style={{ fontSize: 12, padding: '7px 12px', gap: 6 }}
               >
-                <Icon name="folder" size={14} />
-                <span>Open Storage Folder</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleOpenFolder('screenshots')}
-                className="btn btn-secondary"
-                style={{ fontSize: 13, padding: '8px 14px', gap: 6 }}
-              >
-                <Icon name="palette" size={14} />
-                <span>View Screenshots</span>
+                <Icon name="folder" size={13} />
+                <span>Open Folder</span>
               </button>
               <button
                 type="button"
                 onClick={handleClearData}
                 className="btn btn-danger"
-                style={{
-                  fontSize: 13,
-                  padding: '8px 14px',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-                title="Erase local screenshots and reset database"
+                style={{ fontSize: 12, padding: '7px 12px', gap: 6 }}
               >
-                <Icon name="trash" size={14} />
-                <span>Clear All Data & Reset</span>
+                <Icon name="trash" size={13} />
+                <span>Clear All Data</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Clean Footer */}
+      {/* Clean minimal footer */}
       {isDesktop && (
-        <div
-          style={{
-            marginTop: 20,
-            textAlign: 'center',
-            fontSize: 12,
-            color: 'var(--text-muted)',
-            fontVariantNumeric: 'tabular-nums',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          <span>get-Hike Desktop</span>
-          <span>•</span>
-          <span>version {displayVersion}</span>
-          <span>•</span>
-          <span>{displayPlatform}</span>
-          <span>•</span>
-          <span>100% Local Privacy</span>
+        <div style={{ marginTop: 16, textAlign: 'center', fontSize: 11, color: 'var(--text-muted)' }}>
+          get-Hike Desktop · version {displayVersion}
         </div>
       )}
     </div>

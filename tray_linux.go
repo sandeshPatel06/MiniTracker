@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"image"
@@ -331,9 +332,12 @@ func (tm *TrayManager) OpenWebDashboard() {
 }
 
 func (tm *TrayManager) QuitApp() {
-	if tm.app != nil && !tm.app.headless && tm.app.ctx != nil {
-		wailsruntime.Quit(tm.app.ctx)
-		return
+	if tm.app != nil {
+		if !tm.app.headless && tm.app.ctx != nil {
+			wailsruntime.Quit(tm.app.ctx)
+			return
+		}
+		tm.app.shutdown(context.Background())
 	}
 	os.Exit(0)
 }

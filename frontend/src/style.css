@@ -4190,10 +4190,16 @@ img.app-icon {
   --tl-row-hover: color-mix(in srgb, var(--bg-card-hover) 82%, var(--bg-surface));
 }
 
-[data-theme='light'] .tl-page,
-[data-theme='auto'] .tl-page {
+[data-theme='light'] .tl-page {
   --tl-row-alt: #f1f5f9;
   --tl-row-hover: color-mix(in srgb, var(--border-medium) 22%, var(--bg-card-hover));
+}
+
+@media (prefers-color-scheme: light) {
+  [data-theme='auto'] .tl-page {
+    --tl-row-alt: #f1f5f9;
+    --tl-row-hover: color-mix(in srgb, var(--border-medium) 22%, var(--bg-card-hover));
+  }
 }
 
 /* --- Card header: icon + non-uppercase title ------------------- */
@@ -4831,8 +4837,8 @@ img.app-icon {
   border-color: var(--border-subtle);
 }
 
-/* Zebra stripe: even rows get a whisper-lighter surface. */
-.tl-page .tl-rows > .tl-row:not(.tl-skeleton-row):nth-child(even) {
+/* Zebra stripe: only for legacy rows, never for dash-log-row cards */
+.tl-page .tl-rows > .tl-row:not(.dash-log-row):not(.tl-skeleton-row):nth-child(even) {
   background: var(--tl-row-alt);
 }
 

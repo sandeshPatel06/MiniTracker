@@ -179,19 +179,16 @@ func (a *App) startup(ctx context.Context) {
 		a.notifier = n
 	}
 
-	// Check if background tracker daemon is already running
-	bgRunning := false
+	// If a background tracker daemon is running, stop it cleanly so the desktop GUI
+	// takes over full tracking and tray ownership. This guarantees strictly ONE process,
+	// ONE capture worker, and ONE tray icon at any time.
 	if !a.headless {
-		bgPid := readPIDFile(pidPath(cfg.DataDir))
-		if bgPid > 0 && bgPid != os.Getpid() && processAlive(bgPid) && processMatchesDaemon(bgPid) {
-			bgRunning = true
-			log.Printf("[app] background tracker daemon is active (pid %d) — running desktop app in GPU UI mode (tracking delegated to background daemon)", bgPid)
-		}
+		stopBackgroundDaemon(cfg.DataDir)
 	}
 
 	a.statsMu.Lock()
 	a.isTrackingActive = true
-	a.trackingDelegatedToBackground = bgRunning
+	a.trackingDelegatedToBackground = false
 	a.statsMu.Unlock()
 
 	// Seed today's tracked duration from the DB so the timer keeps its day total
@@ -201,13 +198,8 @@ func (a *App) startup(ctx context.Context) {
 	a.accumDay = time.Now().Format("2006-01-02")
 	a.trackerStartTime = time.Now()
 
-	if bgRunning {
-		// Tracking delegated to background daemon: monitor background daemon status
-		go a.monitorBackgroundDaemon(cfg)
-	} else {
-		// Run tracking loops locally in this process
-		a.startTrackingLoops(cfg)
-	}
+	// Run tracking loops locally in this process
+	a.startTrackingLoops(cfg)
 
 	// Start 3-hour background pull cron if connected to backend
 	a.syncEngine.StartBackgroundPullCron(a.ctx, 3*time.Hour)
@@ -882,15 +874,19 @@ func (a *App) shutdown(_ context.Context) {
 	// before the database handle is closed below.
 	a.shuttingDown.Store(true)
 
-	// If tracking is active and was NOT delegated to an existing background daemon,
-	// hand it off to a detached background process so capture continues after this app exits.
+	// Stop and clean up desktop tray icon immediately so it unregisters from D-Bus
+	if a.trayMgr != nil {
+		a.trayMgr.Stop()
+		a.trayMgr = nil
+	}
+
+	// If tracking is active, hand it off to a detached background process so capture continues after this app exits.
 	if !a.headless && a.cfg != nil {
 		removePIDFileIfOwner(guiPidPath(a.cfg.DataDir), os.Getpid())
 		a.statsMu.Lock()
 		active := a.isTrackingActive
-		delegated := a.trackingDelegatedToBackground
 		a.statsMu.Unlock()
-		if active && !delegated {
+		if active {
 			if err := spawnBackgroundDaemon(a.cfg.DataDir); err != nil {
 				log.Printf("[app] failed to start background tracker: %v", err)
 			} else {
@@ -936,9 +932,6 @@ func (a *App) shutdown(_ context.Context) {
 
 	if a.cancel != nil {
 		a.cancel()
-	}
-	if a.trayMgr != nil {
-		a.trayMgr.Stop()
 	}
 	if a.database != nil {
 		_ = a.database.Close()

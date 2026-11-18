@@ -705,7 +705,7 @@ export function SettingsPage({ theme = 'auto', onThemeChange, syncIntervalSecond
   const displayPlatform = (diagnostics?.platform as string) || 'Linux x86_64';
 
   return (
-    <div className="fade-in-up" style={{ paddingBottom: 40, maxWidth: 840, margin: '0 auto' }}>
+    <div className="page-container fade-in-up" style={{ paddingBottom: 40 }}>
       <form
         onSubmit={(e) => {
           e.preventDefault();

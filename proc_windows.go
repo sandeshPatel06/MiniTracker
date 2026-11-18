@@ -3,6 +3,8 @@
 package main
 
 import (
+	"os"
+	"os/signal"
 	"syscall"
 
 	"golang.org/x/sys/windows"
@@ -46,3 +48,24 @@ func terminateWindowsProcess(pid int) error {
 	defer windows.CloseHandle(h)
 	return windows.TerminateProcess(h, 1)
 }
+
+func acquireProcessLock(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0644)
+}
+
+func releaseProcessLock(f *os.File) {
+	if f == nil {
+		return
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+}
+
+func notifyExistingGUIInstance(pid int) {
+	// Handled by Wails named pipe SingleInstanceLock on Windows
+}
+
+func registerSIGUSR2(ch chan os.Signal) {}
+
+func killAllBackgroundDaemons() {}

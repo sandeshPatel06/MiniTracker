@@ -92,6 +92,14 @@ func CaptureScreenshotWithPrivacy(dataDir string, engine *privacy.Engine, appNam
 	captureMu.Lock()
 	defer captureMu.Unlock()
 
+	// Cross-process capture lock ensures only one worker captures screenshots across the entire system.
+	lock, err := acquireCaptureLock(dataDir)
+	if err != nil {
+		log.Printf("[tracker] capture skipped: another worker is currently capturing")
+		return lastCaptureRes, nil
+	}
+	defer releaseCaptureLock(lock)
+
 	defer func() {
 		if r := recover(); r != nil {
 			res = nil

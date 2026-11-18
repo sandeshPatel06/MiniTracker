@@ -10,11 +10,40 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/godbus/dbus/v5"
 	"github.com/kbinani/screenshot"
 )
+
+// acquireCaptureLock claims the inter-process capture file lock (capture.lock).
+// Returns an error if another worker/process is currently capturing.
+func acquireCaptureLock(dataDir string) (*os.File, error) {
+	if dataDir == "" {
+		return nil, nil
+	}
+	lockPath := filepath.Join(dataDir, "capture.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// releaseCaptureLock unlocks and closes the capture lock file.
+func releaseCaptureLock(f *os.File) {
+	if f == nil {
+		return
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	_ = f.Close()
+}
 
 // captureDisplays grabs the desktop screen without playing camera shutter or click sounds.
 func captureDisplays() (image.Image, error) {

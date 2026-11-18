@@ -93,6 +93,11 @@ type App struct {
 	distractionEngine *distraction.Engine
 	notifier          notify.PlatformNotifier
 
+	// trackingDelegatedToBackground indicates tracking/screenshots are being performed by
+	// an existing background daemon, so the desktop app GUI runs in GPU UI mode.
+	trackingDelegatedToBackground bool
+	trackingCancel                context.CancelFunc
+
 	// shuttingDown flips true once shutdown begins so collection loops skip
 	// racing inserts against the closing DB.
 	shuttingDown atomic.Bool
@@ -107,38 +112,42 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx, a.cancel = context.WithCancel(ctx)
 
-	// Load config
-	cfg, err := config.Load()
-	if err != nil {
-		log.Printf("[app] config load error: %v", err)
-		cfg = &config.Config{ScreenshotInterval: 30 * time.Second, DataDir: "/tmp/get-hike"}
+	cfg := a.cfg
+	if cfg == nil {
+		var err error
+		cfg, err = config.Load()
+		if err != nil {
+			log.Printf("[app] config load error: %v", err)
+			cfg = &config.Config{ScreenshotInterval: 30 * time.Second, DataDir: "/tmp/get-hike"}
+		}
+		cfg.DataDir = expandHomePath(filepath.Clean(cfg.DataDir))
+		a.cfg = cfg
 	}
-	// config.yaml.example documents `data_dir: ~/.local/share/get-hike`, but the
-	// loader never expands the tilde: Go does no shell expansion, so screenshots,
-	// SQLite and logs would silently land in a literal "./~" directory while the
-	// DB stores "~/..." paths that no os.ReadFile can ever open — timeline
-	// previews fail everywhere. Normalise once, before anything consumes DataDir.
-	cfg.DataDir = expandHomePath(filepath.Clean(cfg.DataDir))
-	a.cfg = cfg
+
 	a.appIcons = appicon.NewResolver()
 	go a.appIcons.Warm()
 
 	// Initialize Desktop File Logger with automatic 7-day log retention
 	_ = logger.InitDesktopLogger(cfg.DataDir)
 
-	// Reclaim tracking from a detached background tracker spawned by a previous run.
+	// Listen for SIGUSR2 to restore/focus window
 	if !a.headless {
-		if guiAppRunning(cfg.DataDir) {
-			log.Printf("[app] another desktop app instance is already running (pidfile %s) — skipping duplicate tracker initialization", guiPidPath(cfg.DataDir))
-			return
-		}
-		stopBackgroundDaemon(cfg.DataDir)
-		// Register this GUI as the live capture owner so a concurrently started
-		// background daemon (autostart, scheduler, manual `--background`) detects
-		// it and refuses to run a second capture loop on the same data dir.
-		if err := writePIDFile(guiPidPath(cfg.DataDir), os.Getpid()); err != nil {
-			log.Printf("[app] write gui pidfile error: %v", err)
-		}
+		sigCh := make(chan os.Signal, 1)
+		registerSIGUSR2(sigCh)
+		go func() {
+			for {
+				select {
+				case <-a.ctx.Done():
+					return
+				case <-sigCh:
+					log.Printf("[app] received SIGUSR2 — bringing window to front")
+					if a.ctx != nil {
+						wailsruntime.WindowShow(a.ctx)
+						wailsruntime.WindowUnminimise(a.ctx)
+					}
+				}
+			}
+		}()
 	}
 
 	// Open database
@@ -165,167 +174,40 @@ func (a *App) startup(ctx context.Context) {
 	// Sync Engine (used for Authenticated / Org Mode)
 	a.syncEngine = syncp.NewSyncEngine(a.database, cfg.BackendEndpoint)
 
-	// Start keystroke tracker
-	a.keyTracker = tracker.NewKeystrokeTracker(cfg.ScreenshotInterval)
-	statsCh, err := a.keyTracker.Start()
-	if err != nil {
-		log.Printf("[app] keystroke tracker error: %v", err)
-		statsCh = nil
-	}
-
-	// Application lifecycle watcher ("open"/"close"/"focus" events) — event-driven
-	// X11 monitoring with zero idle CPU; reconnects if the display session rotates.
-	go func() {
-		out := make(chan tracker.TrackerEvent, 64)
-		go a.drainAppEvents(out)
-		for {
-			err := tracker.StartAppWatcher(a.ctx.Done(), out)
-			if a.ctx.Err() != nil {
-				return
-			}
-			if err != nil {
-				log.Printf("[app] app watcher stopped (%v) — reconnecting in 30s", err)
-			}
-			select {
-			case <-a.ctx.Done():
-				return
-			case <-time.After(30 * time.Second):
-			}
-		}
-	}()
-
-	a.tickerResetCh = make(chan time.Duration, 1)
-
-	// Start mouse tracker
-	a.mouseTracker = tracker.NewMouseTracker(cfg.ScreenshotInterval)
-	if mouseStatsCh, err := a.mouseTracker.Start(); err != nil {
-		log.Printf("[app] mouse tracker error (non-fatal): %v", err)
-	} else {
-		// drain mouse stats into latestMouseStats (mutex-protected)
-		go func() {
-			for ms := range mouseStatsCh {
-				a.statsMu.Lock()
-				a.latestMouseStats = ms
-				a.statsMu.Unlock()
-			}
-		}()
-	}
-
 	// Initialize Platform Notifier
 	if n, err := notify.NewNotifier(); err == nil {
 		a.notifier = n
 	}
 
-	// Initialize Privacy Engine (Feature 8)
-	a.privacyEngine = privacy.NewEngine(cfg.PrivacyModeEnabled, cfg.PrivacyBlurStyle, cfg.PrivacyBlurRadius)
-	if rules, err := a.database.GetPrivacyRules(); err == nil {
-		var userRules []privacy.UserPrivacyRule
-		for _, r := range rules {
-			userRules = append(userRules, privacy.UserPrivacyRule{
-				ID:        r.ID,
-				RuleType:  r.RuleType,
-				Pattern:   r.Pattern,
-				Action:    privacy.PrivacyAction(r.Action),
-				Desc:      r.Description,
-				IsActive:  r.IsActive,
-				IsBuiltIn: r.IsBuiltIn,
-			})
+	// Check if background tracker daemon is already running
+	bgRunning := false
+	if !a.headless {
+		bgPid := readPIDFile(pidPath(cfg.DataDir))
+		if bgPid > 0 && bgPid != os.Getpid() && processAlive(bgPid) && processMatchesDaemon(bgPid) {
+			bgRunning = true
+			log.Printf("[app] background tracker daemon is active (pid %d) — running desktop app in GPU UI mode (tracking delegated to background daemon)", bgPid)
 		}
-		a.privacyEngine.SetCustomRules(userRules)
 	}
 
-	// Initialize Idle Detector (Feature 9)
-	a.idleDetector = tracker.NewIdleDetector(
-		cfg.IdleDetectionEnabled,
-		cfg.IdleThreshold,
-		func(startedAt time.Time) {
-			// On Idle Entered: freeze session clock and broadcast
-			a.statsMu.Lock()
-			if a.isTrackingActive && !a.trackerStartTime.IsZero() {
-				a.accumulatedSec += int64(time.Since(a.trackerStartTime).Seconds())
-				a.trackerStartTime = time.Time{}
-			}
-			a.statsMu.Unlock()
-			if a.ctx != nil {
-				wailsruntime.EventsEmit(a.ctx, "idle_state_changed", map[string]interface{}{
-					"is_idle":    true,
-					"started_at": startedAt.Format(time.RFC3339),
-				})
-			}
-		},
-		func(block tracker.IdleBlock) {
-			// On Return / Idle Resumed: restore window & emit prompt
-			if a.ctx != nil && !a.headless {
-				wailsruntime.WindowShow(a.ctx)
-				wailsruntime.WindowUnminimise(a.ctx)
-				wailsruntime.EventsEmit(a.ctx, "idle_prompt_requested", block)
-			}
-		},
-	)
-	a.idleDetector.Start(a.ctx)
-
-	// Initialize Distraction Engine (Feature 5)
-	a.distractionEngine = distraction.NewEngine(
-		cfg.DistractionAlertsEnabled,
-		int(cfg.DistractionThreshold.Seconds()),
-		cfg.DistractionDisableDuringFocus,
-		cfg.DistractionCooldownMinutes,
-		a.notifier,
-		a.database,
-		func(payload distraction.AlertPayload) {
-			if a.ctx != nil {
-				wailsruntime.EventsEmit(a.ctx, "distraction_alert", payload)
-			}
-		},
-	)
-	if dRules, err := a.database.GetDistractionRules(1); err == nil {
-		a.distractionEngine.SetRules(dRules)
-	}
-	a.distractionEngine.Start(a.ctx)
+	a.statsMu.Lock()
+	a.isTrackingActive = true
+	a.trackingDelegatedToBackground = bgRunning
+	a.statsMu.Unlock()
 
 	// Seed today's tracked duration from the DB so the timer keeps its day total
 	// across restarts (and silently picks up background-daemon runs) instead of
 	// starting from zero.
 	a.accumulatedSec = a.todaysDBTrackedSeconds()
 	a.accumDay = time.Now().Format("2006-01-02")
-
-	a.isTrackingActive = true
 	a.trackerStartTime = time.Now()
 
-	// Main collection loop — fires every ScreenshotInterval
-	go func() {
-		dur := cfg.ScreenshotInterval
-		ticker := time.NewTicker(dur)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-a.ctx.Done():
-				return
-			case newDur := <-a.tickerResetCh:
-				ticker.Stop()
-				dur = newDur
-				ticker = time.NewTicker(dur)
-				log.Printf("[app] screenshot collection loop reset to %v", dur)
-			case stats, ok := <-statsCh:
-				if !ok {
-					statsCh = nil
-					continue
-				}
-				a.statsMu.Lock()
-				a.latestKeyStats = stats
-				a.statsMu.Unlock()
-			case <-ticker.C:
-				a.statsMu.Lock()
-				active := a.isTrackingActive
-				a.statsMu.Unlock()
-				if !active {
-					continue
-				}
-				a.collect()
-			}
-		}
-	}()
+	if bgRunning {
+		// Tracking delegated to background daemon: monitor background daemon status
+		go a.monitorBackgroundDaemon(cfg)
+	} else {
+		// Run tracking loops locally in this process
+		a.startTrackingLoops(cfg)
+	}
 
 	// Start 3-hour background pull cron if connected to backend
 	a.syncEngine.StartBackgroundPullCron(a.ctx, 3*time.Hour)
@@ -422,6 +304,221 @@ func (a *App) startup(ctx context.Context) {
 	a.trayMgr.Start()
 
 	log.Printf("[app] started — screenshot interval: %s (7-day retention active)", cfg.ScreenshotInterval)
+}
+
+// monitorBackgroundDaemon checks that an external background tracker stays alive.
+// If it stops while tracking is active, the desktop app takes over tracking locally.
+func (a *App) monitorBackgroundDaemon(cfg *config.Config) {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-ticker.C:
+			a.statsMu.Lock()
+			delegated := a.trackingDelegatedToBackground
+			active := a.isTrackingActive
+			a.statsMu.Unlock()
+
+			if delegated && active {
+				bgPid := readPIDFile(pidPath(cfg.DataDir))
+				if bgPid <= 0 || !processAlive(bgPid) || !processMatchesDaemon(bgPid) {
+					log.Printf("[app] background tracker daemon exited — desktop app resuming active capture loop")
+					a.statsMu.Lock()
+					a.trackingDelegatedToBackground = false
+					a.statsMu.Unlock()
+					a.startTrackingLoops(cfg)
+				}
+			}
+		}
+	}
+}
+
+// startTrackingLoops starts the evdev key/mouse trackers, window watcher, distraction/idle engines,
+// and periodic screenshot collection loop in this process.
+func (a *App) startTrackingLoops(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	a.stopTrackingLoops()
+
+	trackCtx, trackCancel := context.WithCancel(a.ctx)
+	a.trackingCancel = trackCancel
+
+	// Initialize Privacy Engine (Feature 8)
+	a.privacyEngine = privacy.NewEngine(cfg.PrivacyModeEnabled, cfg.PrivacyBlurStyle, cfg.PrivacyBlurRadius)
+	if a.database != nil {
+		if rules, err := a.database.GetPrivacyRules(); err == nil {
+			var userRules []privacy.UserPrivacyRule
+			for _, r := range rules {
+				userRules = append(userRules, privacy.UserPrivacyRule{
+					ID:        r.ID,
+					RuleType:  r.RuleType,
+					Pattern:   r.Pattern,
+					Action:    privacy.PrivacyAction(r.Action),
+					Desc:      r.Description,
+					IsActive:  r.IsActive,
+					IsBuiltIn: r.IsBuiltIn,
+				})
+			}
+			a.privacyEngine.SetCustomRules(userRules)
+		}
+	}
+
+	// Start keystroke tracker
+	a.keyTracker = tracker.NewKeystrokeTracker(cfg.ScreenshotInterval)
+	statsCh, err := a.keyTracker.Start()
+	if err != nil {
+		log.Printf("[app] keystroke tracker error: %v", err)
+		statsCh = nil
+	}
+
+	// Start mouse tracker
+	a.mouseTracker = tracker.NewMouseTracker(cfg.ScreenshotInterval)
+	if mouseStatsCh, err := a.mouseTracker.Start(); err != nil {
+		log.Printf("[app] mouse tracker error (non-fatal): %v", err)
+	} else {
+		// drain mouse stats into latestMouseStats (mutex-protected)
+		go func() {
+			for {
+				select {
+				case <-trackCtx.Done():
+					return
+				case ms, ok := <-mouseStatsCh:
+					if !ok {
+						return
+					}
+					a.statsMu.Lock()
+					a.latestMouseStats = ms
+					a.statsMu.Unlock()
+				}
+			}
+		}()
+	}
+
+	// Application lifecycle watcher ("open"/"close"/"focus" events)
+	go func() {
+		out := make(chan tracker.TrackerEvent, 64)
+		go a.drainAppEvents(out)
+		for {
+			err := tracker.StartAppWatcher(trackCtx.Done(), out)
+			if trackCtx.Err() != nil {
+				return
+			}
+			if err != nil {
+				log.Printf("[app] app watcher stopped (%v) — reconnecting in 30s", err)
+			}
+			select {
+			case <-trackCtx.Done():
+				return
+			case <-time.After(30 * time.Second):
+			}
+		}
+	}()
+
+	// Initialize Idle Detector (Feature 9)
+	a.idleDetector = tracker.NewIdleDetector(
+		cfg.IdleDetectionEnabled,
+		cfg.IdleThreshold,
+		func(startedAt time.Time) {
+			a.statsMu.Lock()
+			if a.isTrackingActive && !a.trackerStartTime.IsZero() {
+				a.accumulatedSec += int64(time.Since(a.trackerStartTime).Seconds())
+				a.trackerStartTime = time.Time{}
+			}
+			a.statsMu.Unlock()
+			if a.ctx != nil {
+				wailsruntime.EventsEmit(a.ctx, "idle_state_changed", map[string]interface{}{
+					"is_idle":    true,
+					"started_at": startedAt.Format(time.RFC3339),
+				})
+			}
+		},
+		func(block tracker.IdleBlock) {
+			if a.ctx != nil && !a.headless {
+				wailsruntime.WindowShow(a.ctx)
+				wailsruntime.WindowUnminimise(a.ctx)
+				wailsruntime.EventsEmit(a.ctx, "idle_prompt_requested", block)
+			}
+		},
+	)
+	a.idleDetector.Start(trackCtx)
+
+	// Initialize Distraction Engine (Feature 5)
+	a.distractionEngine = distraction.NewEngine(
+		cfg.DistractionAlertsEnabled,
+		int(cfg.DistractionThreshold.Seconds()),
+		cfg.DistractionDisableDuringFocus,
+		cfg.DistractionCooldownMinutes,
+		a.notifier,
+		a.database,
+		func(payload distraction.AlertPayload) {
+			if a.ctx != nil {
+				wailsruntime.EventsEmit(a.ctx, "distraction_alert", payload)
+			}
+		},
+	)
+	if a.database != nil {
+		if dRules, err := a.database.GetDistractionRules(1); err == nil {
+			a.distractionEngine.SetRules(dRules)
+		}
+	}
+	a.distractionEngine.Start(trackCtx)
+
+	a.tickerResetCh = make(chan time.Duration, 1)
+
+	// Main collection loop — fires every ScreenshotInterval
+	go func() {
+		dur := cfg.ScreenshotInterval
+		ticker := time.NewTicker(dur)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-trackCtx.Done():
+				return
+			case newDur := <-a.tickerResetCh:
+				ticker.Stop()
+				dur = newDur
+				ticker = time.NewTicker(dur)
+				log.Printf("[app] screenshot collection loop reset to %v", dur)
+			case stats, ok := <-statsCh:
+				if !ok {
+					statsCh = nil
+					continue
+				}
+				a.statsMu.Lock()
+				a.latestKeyStats = stats
+				a.statsMu.Unlock()
+			case <-ticker.C:
+				a.statsMu.Lock()
+				active := a.isTrackingActive
+				a.statsMu.Unlock()
+				if !active {
+					continue
+				}
+				a.collect()
+			}
+		}
+	}()
+	log.Printf("[app] local screenshot capture active (interval: %v)", cfg.ScreenshotInterval)
+}
+
+// stopTrackingLoops cancels active local tracking goroutines and shuts down detectors.
+func (a *App) stopTrackingLoops() {
+	if a.trackingCancel != nil {
+		a.trackingCancel()
+		a.trackingCancel = nil
+	}
+	if a.keyTracker != nil {
+		a.keyTracker.Stop()
+		a.keyTracker = nil
+	}
+	if a.mouseTracker != nil {
+		a.mouseTracker.Stop()
+		a.mouseTracker = nil
+	}
 }
 
 // cleanOldScreenshots scans dataDir/images/ and removes folders/files older than 7 days.
@@ -785,17 +882,15 @@ func (a *App) shutdown(_ context.Context) {
 	// before the database handle is closed below.
 	a.shuttingDown.Store(true)
 
-	// If tracking is still active, hand it off to a detached background process
-	// so capture continues after this app exits.
+	// If tracking is active and was NOT delegated to an existing background daemon,
+	// hand it off to a detached background process so capture continues after this app exits.
 	if !a.headless && a.cfg != nil {
-		// Release GUI ownership BEFORE handing capture to the background daemon,
-		// so the daemon's "desktop app is running" guard does not see this dying
-		// process and refuse to start.
 		removePIDFileIfOwner(guiPidPath(a.cfg.DataDir), os.Getpid())
 		a.statsMu.Lock()
 		active := a.isTrackingActive
+		delegated := a.trackingDelegatedToBackground
 		a.statsMu.Unlock()
-		if active {
+		if active && !delegated {
 			if err := spawnBackgroundDaemon(a.cfg.DataDir); err != nil {
 				log.Printf("[app] failed to start background tracker: %v", err)
 			} else {
@@ -837,17 +932,13 @@ func (a *App) shutdown(_ context.Context) {
 		}
 	}
 
+	a.stopTrackingLoops()
+
 	if a.cancel != nil {
 		a.cancel()
 	}
 	if a.trayMgr != nil {
 		a.trayMgr.Stop()
-	}
-	if a.keyTracker != nil {
-		a.keyTracker.Stop()
-	}
-	if a.mouseTracker != nil {
-		a.mouseTracker.Stop()
 	}
 	if a.database != nil {
 		_ = a.database.Close()
@@ -913,11 +1004,24 @@ func (a *App) ToggleTracking() (map[string]interface{}, error) {
 		a.isTrackingActive = false
 		a.latestKeyStats = tracker.KeystrokeStats{}
 		a.latestMouseStats = tracker.MouseStats{}
+
+		if a.trackingDelegatedToBackground {
+			if a.cfg != nil {
+				stopBackgroundDaemon(a.cfg.DataDir)
+			}
+			a.trackingDelegatedToBackground = false
+		} else {
+			a.stopTrackingLoops()
+		}
 	} else {
 		a.accumulatedSec = a.todaysDBTrackedSeconds()
 		a.accumDay = time.Now().Format("2006-01-02")
 		a.trackerStartTime = time.Now()
 		a.isTrackingActive = true
+
+		if a.cfg != nil {
+			a.startTrackingLoops(a.cfg)
+		}
 	}
 
 	elapsed := a.accumulatedSec
@@ -939,7 +1043,9 @@ func (a *App) GetTrackingStatus() map[string]interface{} {
 	a.ensureSameDaySeed()
 
 	elapsed := a.accumulatedSec
-	if a.isTrackingActive && !a.trackerStartTime.IsZero() {
+	if a.trackingDelegatedToBackground {
+		elapsed = a.todaysDBTrackedSeconds()
+	} else if a.isTrackingActive && !a.trackerStartTime.IsZero() {
 		elapsed += int64(time.Since(a.trackerStartTime).Seconds())
 	}
 

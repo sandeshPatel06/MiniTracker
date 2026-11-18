@@ -6,9 +6,16 @@ import (
 	"fmt"
 	"image"
 	"log"
+	"os"
 
 	"github.com/kbinani/screenshot"
 )
+
+func acquireCaptureLock(dataDir string) (*os.File, error) {
+	return nil, nil
+}
+
+func releaseCaptureLock(f *os.File) {}
 
 func captureDisplays() (image.Image, error) {
 	n := screenshot.NumActiveDisplays()

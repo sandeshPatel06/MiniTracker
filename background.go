@@ -19,29 +19,45 @@ import (
 
 // runBackgroundApp runs the headless tracking daemon. It reuses App.startup /
 // App.shutdown / App.collect unchanged so behavior matches the GUI app.
-func runBackgroundApp() {
-	cfg, err := config.Load()
-	if err == nil && cfg != nil {
-		if guiAppRunning(cfg.DataDir) {
-			log.Printf("[bg] desktop app is running — refusing to start a second capture loop (pidfile %s)", guiPidPath(cfg.DataDir))
-			return
-		}
-		pid := readPIDFile(pidPath(cfg.DataDir))
-		if pid > 0 && pid != os.Getpid() && processAlive(pid) && processMatchesDaemon(pid) {
-			log.Printf("[bg] another background tracker is already running (pid %d) — exiting", pid)
-			return
+func runBackgroundApp(cfg *config.Config) {
+	if cfg == nil {
+		var err error
+		cfg, err = config.Load()
+		if err != nil || cfg == nil {
+			home, _ := os.UserHomeDir()
+			cfg = &config.Config{DataDir: filepath.Join(home, ".local", "share", "get-hike")}
+		} else {
+			cfg.DataDir = expandHomePath(filepath.Clean(cfg.DataDir))
 		}
 	}
+	_ = os.MkdirAll(cfg.DataDir, 0755)
+
+	if guiAppRunning(cfg.DataDir) {
+		log.Printf("[bg] desktop app is running — refusing to start a second capture loop (pidfile %s)", guiPidPath(cfg.DataDir))
+		return
+	}
+
+	// Exclusive kernel-level flock ensures only 1 background daemon can ever run
+	lock, err := acquireProcessLock(filepath.Join(cfg.DataDir, "daemon.lock"))
+	if err != nil {
+		log.Printf("[bg] another background tracker daemon is already running (lock held) — exiting")
+		return
+	}
+	defer releaseProcessLock(lock)
+
+	// Persist PID before startup so external inspectors find it immediately
+	if err := writePIDFile(pidPath(cfg.DataDir), os.Getpid()); err != nil {
+		log.Printf("[bg] write pidfile error: %v", err)
+	}
+	defer removePIDFileIfOwner(pidPath(cfg.DataDir), os.Getpid())
 
 	app := NewApp()
 	app.headless = true
+	app.cfg = cfg
 	app.startup(context.Background())
 
-	if app.cfg != nil {
-		if err := writePIDFile(pidPath(app.cfg.DataDir), os.Getpid()); err != nil {
-			log.Printf("[bg] write pidfile error: %v", err)
-		}
-	}
+	// Ignore SIGHUP so terminal closures never kill the background daemon
+	signal.Ignore(syscall.SIGHUP)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -49,10 +65,6 @@ func runBackgroundApp() {
 	log.Printf("[bg] received signal %v — shutting down", sig)
 
 	app.shutdown(context.Background())
-
-	if app.cfg != nil {
-		_ = os.Remove(pidPath(app.cfg.DataDir))
-	}
 }
 
 // pidPath returns the pidfile location for a data directory.
@@ -171,33 +183,35 @@ func processMatchesDaemon(pid int) bool {
 func stopBackgroundDaemon(dataDir string) {
 	path := pidPath(dataDir)
 	pid := readPIDFile(path)
-	if pid <= 0 {
-		_ = os.Remove(path)
-		return
-	}
-	if !processAlive(pid) || !processMatchesDaemon(pid) {
-		_ = os.Remove(path)
-		return
-	}
+	if pid > 0 && processAlive(pid) && processMatchesDaemon(pid) {
+		_ = terminateProcess(pid)
 
-	_ = terminateProcess(pid)
-
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if !processAlive(pid) {
-			break
+		deadline := time.Now().Add(1500 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			if !processAlive(pid) {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
 		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if processAlive(pid) {
-		_ = killProcess(pid)
+		if processAlive(pid) {
+			_ = killProcess(pid)
+		}
+		log.Printf("[bg] stopped background tracker (pid %d)", pid)
 	}
 	_ = os.Remove(path)
-	log.Printf("[bg] stopped background tracker (pid %d)", pid)
+
+	// Clean up any remaining/orphan background daemons
+	killAllBackgroundDaemons()
 }
 
 // spawnBackgroundDaemon starts a detached copy of this binary in headless mode.
 func spawnBackgroundDaemon(dataDir string) error {
+	// If daemon is already running, do not spawn duplicate
+	pid := readPIDFile(pidPath(dataDir))
+	if pid > 0 && processAlive(pid) && processMatchesDaemon(pid) {
+		return nil
+	}
+
 	exe, err := os.Executable()
 	if err != nil {
 		return err

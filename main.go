@@ -3,9 +3,12 @@ package main
 import (
 	"embed"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"runtime"
 
+	"github.com/reak/get-hike/internal/config"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -25,12 +28,37 @@ var assets embed.FS
 var version = "dev"
 
 func main() {
+	cfg, err := config.Load()
+	if err == nil && cfg != nil {
+		cfg.DataDir = expandHomePath(filepath.Clean(cfg.DataDir))
+	} else {
+		home, _ := os.UserHomeDir()
+		cfg = &config.Config{DataDir: filepath.Join(home, ".local", "share", "get-hike")}
+	}
+	_ = os.MkdirAll(cfg.DataDir, 0755)
+
 	if len(os.Args) > 1 && os.Args[1] == "--background" {
-		runBackgroundApp()
+		runBackgroundApp(cfg)
 		return
 	}
 
+	// Kernel-level exclusive flock: guarantees strictly ONE desktop GUI instance runs.
+	// If another instance is running, notify it to restore its window and exit immediately.
+	lock, err := acquireProcessLock(filepath.Join(cfg.DataDir, "gui.lock"))
+	if err != nil {
+		existingPid := readPIDFile(guiPidPath(cfg.DataDir))
+		log.Printf("[app] another desktop app instance is already running (pid %d) — focusing existing window and exiting", existingPid)
+		notifyExistingGUIInstance(existingPid)
+		os.Exit(0)
+	}
+	defer releaseProcessLock(lock)
+
+	// Persist GUI PID file so background daemons / checkers know a GUI is open
+	_ = writePIDFile(guiPidPath(cfg.DataDir), os.Getpid())
+	defer removePIDFileIfOwner(guiPidPath(cfg.DataDir), os.Getpid())
+
 	app := NewApp()
+	app.cfg = cfg
 
 	if err := runGUI(app); err != nil {
 		println("Error:", err.Error())
